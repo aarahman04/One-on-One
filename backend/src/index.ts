@@ -1,8 +1,11 @@
+import { createServer } from 'node:http'
 import express from 'express'
 import cors from 'cors'
 import { meRouter } from './routes/me.js'
 import { connectionsRouter } from './routes/connections.js'
+import { messagesRouter } from './routes/messages.js'
 import { ConnectionError } from './services/connectionService.js'
+import { createSocketServer } from './websocket/socketServer.js'
 
 const app = express()
 const port = process.env.PORT ?? 3000
@@ -17,6 +20,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/api', meRouter)
 app.use('/api', connectionsRouter)
+app.use('/api', messagesRouter)
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof ConnectionError) {
@@ -27,6 +31,9 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   res.status(500).json({ error: 'internal server error' })
 })
 
-app.listen(port, () => {
+const httpServer = createServer(app)
+createSocketServer(httpServer, allowedOrigins)
+
+httpServer.listen(port, () => {
   console.log(`server listening on port ${port}`)
 })
