@@ -1,5 +1,8 @@
 import type { Page } from '../state/router'
 import { fetchMe } from '../services/apiClient'
+import { getCurrentConnection } from '../services/connectionsApi'
+
+const POLL_INTERVAL_MS = 3000
 
 export const ConnectionIdPage: Page = (root, go) => {
   root.innerHTML = `
@@ -34,7 +37,26 @@ export const ConnectionIdPage: Page = (root, go) => {
       subtitleEl.textContent = err instanceof Error ? err.message : 'Failed to load connection ID.'
     })
 
+  // Live-route the moment an incoming request arrives (or one gets accepted
+  // elsewhere), so the recipient never sits on this screen able to fire off
+  // their own duplicate request.
+  const poll = async (): Promise<void> => {
+    const current = await getCurrentConnection()
+    if (!current) return
+    if (current.status === 'pending') {
+      go(current.isRequester ? 'waiting' : 'request')
+    } else if (current.status === 'active' || current.status === 'leave_pending') {
+      go(current.otherNickname ? 'chat' : 'nickname')
+    }
+  }
+
+  const interval = setInterval(() => {
+    poll().catch(() => {})
+  }, POLL_INTERVAL_MS)
+
   root.querySelector<HTMLButtonElement>('#continue-btn')!.addEventListener('click', () => {
     go('connect')
   })
+
+  return () => clearInterval(interval)
 }

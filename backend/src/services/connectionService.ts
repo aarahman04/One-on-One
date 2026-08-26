@@ -112,6 +112,7 @@ export async function declineConnection(connectionId: string, userId: string): P
 export interface CurrentConnection {
   id: string
   status: ConnectionStatus
+  myUserId: string
   isRequester: boolean
   otherNickname: string | null
   otherConnectionCode: string
@@ -143,6 +144,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
   return {
     id: data.id,
     status: data.status,
+    myUserId: userId,
     isRequester: data.user_a_id === userId,
     otherNickname: member?.nickname ?? null,
     otherConnectionCode: otherUser?.connection_code ?? '',

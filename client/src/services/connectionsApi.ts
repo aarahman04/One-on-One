@@ -13,6 +13,7 @@ export type ConnectionStatus = 'pending' | 'active' | 'leave_pending' | 'termina
 export interface CurrentConnection {
   id: string
   status: ConnectionStatus
+  myUserId: string
   isRequester: boolean
   otherNickname: string | null
   otherConnectionCode: string
@@ -20,10 +21,23 @@ export interface CurrentConnection {
   leaveRequestedAt: string | null
 }
 
+export interface HistoryMessage {
+  id: string
+  senderId: string
+  content: string
+  createdAt: string
+}
+
 export async function getCurrentConnection(): Promise<CurrentConnection | null> {
   const res = await authedFetch('/api/connections/current')
   const body = await unwrap<{ connection: CurrentConnection | null }>(res)
   return body.connection
+}
+
+export async function getMessages(connectionId: string): Promise<HistoryMessage[]> {
+  const res = await authedFetch(`/api/connections/${connectionId}/messages`)
+  const body = await unwrap<{ messages: HistoryMessage[] }>(res)
+  return body.messages
 }
 
 export async function requestConnection(connectionCode: string): Promise<void> {
