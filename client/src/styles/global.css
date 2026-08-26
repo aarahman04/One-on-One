@@ -21,6 +21,8 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
@@ -33,7 +35,9 @@ body {
 }
 
 #app {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -81,6 +85,8 @@ input:focus {
 
 .screen {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -126,9 +132,9 @@ input:focus {
 
 .chat {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
   text-align: left;
 }
 
@@ -166,7 +172,10 @@ input:focus {
 
 .chat__log {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -179,6 +188,41 @@ input:focus {
   font-size: 12px;
   letter-spacing: 0.08em;
   margin: 10px 0;
+}
+
+.chat__leave-banner {
+  padding: 10px 20px;
+  background: rgba(248, 81, 73, 0.08);
+  border-bottom: 1px solid var(--border);
+  color: var(--danger);
+  font-size: 13px;
+  text-align: center;
+}
+
+.chat__system-line {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  margin: 4px 0;
+}
+
+.chat__message--pending {
+  opacity: 0.5;
+}
+
+.chat__message--failed .chat__message-text::after {
+  content: ' · not sent';
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.chat__seen {
+  text-align: right;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: -8px;
 }
 
 .chat__message {
@@ -239,6 +283,7 @@ input:focus {
   display: flex;
   gap: 10px;
   padding: 14px 20px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
 }
 
@@ -304,6 +349,11 @@ input:focus {
 /* Responsive */
 
 @media (max-width: 480px) {
+  /* 16px min prevents iOS zoom-on-focus, which lurches the viewport */
+  input {
+    font-size: 16px;
+  }
+
   .screen {
     padding: 16px;
     gap: 14px;

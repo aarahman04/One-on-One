@@ -1,6 +1,6 @@
 import type { Page } from '../state/router'
 import { fetchMe } from '../services/apiClient'
-import { getCurrentConnection } from '../services/connectionsApi'
+import { getCurrentConnection, regenerateConnectionCode } from '../services/connectionsApi'
 
 const POLL_INTERVAL_MS = 3000
 
@@ -11,6 +11,7 @@ export const ConnectionIdPage: Page = (root, go) => {
       <div class="connection-id" id="connection-id">...</div>
       <div class="screen__actions">
         <button id="copy-btn" disabled>Copy</button>
+        <button id="new-id-btn" disabled>Get a new ID</button>
       </div>
       <div class="screen__subtitle" id="subtitle">Loading...</div>
       <div class="screen__actions">
@@ -22,20 +23,40 @@ export const ConnectionIdPage: Page = (root, go) => {
   const idEl = root.querySelector<HTMLDivElement>('#connection-id')!
   const subtitleEl = root.querySelector<HTMLDivElement>('#subtitle')!
   const copyBtn = root.querySelector<HTMLButtonElement>('#copy-btn')!
+  const newIdBtn = root.querySelector<HTMLButtonElement>('#new-id-btn')!
+
+  let code = ''
 
   fetchMe()
     .then(({ connectionCode }) => {
-      idEl.textContent = connectionCode
+      code = connectionCode
+      idEl.textContent = code
       subtitleEl.textContent = 'Give this ID to the person you want to connect with.'
       copyBtn.disabled = false
-      copyBtn.addEventListener('click', async () => {
-        await navigator.clipboard.writeText(connectionCode)
-      })
+      newIdBtn.disabled = false
     })
     .catch((err) => {
       idEl.textContent = '—'
       subtitleEl.textContent = err instanceof Error ? err.message : 'Failed to load connection ID.'
     })
+
+  copyBtn.addEventListener('click', async () => {
+    if (code) await navigator.clipboard.writeText(code)
+  })
+
+  // Rotate the ID (e.g. it got shared too widely). The old ID stops working.
+  newIdBtn.addEventListener('click', async () => {
+    newIdBtn.disabled = true
+    try {
+      code = await regenerateConnectionCode()
+      idEl.textContent = code
+      subtitleEl.textContent = 'New ID generated. The old one no longer works.'
+    } catch (err) {
+      subtitleEl.textContent = err instanceof Error ? err.message : 'Failed to generate a new ID.'
+    } finally {
+      newIdBtn.disabled = false
+    }
+  })
 
   // Live-route the moment an incoming request arrives (or one gets accepted
   // elsewhere), so the recipient never sits on this screen able to fire off

@@ -3,8 +3,12 @@ import { requireAuth } from '../middleware/requireAuth.js'
 import { getOrCreateUser } from '../services/userService.js'
 import {
   acceptConnection,
+  advanceLeave,
+  cancelLeave,
+  confirmEndLeave,
   declineConnection,
   getCurrentConnection,
+  markRead,
   requestConnection,
   setNickname,
 } from '../services/connectionService.js'
@@ -48,5 +52,29 @@ connectionsRouter.patch('/connections/:id/nickname', async (req, res) => {
   const user = await getOrCreateUser(req.authUserId!)
   const nickname = String(req.body?.nickname ?? '')
   await setNickname(req.params.id, user.id, nickname)
+  res.status(204).end()
+})
+
+connectionsRouter.post('/connections/:id/leave', async (req, res) => {
+  const user = await getOrCreateUser(req.authUserId!)
+  const result = await advanceLeave(req.params.id, user.id)
+  res.json({ leave: result })
+})
+
+connectionsRouter.post('/connections/:id/leave/cancel', async (req, res) => {
+  const user = await getOrCreateUser(req.authUserId!)
+  const result = await cancelLeave(req.params.id, user.id)
+  res.json({ leave: result })
+})
+
+connectionsRouter.post('/connections/:id/leave/confirm-end', async (req, res) => {
+  const user = await getOrCreateUser(req.authUserId!)
+  const result = await confirmEndLeave(req.params.id, user.id)
+  res.json({ leave: result })
+})
+
+connectionsRouter.post('/connections/:id/read', async (req, res) => {
+  const user = await getOrCreateUser(req.authUserId!)
+  await markRead(req.params.id, user.id)
   res.status(204).end()
 })
