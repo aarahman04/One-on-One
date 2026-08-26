@@ -11,6 +11,15 @@ Notes/deviations:
 
 ---
 
+## [1.D/1.E polish] Tick placement, working "Seen", leave-flow OK button, in-chat Search — 2026-08-27
+Status: done (builds clean; client-only, no migration; two accounts to verify)
+What shipped:
+- **Tick placement** — ticks sat at the far-right edge of the wide message body; moved them **inline right after the message text** (text is now `display:inline`, tick an inline-block sibling before the hidden full-timestamp). Reads right where the message ends.
+- **"Seen" now actually flips to blue** — the receipt logic was correct, but the reader only marked-read on discrete events (connect / incoming socket message / focus), so an already-loaded message often never got marked. Now the reader **marks read continuously while the chat is visible** (poll-driven every 4s, `visibilityState==='visible'`) plus once at mount — self-healing, so the sender's tick reliably goes blue ✓✓. No backend change.
+- **Leave flow** — the disabled "Next step available in ~24h" **button** did nothing; it's now **info text** and the action is a working **"OK"** button (advances the countdown when allowed, just returns during the 24h cooldown). Cancel/Keep connection unchanged. The acting user now **sees their own leave line in chat** ("You moved to leave — N days remaining") — leave step tracking moved to `sessionStorage` so the system line survives the navigate-to-Leave-and-back round trip.
+- **Search works** — the ••• menu "Search" was inert; it now opens an in-chat search bar that live-filters the log to messages containing the query (date separators + system lines hidden while searching), with a ✕ to close. `mountMenuDropdown` takes an optional `onSearch`; ChatPage owns the filter.
+Notes/deviations: Search is a client-side substring filter over loaded history (no server search) — fine for V1's single conversation. Continuous mark-read means while both are viewing, messages read as seen almost immediately (correct — both online + on-screen = seen).
+
 ## [1.D polish] WhatsApp-style read ticks (replaces "Seen" text) — 2026-08-26
 Status: done (builds clean; needs migration 008 + two accounts to see live)
 What shipped: The subtle grey "Seen" text under the last message was too quiet, so replaced it with per-message ticks on your sent messages: dim ✓ while sending, grey ✓ once delivered (saved server-side / echo received), blue ✓✓ once the other person has viewed it (their `last_read_at ≥ the message time`). Ticks live in the message body (right-aligned), recomputed on echo-confirm and on the 4s `/connections/current` poll. No backend change — reuses `otherLastReadAt` from the prior read-receipt work.

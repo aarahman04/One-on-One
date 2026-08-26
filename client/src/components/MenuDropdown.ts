@@ -1,6 +1,11 @@
 import type { Screen } from '../state/router'
 
-export function mountMenuDropdown(nav: HTMLElement, anchor: HTMLButtonElement, go: (screen: Screen) => void): void {
+export function mountMenuDropdown(
+  nav: HTMLElement,
+  anchor: HTMLButtonElement,
+  go: (screen: Screen) => void,
+  onSearch?: () => void,
+): void {
   let panel: HTMLDivElement | null = null
 
   const close = (): void => {
@@ -28,7 +33,7 @@ export function mountMenuDropdown(nav: HTMLElement, anchor: HTMLButtonElement, g
       <div class="menu__divider"></div>
       <div class="menu__group-label">CONVERSATION</div>
       <button class="menu__item" data-action="export">Export</button>
-      <button class="menu__item" data-action="search" disabled>Search</button>
+      <button class="menu__item" data-action="search"${onSearch ? '' : ' disabled'}>Search</button>
       <div class="menu__divider"></div>
       <div class="menu__group-label">CONNECTION</div>
       <button class="menu__item menu__item--danger" data-action="leave">Leave connection</button>
@@ -43,6 +48,12 @@ export function mountMenuDropdown(nav: HTMLElement, anchor: HTMLButtonElement, g
       close()
       go('export')
     })
+    if (onSearch) {
+      panel.querySelector('[data-action="search"]')!.addEventListener('click', () => {
+        close()
+        onSearch()
+      })
+    }
     panel.querySelector('[data-action="leave"]')!.addEventListener('click', () => {
       close()
       go('leave')

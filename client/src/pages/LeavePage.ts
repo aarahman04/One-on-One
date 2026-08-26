@@ -28,7 +28,7 @@ export const LeavePage: Page = (root, go) => {
             <div class="screen__subtitle">You both chose to leave. You can end it now instead of waiting out the countdown.</div>
             <div class="screen__actions">
               <button id="cancel-btn">Back to chat</button>
-              <button id="end-btn" style="border-color: var(--danger); color: var(--danger);">Do you want to leave it?</button>
+              <button id="end-btn" style="border-color: var(--danger); color: var(--danger);">Leave now</button>
             </div>
             ${errorHtml}
           </div>
@@ -47,23 +47,25 @@ export const LeavePage: Page = (root, go) => {
 
       const inProgress = current.myLeaveStep > 0
       const remaining = current.daysRemaining ?? 5
+      const cooling = inProgress && !current.canAdvanceLeave
 
-      const stateLine = inProgress
-        ? `You're leaving — <strong>${remaining} ${remaining === 1 ? 'day' : 'days'} remaining</strong>.`
-        : `Leaving is deliberate: 5 steps, one every 24 hours. Either of you can stop it, and no one can be forced out.`
-
-      const advanceLabel = inProgress ? `Continue leaving (${remaining} left)` : 'Leave connection'
-      const advanceBtn = current.canAdvanceLeave
-        ? `<button id="advance-btn" style="border-color: var(--danger); color: var(--danger);">${advanceLabel}</button>`
-        : `<button disabled>Next step available in ~24h</button>`
+      const dayLabel = `${remaining} ${remaining === 1 ? 'day' : 'days'} remaining`
+      const subtitle = inProgress
+        ? `You're leaving this connection — ${dayLabel}.`
+        : `Leaving is deliberate: five daily steps, one every 24 hours. Either of you can stop it, and no one can be forced out.`
+      // The 24h wait is information, not an action — shown as text, not a dead button.
+      const note = cooling
+        ? `<div class="screen__subtitle" style="opacity:0.7;">Next step available in about 24 hours.</div>`
+        : ''
 
       root.innerHTML = `
         <div class="screen">
           <div class="screen__eyebrow">LEAVE CONNECTION</div>
-          <div class="screen__subtitle">${stateLine}</div>
+          <div class="screen__subtitle">${subtitle}</div>
+          ${note}
           <div class="screen__actions">
             <button id="cancel-btn">${inProgress ? 'Keep connection' : 'Cancel'}</button>
-            ${advanceBtn}
+            <button id="ok-btn" class="primary">OK</button>
           </div>
           ${errorHtml}
         </div>
@@ -80,15 +82,15 @@ export const LeavePage: Page = (root, go) => {
         go('chat')
       })
 
-      const advance = root.querySelector<HTMLButtonElement>('#advance-btn')
-      advance?.addEventListener('click', async () => {
+      root.querySelector<HTMLButtonElement>('#ok-btn')!.addEventListener('click', async () => {
+        // In the 24h cooldown, OK just returns; otherwise it advances the countdown.
+        if (cooling) {
+          go('chat')
+          return
+        }
         try {
           const result = await advanceLeave(id)
-          if (result.terminated) {
-            go('connection-id')
-          } else {
-            go('chat')
-          }
+          go(result.terminated ? 'connection-id' : 'chat')
         } catch (err) {
           showError(err instanceof Error ? err.message : 'Failed to update leave.')
         }
