@@ -219,11 +219,12 @@ input:focus {
 }
 
 .chat__tick {
-  text-align: right;
+  display: inline-block;
+  margin-left: 6px;
   font-size: 12px;
   line-height: 1;
   letter-spacing: -3px;
-  margin-top: 3px;
+  vertical-align: baseline;
 }
 
 .chat__tick--sending {
@@ -237,6 +238,29 @@ input:focus {
 
 .chat__tick--seen {
   color: var(--accent-other);
+}
+
+.chat__search {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat__search input {
+  flex: 1;
+}
+
+.chat__search-close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 4px 8px;
+}
+
+.chat__hidden {
+  display: none;
 }
 
 .chat__message {
@@ -274,6 +298,7 @@ input:focus {
 
 .chat__message-text {
   color: var(--text);
+  display: inline;
 }
 
 .chat__message-text::before {

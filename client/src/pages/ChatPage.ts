@@ -1,4 +1,4 @@
-import type { Page, Screen } from '../state/router'
+import type { Page } from '../state/router'
 import { formatClock, formatDateSeparator, formatFullTimestamp, isSameDay } from '../utils/formatTime'
 import { mountMenuDropdown } from '../components/MenuDropdown'
 import { getCurrentConnection, getMessages, markRead, type CurrentConnection } from '../services/connectionsApi'
@@ -45,8 +45,37 @@ export const ChatPage: Page = (root, go) => {
     const myUserId = current.myUserId
     const connectionId = current.id
 
-    renderChat(root, go, otherName)
+    renderChat(root, otherName)
     const log = root.querySelector<HTMLDivElement>('#chat-log')!
+
+    // --- Search ------------------------------------------------------------
+    const searchBar = root.querySelector<HTMLDivElement>('#chat-search')!
+    const searchInput = root.querySelector<HTMLInputElement>('#search-input')!
+
+    const filterLog = (q: string): void => {
+      const query = q.trim().toLowerCase()
+      const active = query !== ''
+      for (const row of log.querySelectorAll<HTMLElement>('.chat__message')) {
+        const text = row.querySelector('.chat__message-text')?.textContent?.toLowerCase() ?? ''
+        row.classList.toggle('chat__hidden', active && !text.includes(query))
+      }
+      for (const el of log.querySelectorAll<HTMLElement>('.chat__date-separator, .chat__system-line')) {
+        el.classList.toggle('chat__hidden', active)
+      }
+    }
+    searchInput.addEventListener('input', () => filterLog(searchInput.value))
+    root.querySelector<HTMLButtonElement>('#search-close')!.addEventListener('click', () => {
+      searchInput.value = ''
+      filterLog('')
+      searchBar.style.display = 'none'
+    })
+
+    const nav = root.querySelector<HTMLElement>('.chat__nav')!
+    const menuBtn = root.querySelector<HTMLButtonElement>('#menu-btn')!
+    mountMenuDropdown(nav, menuBtn, go, () => {
+      searchBar.style.display = 'flex'
+      searchInput.focus()
+    })
 
     // --- Message rendering -------------------------------------------------
     let lastDate: Date | null = null
@@ -85,9 +114,9 @@ export const ChatPage: Page = (root, go) => {
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
 
-      body.append(sender, text, fullTime)
+      body.append(sender, text)
       if (isMine) {
-        const tick = document.createElement('div')
+        const tick = document.createElement('span')
         tick.className = 'chat__tick'
         body.append(tick)
         row.dataset.mine = '1'
@@ -95,6 +124,7 @@ export const ChatPage: Page = (root, go) => {
         myRows.push(row)
         applyTick(row)
       }
+      body.append(fullTime)
       row.append(time, body)
       row.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
       log.appendChild(row)
@@ -143,12 +173,51 @@ export const ChatPage: Page = (root, go) => {
       banner.style.display = 'block'
     }
 
+    // Leave system-lines must survive navigation (the actor leaves chat to press
+    // OK, then returns), so the last-announced steps live in sessionStorage.
+    const leaveKey = `leaveSeen:${connectionId}`
+    let prevMine = current.myLeaveStep
+    let prevOther = current.otherLeaveStep
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(leaveKey) ?? 'null') as { mine: number; other: number } | null
+      if (saved) {
+        prevMine = saved.mine
+        prevOther = saved.other
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const reconcileLeave = (c: CurrentConnection): void => {
+      if (c.myLeaveStep !== prevMine) {
+        appendSystemLine(
+          c.myLeaveStep === 0 ? 'You kept the connection.' : `You moved to leave — ${dayWord(5 - c.myLeaveStep)}.`,
+        )
+        prevMine = c.myLeaveStep
+      }
+      if (c.otherLeaveStep !== prevOther) {
+        appendSystemLine(
+          c.otherLeaveStep === 0
+            ? `${otherName} kept the connection.`
+            : `${otherName} moved to leave — ${dayWord(5 - c.otherLeaveStep)}.`,
+        )
+        prevOther = c.otherLeaveStep
+      }
+      try {
+        sessionStorage.setItem(leaveKey, JSON.stringify({ mine: prevMine, other: prevOther }))
+      } catch {
+        /* ignore */
+      }
+    }
+
     // --- Load history ------------------------------------------------------
     const history = await getMessages(connectionId)
     if (disposed) return
     for (const message of history) appendMessage(message)
     refreshTicks()
     renderBanner(current)
+    reconcileLeave(current)
+    void markRead(connectionId).catch(() => {})
 
     // --- Outgoing (optimistic) --------------------------------------------
     const pending: Pending[] = []
@@ -221,9 +290,6 @@ export const ChatPage: Page = (root, go) => {
     window.addEventListener('focus', focusHandler)
 
     // --- Poll: leave state, termination, seen ------------------------------
-    let prevMine = current.myLeaveStep
-    let prevOther = current.otherLeaveStep
-
     const poll = async (): Promise<void> => {
       let next: CurrentConnection | null
       try {
@@ -238,23 +304,13 @@ export const ChatPage: Page = (root, go) => {
         go('connection-id')
         return
       }
-      if (next.myLeaveStep !== prevMine) {
-        appendSystemLine(
-          next.myLeaveStep === 0 ? 'You kept the connection.' : `You moved to leave — ${dayWord(next.daysRemaining ?? 0)}.`,
-        )
-        prevMine = next.myLeaveStep
-      }
-      if (next.otherLeaveStep !== prevOther) {
-        appendSystemLine(
-          next.otherLeaveStep === 0
-            ? `${otherName} kept the connection.`
-            : `${otherName} moved to leave — ${dayWord(5 - next.otherLeaveStep)}.`,
-        )
-        prevOther = next.otherLeaveStep
-      }
+      reconcileLeave(next)
       renderBanner(next)
       otherLastRead = next.otherLastReadAt
       refreshTicks()
+      // Keep marking read while the chat is actually on screen — makes the
+      // other side's "seen" tick reliable even if a discrete event was missed.
+      if (document.visibilityState === 'visible') void markRead(connectionId).catch(() => {})
     }
 
     pollTimer = setInterval(() => void poll(), 4000)
@@ -265,7 +321,7 @@ export const ChatPage: Page = (root, go) => {
   return cleanup
 }
 
-function renderChat(root: HTMLElement, go: (screen: Screen) => void, displayName: string): void {
+function renderChat(root: HTMLElement, displayName: string): void {
   root.innerHTML = `
     <div class="chat">
       <div class="chat__nav">
@@ -274,6 +330,10 @@ function renderChat(root: HTMLElement, go: (screen: Screen) => void, displayName
           <div class="chat__nav-status">connected</div>
         </div>
         <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
+      </div>
+      <div class="chat__search" id="chat-search" style="display: none;">
+        <input id="search-input" placeholder="Search messages…" autocomplete="off" />
+        <button type="button" class="chat__search-close" id="search-close">✕</button>
       </div>
       <div class="chat__leave-banner" id="leave-banner" style="display: none;"></div>
       <div class="chat__log" id="chat-log"></div>
@@ -285,8 +345,4 @@ function renderChat(root: HTMLElement, go: (screen: Screen) => void, displayName
   `
 
   root.querySelector<HTMLDivElement>('#nav-title')!.textContent = displayName
-
-  const nav = root.querySelector<HTMLElement>('.chat__nav')!
-  const menuBtn = root.querySelector<HTMLButtonElement>('#menu-btn')!
-  mountMenuDropdown(nav, menuBtn, go)
 }
