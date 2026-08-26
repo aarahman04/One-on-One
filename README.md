@@ -20,7 +20,7 @@ V1 Web App → V2 Android App → V3 Bluetooth → V4 BitChat-style mesh. Curren
 
 ```
 client/     Vite + TypeScript web frontend
-server/     Node + Express + Socket.IO backend
+backend/    Node + Express + Socket.IO backend (Railway root dir)
 shared/     Types/constants shared across clients
 database/   Migrations + seed data
 docs/       Progress log + architecture diagrams
