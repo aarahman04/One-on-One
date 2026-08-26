@@ -252,15 +252,39 @@ input:focus {
   flex: 1;
 }
 
+.chat__search-count {
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 34px;
+  text-align: center;
+}
+
+.chat__search-nav,
 .chat__search-close {
   background: transparent;
   border: none;
   color: var(--text-dim);
   padding: 4px 8px;
+  font-size: 13px;
 }
 
-.chat__hidden {
-  display: none;
+.chat__search-nav:hover,
+.chat__search-close:hover {
+  color: var(--text);
+}
+
+.chat__message-text mark {
+  background: var(--accent-you);
+  color: #04170a;
+  border-radius: 2px;
+}
+
+.chat__message--current .chat__message-text mark {
+  background: var(--accent-other);
+}
+
+.chat__nav-status--away::before {
+  color: var(--muted);
 }
 
 .chat__message {

@@ -11,6 +11,13 @@ Notes/deviations:
 
 ---
 
+## [1.D polish] Search navigation (highlight + jump) + presence indicator — 2026-08-27
+Status: done (client-only, builds clean)
+What shipped:
+- **Search is now useful** — instead of just opening a box, it highlights every message containing the query (substring, case-insensitive) with `<mark>`, shows a live `n/m` counter, and gives ▲/▼ arrows to jump between matches (▲ older, ▼ newer; Enter / Shift+Enter also step), scrolling each into view and emphasising the current one. Highlighting is built via DOM text nodes (no innerHTML) so message content stays XSS-safe. ✕ clears and closes.
+- **Presence indicator** — the nav now shows **"in chat"** (green dot) vs **"away"** (grey dot) for the other person, not just a static "connected". Derived from their `last_read_at` heartbeat: since each side marks-read every ~4s while the chat is on screen, a reading within the last 15s means they're actually here. No new backend route — reuses `otherLastReadAt`.
+Notes/deviations: **Presence and "Seen" both depend on the `/connections/:id/read` route being live on Railway.** Production is currently serving a stale backend (the leave + read routes 404), so until the backend is redeployed from `main`, presence will read "away" and ticks stay grey. Code + build verified; this is an infra redeploy, flagged to the user.
+
 ## [1.D/1.E polish] Tick placement, working "Seen", leave-flow OK button, in-chat Search — 2026-08-27
 Status: done (builds clean; client-only, no migration; two accounts to verify)
 What shipped:
