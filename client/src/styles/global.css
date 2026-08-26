@@ -218,11 +218,25 @@ input:focus {
   font-size: 11px;
 }
 
-.chat__seen {
+.chat__tick {
   text-align: right;
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: -3px;
+  margin-top: 3px;
+}
+
+.chat__tick--sending {
   color: var(--muted);
-  font-size: 11px;
-  margin-top: -8px;
+  opacity: 0.4;
+}
+
+.chat__tick--delivered {
+  color: var(--muted);
+}
+
+.chat__tick--seen {
+  color: var(--accent-other);
 }
 
 .chat__message {

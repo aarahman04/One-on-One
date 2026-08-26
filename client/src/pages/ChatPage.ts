@@ -86,6 +86,15 @@ export const ChatPage: Page = (root, go) => {
       fullTime.textContent = formatFullTimestamp(at)
 
       body.append(sender, text, fullTime)
+      if (isMine) {
+        const tick = document.createElement('div')
+        tick.className = 'chat__tick'
+        body.append(tick)
+        row.dataset.mine = '1'
+        if (!pending) row.dataset.delivered = '1'
+        myRows.push(row)
+        applyTick(row)
+      }
       row.append(time, body)
       row.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
       log.appendChild(row)
@@ -93,19 +102,23 @@ export const ChatPage: Page = (root, go) => {
       return row
     }
 
-    // --- Read receipts ("Seen") -------------------------------------------
-    const seenLabel = document.createElement('div')
-    seenLabel.className = 'chat__seen'
-    seenLabel.textContent = 'Seen'
-    let myLastRow: HTMLElement | null = null
-    let myLastAt: string | null = null
+    // --- Read receipts (delivery / read ticks, WhatsApp-style) ------------
+    // dim ✓ = sending, grey ✓ = delivered (saved server-side), blue ✓✓ = seen.
+    const myRows: HTMLElement[] = []
+    let otherLastRead: string | null = current.otherLastReadAt
 
-    const updateSeen = (otherLastReadAt: string | null): void => {
-      if (!myLastRow || !myLastAt || !otherLastReadAt || new Date(otherLastReadAt) < new Date(myLastAt)) {
-        seenLabel.remove()
-        return
-      }
-      myLastRow.insertAdjacentElement('afterend', seenLabel)
+    const applyTick = (row: HTMLElement): void => {
+      const tick = row.querySelector<HTMLElement>('.chat__tick')
+      if (!tick) return
+      const at = row.dataset.at
+      let state: 'sending' | 'delivered' | 'seen' = row.dataset.delivered === '1' ? 'delivered' : 'sending'
+      if (otherLastRead && at && new Date(at) <= new Date(otherLastRead)) state = 'seen'
+      tick.className = `chat__tick chat__tick--${state}`
+      tick.textContent = state === 'seen' ? '✓✓' : '✓'
+    }
+
+    const refreshTicks = (): void => {
+      for (const row of myRows) applyTick(row)
     }
 
     // --- System lines (leave events) --------------------------------------
@@ -133,15 +146,9 @@ export const ChatPage: Page = (root, go) => {
     // --- Load history ------------------------------------------------------
     const history = await getMessages(connectionId)
     if (disposed) return
-    for (const message of history) {
-      const row = appendMessage(message)
-      if (message.senderId === myUserId) {
-        myLastRow = row
-        myLastAt = message.createdAt
-      }
-    }
+    for (const message of history) appendMessage(message)
+    refreshTicks()
     renderBanner(current)
-    updateSeen(current.otherLastReadAt)
 
     // --- Outgoing (optimistic) --------------------------------------------
     const pending: Pending[] = []
@@ -163,9 +170,6 @@ export const ChatPage: Page = (root, go) => {
       if (!content) return
       input.value = ''
       const row = appendMessage({ senderId: myUserId, content, createdAt: new Date().toISOString() }, true)
-      myLastRow = row
-      myLastAt = row.dataset.at!
-      seenLabel.remove()
       const entry: Pending = { content, row, sent: false }
       pending.push(entry)
       trySend(entry)
@@ -186,16 +190,13 @@ export const ChatPage: Page = (root, go) => {
           const [entry] = pending.splice(idx, 1)
           entry.row.classList.remove('chat__message--pending', 'chat__message--failed')
           entry.row.dataset.at = message.createdAt
-          if (myLastRow === entry.row) myLastAt = message.createdAt
+          entry.row.dataset.delivered = '1'
+          applyTick(entry.row)
           return
         }
       }
-      const row = appendMessage(message)
-      if (message.senderId === myUserId) {
-        myLastRow = row
-        myLastAt = message.createdAt
-        seenLabel.remove()
-      } else {
+      appendMessage(message)
+      if (message.senderId !== myUserId) {
         void markRead(connectionId).catch(() => {})
       }
     }
@@ -252,7 +253,8 @@ export const ChatPage: Page = (root, go) => {
         prevOther = next.otherLeaveStep
       }
       renderBanner(next)
-      updateSeen(next.otherLastReadAt)
+      otherLastRead = next.otherLastReadAt
+      refreshTicks()
     }
 
     pollTimer = setInterval(() => void poll(), 4000)
