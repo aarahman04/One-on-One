@@ -13,9 +13,10 @@ export class InternetTransport implements Transport {
     } = await supabase.auth.getSession()
     if (!session) throw new Error('not signed in')
 
+    // Default transports (polling upgrading to websocket) — more robust than
+    // websocket-only across proxies/restrictive networks.
     const socket = io(API_URL, {
       auth: { token: session.access_token },
-      transports: ['websocket'],
     })
     this.socket = socket
 
