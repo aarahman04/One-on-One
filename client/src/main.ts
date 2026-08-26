@@ -8,6 +8,7 @@ import { NicknamePage } from './pages/NicknamePage'
 import { ChatPage } from './pages/ChatPage'
 import { ExportPage } from './pages/ExportPage'
 import { LeavePage } from './pages/LeavePage'
+import { getSession } from './services/authService'
 
 registerPage('login', LoginPage)
 registerPage('connection-id', ConnectionIdPage)
@@ -18,4 +19,5 @@ registerPage('chat', ChatPage)
 registerPage('export', ExportPage)
 registerPage('leave', LeavePage)
 
-mountRouter(document.querySelector<HTMLDivElement>('#app')!, 'login')
+const session = await getSession()
+mountRouter(document.querySelector<HTMLDivElement>('#app')!, session ? 'connection-id' : 'login')
