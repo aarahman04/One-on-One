@@ -1,14 +1,32 @@
-import type { Page } from '../state/router'
+import type { Page, Screen } from '../state/router'
 import { fakeMessages } from '../utils/fakeMessages'
 import { formatClock, formatDateSeparator, formatFullTimestamp, isSameDay } from '../utils/formatTime'
 import { mountMenuDropdown } from '../components/MenuDropdown'
+import { getCurrentConnection } from '../services/connectionsApi'
 
 export const ChatPage: Page = (root, go) => {
+  root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
+
+  getCurrentConnection()
+    .then((current) => {
+      if (!current || (current.status !== 'active' && current.status !== 'leave_pending')) {
+        go('connection-id')
+        return
+      }
+
+      renderChat(root, go, current.otherNickname ?? 'them')
+    })
+    .catch(() => go('connection-id'))
+}
+
+function renderChat(root: HTMLElement, go: (screen: Screen) => void, otherName: string): void {
+  const displayName = otherName.toUpperCase()
+
   root.innerHTML = `
     <div class="chat">
       <div class="chat__nav">
         <div>
-          <div class="chat__nav-title">ARJUN</div>
+          <div class="chat__nav-title">${displayName}</div>
           <div class="chat__nav-status">connected</div>
         </div>
         <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
@@ -43,7 +61,7 @@ export const ChatPage: Page = (root, go) => {
       <div class="chat__message-time">${formatClock(message.at)}</div>
       <div class="chat__message-body">
         <div class="chat__message-sender chat__message-sender--${message.sender}">
-          ${message.sender === 'you' ? 'YOU' : 'ARJUN'}
+          ${message.sender === 'you' ? 'YOU' : displayName}
         </div>
         <div class="chat__message-text">${message.text}</div>
         <div class="chat__message-full-time">${formatFullTimestamp(message.at)}</div>
