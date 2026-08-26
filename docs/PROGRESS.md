@@ -11,6 +11,11 @@ Notes/deviations:
 
 ---
 
+## [1.D polish] WhatsApp-style read ticks (replaces "Seen" text) — 2026-08-26
+Status: done (builds clean; needs migration 008 + two accounts to see live)
+What shipped: The subtle grey "Seen" text under the last message was too quiet, so replaced it with per-message ticks on your sent messages: dim ✓ while sending, grey ✓ once delivered (saved server-side / echo received), blue ✓✓ once the other person has viewed it (their `last_read_at ≥ the message time`). Ticks live in the message body (right-aligned), recomputed on echo-confirm and on the 4s `/connections/current` poll. No backend change — reuses `otherLastReadAt` from the prior read-receipt work.
+Notes/deviations: "Delivered" = reached the server (our model doesn't separately track the other device receiving it), so a single grey tick means saved+broadcast, not a device-level ACK. Removed the old `.chat__seen` element/CSS.
+
 ## [1.D/1.E/1.F polish] Instant messaging, read receipts, delete-on-leave, ID rotation, HTML export — 2026-08-26
 Status: done (compiles + builds clean; **NOT runtime-tested** — needs migration 008 applied + two accounts)
 What shipped:
