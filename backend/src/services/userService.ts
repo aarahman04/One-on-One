@@ -44,6 +44,25 @@ export async function getOrCreateUser(authUserId: string): Promise<AppUser> {
   throw new Error('failed to generate a unique connection code')
 }
 
+// Give the user a fresh connection code (e.g. the old one got shared too widely).
+// The code is only used to receive new requests, so rotating it never affects an
+// existing connection (those run off user ids).
+export async function regenerateConnectionCode(userId: string): Promise<string> {
+  for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
+    const connectionCode = generateConnectionCode()
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .update({ connection_code: connectionCode })
+      .eq('id', userId)
+      .select('connection_code')
+      .single()
+
+    if (!error) return data.connection_code
+    if (error.code !== UNIQUE_VIOLATION) throw error
+  }
+  throw new Error('failed to generate a unique connection code')
+}
+
 function toAppUser(row: { id: string; auth_user_id: string; connection_code: string }): AppUser {
   return { id: row.id, authUserId: row.auth_user_id, connectionCode: row.connection_code }
 }

@@ -20,7 +20,8 @@ export const ExportPage: Page = (root, go) => {
         <div class="screen__eyebrow">EXPORT CONVERSATION</div>
         <div class="screen__subtitle">Messages: ${messages.length}</div>
         <div class="screen__actions">
-          <button class="primary" id="export-txt">Export TXT</button>
+          <button class="primary" id="export-html">Export HTML</button>
+          <button id="export-txt">Export TXT</button>
           <button id="export-json">Export JSON</button>
         </div>
         <div class="screen__actions">
@@ -29,6 +30,9 @@ export const ExportPage: Page = (root, go) => {
       </div>
     `
 
+    root.querySelector<HTMLButtonElement>('#export-html')!.addEventListener('click', () => {
+      download('one-on-one.html', 'text/html', toHtml(messages, current.myUserId, otherName))
+    })
     root.querySelector<HTMLButtonElement>('#export-txt')!.addEventListener('click', () => {
       download('one-on-one.txt', 'text/plain', toTxt(messages, current.myUserId, otherName))
     })
@@ -55,6 +59,45 @@ function toJson(messages: HistoryMessage[], myUserId: string, otherName: string)
     at: m.createdAt,
   }))
   return JSON.stringify(out, null, 2)
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
+  )
+}
+
+// Readable HTML export: left/right layout so the conversation is easy to follow.
+function toHtml(messages: HistoryMessage[], myUserId: string, otherName: string): string {
+  const rows = messages
+    .map((m) => {
+      const mine = m.senderId === myUserId
+      const who = mine ? 'You' : otherName
+      const when = formatFullTimestamp(new Date(m.createdAt)).replace('\n', ' ')
+      return `    <div class="msg ${mine ? 'me' : 'them'}"><div class="meta">${escapeHtml(who)} · ${escapeHtml(when)}</div><div class="text">${escapeHtml(m.content)}</div></div>`
+    })
+    .join('\n')
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>One on One — conversation with ${escapeHtml(otherName)}</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 680px; margin: 0 auto; padding: 24px; background: #0d1117; color: #e6edf3; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .count { color: #9aa4af; font-size: 13px; margin-bottom: 20px; }
+  .msg { margin: 10px 0; padding: 10px 14px; border-radius: 12px; max-width: 80%; }
+  .msg.me { background: #16351f; margin-left: auto; }
+  .msg.them { background: #12181f; margin-right: auto; }
+  .meta { font-size: 11px; color: #9aa4af; margin-bottom: 4px; }
+  .text { white-space: pre-wrap; word-wrap: break-word; }
+</style></head>
+<body>
+  <h1>Conversation with ${escapeHtml(otherName)}</h1>
+  <div class="count">${messages.length} messages · exported ${escapeHtml(new Date().toLocaleString())}</div>
+${rows}
+</body></html>`
 }
 
 function download(filename: string, mime: string, content: string): void {

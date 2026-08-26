@@ -17,8 +17,20 @@ export interface CurrentConnection {
   isRequester: boolean
   otherNickname: string | null
   otherConnectionCode: string
-  leaveRequestedByMe: boolean | null
-  leaveRequestedAt: string | null
+  myLeaveStep: number
+  otherLeaveStep: number
+  daysRemaining: number | null
+  bothLeaving: boolean
+  canAdvanceLeave: boolean
+  otherLastReadAt: string | null
+}
+
+export interface LeaveResult {
+  status: ConnectionStatus
+  myLeaveStep: number
+  daysRemaining: number | null
+  bothLeaving: boolean
+  terminated: boolean
 }
 
 export interface HistoryMessage {
@@ -66,4 +78,33 @@ export async function setNickname(connectionId: string, nickname: string): Promi
     body: JSON.stringify({ nickname }),
   })
   await unwrap(res)
+}
+
+export async function advanceLeave(connectionId: string): Promise<LeaveResult> {
+  const res = await authedFetch(`/api/connections/${connectionId}/leave`, { method: 'POST' })
+  const body = await unwrap<{ leave: LeaveResult }>(res)
+  return body.leave
+}
+
+export async function cancelLeave(connectionId: string): Promise<LeaveResult> {
+  const res = await authedFetch(`/api/connections/${connectionId}/leave/cancel`, { method: 'POST' })
+  const body = await unwrap<{ leave: LeaveResult }>(res)
+  return body.leave
+}
+
+export async function confirmEndLeave(connectionId: string): Promise<LeaveResult> {
+  const res = await authedFetch(`/api/connections/${connectionId}/leave/confirm-end`, { method: 'POST' })
+  const body = await unwrap<{ leave: LeaveResult }>(res)
+  return body.leave
+}
+
+export async function markRead(connectionId: string): Promise<void> {
+  const res = await authedFetch(`/api/connections/${connectionId}/read`, { method: 'POST' })
+  await unwrap(res)
+}
+
+export async function regenerateConnectionCode(): Promise<string> {
+  const res = await authedFetch('/api/me/connection-code/regenerate', { method: 'POST' })
+  const body = await unwrap<{ connectionCode: string }>(res)
+  return body.connectionCode
 }

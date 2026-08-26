@@ -109,6 +109,24 @@ export async function declineConnection(connectionId: string, userId: string): P
   return data
 }
 
+// Stage E leave model (overrides spec §25 auto-expire): 5 deliberate steps, one per 24h,
+// solo-completable — reaching step 5 terminates on its own. See docs/PROGRESS.md.
+const LEAVE_STEPS_TOTAL = 5
+const LEAVE_STEP_INTERVAL_MS = 24 * 60 * 60 * 1000
+
+interface MemberLeaveRow {
+  user_id: string
+  nickname: string | null
+  leave_step: number
+  leave_last_step_at: string | null
+  last_read_at: string | null
+}
+
+function canAdvance(lastStepAt: string | null): boolean {
+  if (!lastStepAt) return true
+  return Date.now() - new Date(lastStepAt).getTime() >= LEAVE_STEP_INTERVAL_MS
+}
+
 export interface CurrentConnection {
   id: string
   status: ConnectionStatus
@@ -116,8 +134,12 @@ export interface CurrentConnection {
   isRequester: boolean
   otherNickname: string | null
   otherConnectionCode: string
-  leaveRequestedByMe: boolean | null
-  leaveRequestedAt: string | null
+  myLeaveStep: number
+  otherLeaveStep: number
+  daysRemaining: number | null
+  bothLeaving: boolean
+  canAdvanceLeave: boolean
+  otherLastReadAt: string | null
 }
 
 export async function getCurrentConnection(userId: string): Promise<CurrentConnection | null> {
@@ -131,26 +153,163 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
   if (!data) return null
 
   const otherUserId = data.user_a_id === userId ? data.user_b_id : data.user_a_id
-  const [{ data: member }, { data: otherUser }] = await Promise.all([
+  const [{ data: members }, { data: otherUser }] = await Promise.all([
     supabaseAdmin
       .from('connection_members')
-      .select('nickname')
-      .eq('connection_id', data.id)
-      .eq('user_id', otherUserId)
-      .maybeSingle(),
+      .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
+      .eq('connection_id', data.id),
     supabaseAdmin.from('users').select('connection_code').eq('id', otherUserId).single(),
   ])
+
+  const rows = (members ?? []) as MemberLeaveRow[]
+  const mine = rows.find((m) => m.user_id === userId)
+  const other = rows.find((m) => m.user_id === otherUserId)
+  const myLeaveStep = mine?.leave_step ?? 0
+  const otherLeaveStep = other?.leave_step ?? 0
 
   return {
     id: data.id,
     status: data.status,
     myUserId: userId,
     isRequester: data.user_a_id === userId,
-    otherNickname: member?.nickname ?? null,
+    otherNickname: other?.nickname ?? null,
     otherConnectionCode: otherUser?.connection_code ?? '',
-    leaveRequestedByMe: data.leave_requested_by ? data.leave_requested_by === userId : null,
-    leaveRequestedAt: data.leave_requested_at,
+    myLeaveStep,
+    otherLeaveStep,
+    daysRemaining: myLeaveStep > 0 ? LEAVE_STEPS_TOTAL - myLeaveStep : null,
+    bothLeaving: myLeaveStep > 0 && otherLeaveStep > 0,
+    canAdvanceLeave: canAdvance(mine?.leave_last_step_at ?? null),
+    otherLastReadAt: other?.last_read_at ?? null,
   }
+}
+
+// Mark the conversation read up to now for this member (drives the other
+// member's "Seen" indicator). Connection state, not a message — kept off Transport.
+export async function markRead(connectionId: string, userId: string): Promise<void> {
+  await getConnectionForMember(connectionId, userId)
+  const { error } = await supabaseAdmin
+    .from('connection_members')
+    .update({ last_read_at: new Date().toISOString() })
+    .eq('connection_id', connectionId)
+    .eq('user_id', userId)
+  if (error) throw error
+}
+
+async function getMemberLeave(connectionId: string, userId: string): Promise<MemberLeaveRow> {
+  const { data, error } = await supabaseAdmin
+    .from('connection_members')
+    .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
+    .eq('connection_id', connectionId)
+    .eq('user_id', userId)
+    .single()
+  if (error) throw error
+  return data as MemberLeaveRow
+}
+
+// Termination deletes the whole conversation — the data belongs to the
+// participants (they can export first). connection_members + messages cascade
+// off the connection FK (on delete cascade), so one delete clears everything.
+async function terminate(connectionId: string): Promise<void> {
+  const { error } = await supabaseAdmin.from('connections').delete().eq('id', connectionId)
+  if (error) throw error
+}
+
+export interface LeaveResult {
+  status: ConnectionStatus
+  myLeaveStep: number
+  daysRemaining: number | null
+  bothLeaving: boolean
+  terminated: boolean
+}
+
+// Advance MY leave countdown by one step (gated to once per 24h). Reaching the
+// final step terminates the connection solo — no agreement from the other member.
+export async function advanceLeave(connectionId: string, userId: string): Promise<LeaveResult> {
+  const connection = await getConnectionForMember(connectionId, userId)
+  if (connection.status !== 'active' && connection.status !== 'leave_pending') {
+    throw new ConnectionError(409, 'connection is not active')
+  }
+
+  const mine = await getMemberLeave(connectionId, userId)
+  if (!canAdvance(mine.leave_last_step_at)) {
+    throw new ConnectionError(429, 'you can advance the countdown once every 24 hours')
+  }
+
+  const newStep = mine.leave_step + 1
+  const { error } = await supabaseAdmin
+    .from('connection_members')
+    .update({ leave_step: newStep, leave_last_step_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('connection_id', connectionId)
+    .eq('user_id', userId)
+  if (error) throw error
+
+  if (newStep >= LEAVE_STEPS_TOTAL) {
+    await terminate(connectionId)
+    return { status: 'terminated', myLeaveStep: newStep, daysRemaining: 0, bothLeaving: false, terminated: true }
+  }
+
+  if (connection.status !== 'leave_pending') {
+    const { error: statusError } = await supabaseAdmin
+      .from('connections')
+      .update({ status: 'leave_pending', updated_at: new Date().toISOString() })
+      .eq('id', connectionId)
+    if (statusError) throw statusError
+  }
+
+  const other = await getMemberLeave(connectionId, userId === connection.user_a_id ? connection.user_b_id : connection.user_a_id)
+  return {
+    status: 'leave_pending',
+    myLeaveStep: newStep,
+    daysRemaining: LEAVE_STEPS_TOTAL - newStep,
+    bothLeaving: newStep > 0 && other.leave_step > 0,
+    terminated: false,
+  }
+}
+
+// Cancel MY leave countdown. If neither member is leaving anymore, connection returns to active.
+export async function cancelLeave(connectionId: string, userId: string): Promise<LeaveResult> {
+  const connection = await getConnectionForMember(connectionId, userId)
+  if (connection.status !== 'leave_pending') throw new ConnectionError(409, 'no leave in progress')
+
+  const { error } = await supabaseAdmin
+    .from('connection_members')
+    .update({ leave_step: 0, leave_last_step_at: null, updated_at: new Date().toISOString() })
+    .eq('connection_id', connectionId)
+    .eq('user_id', userId)
+  if (error) throw error
+
+  const otherUserId = userId === connection.user_a_id ? connection.user_b_id : connection.user_a_id
+  const other = await getMemberLeave(connectionId, otherUserId)
+  let status: ConnectionStatus = 'leave_pending'
+  if (other.leave_step === 0) {
+    const { error: statusError } = await supabaseAdmin
+      .from('connections')
+      .update({ status: 'active', updated_at: new Date().toISOString() })
+      .eq('id', connectionId)
+    if (statusError) throw statusError
+    status = 'active'
+  }
+
+  return { status, myLeaveStep: 0, daysRemaining: null, bothLeaving: false, terminated: false }
+}
+
+// Mutual fast-path: when BOTH members are leaving, either can end immediately,
+// skipping the remaining days. Requires both steps > 0.
+export async function confirmEndLeave(connectionId: string, userId: string): Promise<LeaveResult> {
+  const connection = await getConnectionForMember(connectionId, userId)
+  if (connection.status !== 'leave_pending') throw new ConnectionError(409, 'no leave in progress')
+
+  const otherUserId = userId === connection.user_a_id ? connection.user_b_id : connection.user_a_id
+  const [mine, other] = await Promise.all([
+    getMemberLeave(connectionId, userId),
+    getMemberLeave(connectionId, otherUserId),
+  ])
+  if (mine.leave_step === 0 || other.leave_step === 0) {
+    throw new ConnectionError(409, 'both members must be leaving to end immediately')
+  }
+
+  await terminate(connectionId)
+  return { status: 'terminated', myLeaveStep: mine.leave_step, daysRemaining: 0, bothLeaving: true, terminated: true }
 }
 
 export async function setNickname(connectionId: string, userId: string, nickname: string): Promise<void> {
