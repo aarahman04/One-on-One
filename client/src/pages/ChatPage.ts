@@ -48,25 +48,77 @@ export const ChatPage: Page = (root, go) => {
     renderChat(root, otherName)
     const log = root.querySelector<HTMLDivElement>('#chat-log')!
 
-    // --- Search ------------------------------------------------------------
+    // --- Search: highlight every match, jump between them with the arrows --
     const searchBar = root.querySelector<HTMLDivElement>('#chat-search')!
     const searchInput = root.querySelector<HTMLInputElement>('#search-input')!
+    const searchCount = root.querySelector<HTMLSpanElement>('#search-count')!
+    let matches: HTMLElement[] = []
+    let currentMatch = -1
 
-    const filterLog = (q: string): void => {
-      const query = q.trim().toLowerCase()
-      const active = query !== ''
-      for (const row of log.querySelectorAll<HTMLElement>('.chat__message')) {
-        const text = row.querySelector('.chat__message-text')?.textContent?.toLowerCase() ?? ''
-        row.classList.toggle('chat__hidden', active && !text.includes(query))
+    const clearHighlights = (): void => {
+      for (const el of log.querySelectorAll<HTMLElement>('.chat__message-text')) {
+        if (el.querySelector('mark')) el.textContent = el.textContent // flatten <mark>s back to plain text
       }
-      for (const el of log.querySelectorAll<HTMLElement>('.chat__date-separator, .chat__system-line')) {
-        el.classList.toggle('chat__hidden', active)
-      }
+      for (const row of log.querySelectorAll('.chat__message--current')) row.classList.remove('chat__message--current')
     }
-    searchInput.addEventListener('input', () => filterLog(searchInput.value))
+
+    const focusCurrent = (): void => {
+      matches.forEach((row, k) => row.classList.toggle('chat__message--current', k === currentMatch))
+      matches[currentMatch]?.scrollIntoView({ block: 'center' })
+      searchCount.textContent = matches.length ? `${currentMatch + 1}/${matches.length}` : '0/0'
+    }
+
+    const runSearch = (raw: string): void => {
+      clearHighlights()
+      matches = []
+      currentMatch = -1
+      const q = raw.trim().toLowerCase()
+      if (q) {
+        for (const el of log.querySelectorAll<HTMLElement>('.chat__message-text')) {
+          const content = el.textContent ?? ''
+          const lower = content.toLowerCase()
+          if (!lower.includes(q)) continue
+          el.textContent = ''
+          let i = 0
+          while (i < content.length) {
+            const idx = lower.indexOf(q, i)
+            if (idx === -1) {
+              el.appendChild(document.createTextNode(content.slice(i)))
+              break
+            }
+            if (idx > i) el.appendChild(document.createTextNode(content.slice(i, idx)))
+            const mark = document.createElement('mark')
+            mark.textContent = content.slice(idx, idx + q.length)
+            el.appendChild(mark)
+            i = idx + q.length
+          }
+          const row = el.closest<HTMLElement>('.chat__message')
+          if (row) matches.push(row)
+        }
+        if (matches.length) currentMatch = matches.length - 1 // start on the most recent match
+      }
+      focusCurrent()
+    }
+
+    // ▲ = older match, ▼ = newer match (matches are in oldest→newest order).
+    const stepMatch = (dir: number): void => {
+      if (!matches.length) return
+      currentMatch = (currentMatch + dir + matches.length) % matches.length
+      focusCurrent()
+    }
+
+    searchInput.addEventListener('input', () => runSearch(searchInput.value))
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        stepMatch(e.shiftKey ? 1 : -1)
+      }
+    })
+    root.querySelector<HTMLButtonElement>('#search-prev')!.addEventListener('click', () => stepMatch(-1))
+    root.querySelector<HTMLButtonElement>('#search-next')!.addEventListener('click', () => stepMatch(1))
     root.querySelector<HTMLButtonElement>('#search-close')!.addEventListener('click', () => {
       searchInput.value = ''
-      filterLog('')
+      runSearch('')
       searchBar.style.display = 'none'
     })
 
@@ -76,6 +128,16 @@ export const ChatPage: Page = (root, go) => {
       searchBar.style.display = 'flex'
       searchInput.focus()
     })
+
+    // --- Presence: the other side marks read every ~4s while the chat is on
+    // screen, so a fresh last_read_at means they're actually here right now.
+    const navStatus = root.querySelector<HTMLDivElement>('#nav-status')!
+    const PRESENCE_WINDOW_MS = 15000
+    const updatePresence = (otherLastReadAt: string | null): void => {
+      const active = !!otherLastReadAt && Date.now() - new Date(otherLastReadAt).getTime() < PRESENCE_WINDOW_MS
+      navStatus.textContent = active ? 'in chat' : 'away'
+      navStatus.classList.toggle('chat__nav-status--away', !active)
+    }
 
     // --- Message rendering -------------------------------------------------
     let lastDate: Date | null = null
@@ -217,6 +279,7 @@ export const ChatPage: Page = (root, go) => {
     refreshTicks()
     renderBanner(current)
     reconcileLeave(current)
+    updatePresence(current.otherLastReadAt)
     void markRead(connectionId).catch(() => {})
 
     // --- Outgoing (optimistic) --------------------------------------------
@@ -308,6 +371,7 @@ export const ChatPage: Page = (root, go) => {
       renderBanner(next)
       otherLastRead = next.otherLastReadAt
       refreshTicks()
+      updatePresence(next.otherLastReadAt)
       // Keep marking read while the chat is actually on screen — makes the
       // other side's "seen" tick reliable even if a discrete event was missed.
       if (document.visibilityState === 'visible') void markRead(connectionId).catch(() => {})
@@ -327,12 +391,15 @@ function renderChat(root: HTMLElement, displayName: string): void {
       <div class="chat__nav">
         <div>
           <div class="chat__nav-title" id="nav-title"></div>
-          <div class="chat__nav-status">connected</div>
+          <div class="chat__nav-status" id="nav-status">connecting…</div>
         </div>
         <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
       </div>
       <div class="chat__search" id="chat-search" style="display: none;">
         <input id="search-input" placeholder="Search messages…" autocomplete="off" />
+        <span class="chat__search-count" id="search-count">0/0</span>
+        <button type="button" class="chat__search-nav" id="search-prev" title="Older match">▲</button>
+        <button type="button" class="chat__search-nav" id="search-next" title="Newer match">▼</button>
         <button type="button" class="chat__search-close" id="search-close">✕</button>
       </div>
       <div class="chat__leave-banner" id="leave-banner" style="display: none;"></div>
