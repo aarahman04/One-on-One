@@ -5,6 +5,7 @@ export function mountMenuDropdown(
   anchor: HTMLButtonElement,
   go: (screen: Screen) => void,
   onSearch?: () => void,
+  onAppearance?: () => void,
 ): void {
   let panel: HTMLDivElement | null = null
 
@@ -34,6 +35,7 @@ export function mountMenuDropdown(
       <div class="menu__group-label">CONVERSATION</div>
       <button class="menu__item" data-action="export">Export</button>
       <button class="menu__item" data-action="search"${onSearch ? '' : ' disabled'}>Search</button>
+      ${onAppearance ? '<button class="menu__item" data-action="appearance">Appearance</button>' : ''}
       <div class="menu__divider"></div>
       <div class="menu__group-label">CONNECTION</div>
       <button class="menu__item menu__item--danger" data-action="leave">Leave connection</button>
@@ -52,6 +54,12 @@ export function mountMenuDropdown(
       panel.querySelector('[data-action="search"]')!.addEventListener('click', () => {
         close()
         onSearch()
+      })
+    }
+    if (onAppearance) {
+      panel.querySelector('[data-action="appearance"]')!.addEventListener('click', () => {
+        close()
+        onAppearance()
       })
     }
     panel.querySelector('[data-action="leave"]')!.addEventListener('click', () => {
