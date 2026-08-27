@@ -35,8 +35,8 @@ function write(a: Appearance): void {
 export function applyAppearance(chat: HTMLElement, wallpaper: string): void {
   const a = read()
   chat.classList.toggle('chat--wallpaper-1', wallpaper === '1')
-  chat.classList.toggle('chat--wallpaper-2', wallpaper === '2')
   chat.classList.toggle('chat--wallpaper-love', wallpaper === 'love')
+  chat.classList.toggle('chat--wallpaper-samurai', wallpaper === 'samurai')
   chat.classList.toggle('chat--bubbles', a.style === 'bubbles')
   chat.dataset.theme = a.theme
 }
@@ -63,8 +63,8 @@ export function openAppearance(
     <div class="appearance__row" data-group="wallpaper">
       <button class="appearance__opt" data-value="off">Off</button>
       <button class="appearance__opt" data-value="1">1</button>
-      <button class="appearance__opt" data-value="2">2</button>
       <button class="appearance__opt" data-value="love">Love</button>
+      <button class="appearance__opt" data-value="samurai">Samurai</button>
     </div>
     <div class="menu__divider"></div>
     <div class="menu__group-label">MESSAGE STYLE</div>
