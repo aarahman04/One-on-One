@@ -2,7 +2,7 @@
 // Adding a command is a one-liner in COMMANDS below (groundwork for more later).
 
 export interface SlashContext {
-  input: HTMLInputElement
+  input: HTMLTextAreaElement
   writeLetter: () => void
 }
 
@@ -23,8 +23,25 @@ const COMMANDS: SlashCommand[] = [
   { name: 'flip', description: '(╯°□°)╯︵ ┻━┻', run: (ctx) => insert(ctx, '(╯°□°)╯︵ ┻━┻') },
 ]
 
+// Exact "/command" match — used by ChatPage's form-submit handler so a mobile
+// soft keyboard's Send/Go key (which never fires a catchable Enter keydown)
+// still opens the command instead of sending the literal "/letter" text.
+export function matchCommand(value: string): SlashCommand | undefined {
+  const v = value.trim()
+  if (!v.startsWith('/')) return undefined
+  const name = v.slice(1).toLowerCase()
+  return COMMANDS.find((c) => c.name === name)
+}
+
+export function runIfCommand(value: string, ctx: SlashContext): boolean {
+  const cmd = matchCommand(value)
+  if (!cmd) return false
+  cmd.run(ctx)
+  return true
+}
+
 // Wires the composer input to a drop-up menu. Returns nothing; self-manages.
-export function mountSlashCommands(composer: HTMLElement, input: HTMLInputElement, ctx: SlashContext): void {
+export function mountSlashCommands(composer: HTMLElement, input: HTMLTextAreaElement, ctx: SlashContext): void {
   let menu: HTMLElement | null = null
   let filtered: SlashCommand[] = []
   let active = 0
@@ -89,9 +106,10 @@ export function mountSlashCommands(composer: HTMLElement, input: HTMLInputElemen
       active = (active + 1) % filtered.length
       render()
     } else if (e.key === 'Enter') {
-      // Take Enter before the composer's submit handler runs.
+      // Take Enter before the composer's submit handler AND ChatPage's own
+      // desktop enter-to-send listener (also bound to this element) run.
       e.preventDefault()
-      e.stopPropagation()
+      e.stopImmediatePropagation()
       run(filtered[active])
     } else if (e.key === 'Escape') {
       hide()

@@ -49,6 +49,10 @@ Leave model (Stage E) overrides spec §25's passive auto-expire: it is a deliber
 
 **Termination deletes the conversation**: reaching `terminated` deletes the `connections` row, which cascades (`on delete cascade`) to `connection_members` and `messages` — nothing is retained server-side. Participants export (TXT / JSON / HTML) before leaving; the data is theirs. Read receipts: `connection_members.last_read_at`; a sender's message is "Seen" once the other member's `last_read_at ≥ its created_at`, surfaced via the same `/connections/current` poll.
 
+## Client appearance (V1, since 2026-08-27)
+
+Client-only, no new data flow — `features/appearancePreview.ts` persists `{ wallpaper, style, theme }` to localStorage and toggles classes/attributes on `.chat` (`applyAppearance`), read by CSS in `styles/global.css`. Bubbles is the default `style`; `theme` (light/dark) only affects bubble-mode colors via `--bubble-mine-*`/`--bubble-other-*` custom properties, scoped under `.chat--bubbles[data-theme='light']`. `wallpaper: 'love'` serves `client/public/Love.webp` (Vite's static dir) and further overrides the bubble palette to a rose tone so bubbles read against the art. The composer (`ChatPage.ts`) is a `<textarea>`, not `<input>`, so messages can carry blank-line paragraph gaps; `utils/linkify.ts` turns URLs/phone numbers into `<a>`/`tel:` links via text-node splitting (same XSS-safe pattern as the existing search highlighter).
+
 ## Transport abstraction
 
 Load-bearing for V3/V4 — every client message path routes through this, not directly through Socket.IO.

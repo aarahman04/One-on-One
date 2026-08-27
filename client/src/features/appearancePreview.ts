@@ -1,15 +1,15 @@
-// TEMPORARY premium-feature preview: chat wallpaper + Instagram-style bubbles.
-// Fully self-contained and removable — to drop it, delete this file, its two
-// lines of wiring in ChatPage.ts, the `onAppearance` param in MenuDropdown.ts,
-// and the `/* PREVIEW */` CSS block in global.css. No backend, no paywall.
+// Appearance settings: chat wallpaper, message style (line/bubbles), and
+// bubble-mode light/dark theme. Self-contained; wired into ChatPage.ts via
+// applyAppearance()/openAppearance(), and into MenuDropdown.ts's onAppearance.
 
 interface Appearance {
-  wallpaper: 'off' | '1' | '2'
+  wallpaper: 'off' | '1' | '2' | 'love'
   style: 'line' | 'bubbles'
+  theme: 'light' | 'dark'
 }
 
 const KEY = 'appearancePreview'
-const DEFAULT: Appearance = { wallpaper: 'off', style: 'line' }
+const DEFAULT: Appearance = { wallpaper: 'off', style: 'bubbles', theme: 'dark' }
 
 function read(): Appearance {
   try {
@@ -33,7 +33,9 @@ export function applyAppearance(chat: HTMLElement): void {
   const a = read()
   chat.classList.toggle('chat--wallpaper-1', a.wallpaper === '1')
   chat.classList.toggle('chat--wallpaper-2', a.wallpaper === '2')
+  chat.classList.toggle('chat--wallpaper-love', a.wallpaper === 'love')
   chat.classList.toggle('chat--bubbles', a.style === 'bubbles')
+  chat.dataset.theme = a.theme
 }
 
 // Small popover anchored to the nav (reuses the .menu positioning).
@@ -52,12 +54,19 @@ export function openAppearance(anchor: HTMLElement, chat: HTMLElement): void {
       <button class="appearance__opt" data-value="off">Off</button>
       <button class="appearance__opt" data-value="1">1</button>
       <button class="appearance__opt" data-value="2">2</button>
+      <button class="appearance__opt" data-value="love">Love</button>
     </div>
     <div class="menu__divider"></div>
     <div class="menu__group-label">MESSAGE STYLE</div>
     <div class="appearance__row" data-group="style">
       <button class="appearance__opt" data-value="line">Line</button>
       <button class="appearance__opt" data-value="bubbles">Bubbles</button>
+    </div>
+    <div class="menu__divider"></div>
+    <div class="menu__group-label">THEME</div>
+    <div class="appearance__row" data-group="theme">
+      <button class="appearance__opt" data-value="light">Light</button>
+      <button class="appearance__opt" data-value="dark">Dark</button>
     </div>
   `
   anchor.appendChild(panel)

@@ -140,6 +140,8 @@ input:focus {
   display: flex;
   flex-direction: column;
   text-align: left;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .chat__nav {
@@ -328,11 +330,19 @@ input:focus {
 .chat__message-text {
   color: var(--text);
   display: inline;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .chat__message-text::before {
   content: '> ';
   color: var(--muted);
+}
+
+.chat__message-text a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .chat__message-full-time {
@@ -348,15 +358,36 @@ input:focus {
 }
 
 .chat__input-bar {
+  position: relative; /* anchors .slash-menu so it stays on-screen on phones */
   display: flex;
+  align-items: flex-end;
   gap: 10px;
   padding: 14px 20px;
   padding-bottom: calc(14px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
 }
 
-.chat__input-bar input {
+.chat__input-bar input,
+.chat__input-bar textarea {
   flex: 1;
+}
+
+.chat__input-bar textarea {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.4;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  resize: none;
+  overflow-y: auto;
+}
+
+.chat__input-bar textarea:focus {
+  outline: none;
+  border-color: var(--accent-other);
 }
 
 /* Menu dropdown */
@@ -414,7 +445,8 @@ input:focus {
 
 @media (max-width: 480px) {
   /* 16px min prevents iOS zoom-on-focus, which lurches the viewport */
-  input {
+  input,
+  textarea {
     font-size: 16px;
   }
 
@@ -483,12 +515,34 @@ input:focus {
   display: none;
 }
 
+/* Bubble-mode palette: iMessage-style blue "me" bubble, grey "them" bubble.
+   --bubble-other-* flips with the Light/Dark theme picker (data-theme on
+   .chat); --bubble-mine-* stays a fixed saturated color across both themes,
+   like iOS does, since it's white text on blue either way. */
+.chat--bubbles {
+  --bubble-mine-bg: #0a84ff;
+  --bubble-mine-text: #ffffff;
+  --bubble-other-bg: #26262a;
+  --bubble-other-text: var(--text);
+}
+
+.chat--bubbles[data-theme='light'] {
+  --bg: #f5f5f7;
+  --bg-raised: #ffffff;
+  --border: #d9d9dd;
+  --text: #1c1c1e;
+  --text-dim: #5b5b60;
+  --muted: #9a9a9e;
+  --bubble-other-bg: #e9e9eb;
+}
+
 .chat--bubbles .chat__message-body {
   flex: 0 1 auto;
   max-width: 75%;
   padding: 8px 12px;
   border-radius: 14px;
-  background: var(--bg-raised);
+  background: var(--bubble-other-bg);
+  color: var(--bubble-other-text);
 }
 
 .chat--bubbles .chat__message-text {
@@ -505,12 +559,13 @@ input:focus {
 
 .chat--bubbles .chat__message[data-mine='1'] .chat__message-body,
 .chat--bubbles .chat__message[data-mine='1'] .chat__message-text {
-  background: var(--accent-you);
-  color: #04170a;
+  background: var(--bubble-mine-bg);
+  color: var(--bubble-mine-text);
 }
 
-/* Bubble mode read receipt = WhatsApp ticks (✓ sent, blue ✓✓ read) instead of
-   the line-mode dot. */
+/* Bubble mode read receipt = WhatsApp-style ticks (✓ sent, ✓✓ read) instead of
+   the line-mode dot. Rendered in white against the always-saturated "mine"
+   bubble background so they stay visible instead of blending into it. */
 .chat--bubbles .chat__receipt {
   width: auto;
   height: auto;
@@ -520,7 +575,7 @@ input:focus {
   font-size: 11px;
   line-height: 1;
   letter-spacing: -2px;
-  color: rgba(4, 23, 10, 0.85);
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .chat--bubbles .chat__receipt--pending {
@@ -532,11 +587,29 @@ input:focus {
 }
 
 .chat--bubbles .chat__receipt--seen {
-  color: var(--accent-other);
+  color: #ffffff;
 }
 
 .chat--bubbles .chat__receipt--seen::after {
   content: '✓✓';
+}
+
+/* "Love" wallpaper: the rose/hearts photo background, with bubble colors
+   pulled from the artwork's own palette (wallpapers/wallpaper description.txt)
+   so they read as part of the scene instead of clashing with it.
+   (WALLPAPER note: the current Love.webp is a watermarked stock preview —
+   swap for a licensed copy at client/public/Love.webp before shipping.) */
+.chat--wallpaper-love .chat__log {
+  background:
+    linear-gradient(rgba(30, 10, 25, 0.28), rgba(30, 10, 25, 0.28)),
+    url('/Love.webp') center / cover no-repeat;
+}
+
+.chat--wallpaper-love.chat--bubbles {
+  --bubble-mine-bg: linear-gradient(135deg, #f25a7e, #f1708c); /* main pink / soft pink */
+  --bubble-mine-text: #ffffff;
+  --bubble-other-bg: rgba(217, 212, 232, 0.88); /* lavender */
+  --bubble-other-text: #2f3150; /* dark navy */
 }
 
 /* --- Letters + slash commands + modal ------------------------------------ */
@@ -572,7 +645,7 @@ input:focus {
 }
 
 .chat--bubbles .chat__message[data-mine='1'] .letter-card {
-  color: var(--text); /* keep the card readable even inside a green bubble */
+  color: var(--text); /* keep the card readable even inside a colored bubble */
 }
 
 .slash-menu {
