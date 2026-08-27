@@ -4,10 +4,19 @@ import { mountMenuDropdown } from '../components/MenuDropdown'
 import { applyAppearance, openAppearance } from '../features/appearancePreview'
 import { openLetter, openLetterComposer, type LetterPayload } from '../features/letters'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
-import { getCurrentConnection, getMessages, markRead, type CurrentConnection } from '../services/connectionsApi'
+import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
+import {
+  getCurrentConnection,
+  getMessages,
+  markRead,
+  type CurrentConnection,
+  type ReactionSummary,
+} from '../services/connectionsApi'
 import { connectMessaging, type IncomingMessage, type MessageType } from '../services/messageService'
-import type { Transport } from '../services/transport/Transport'
+import type { ReactionUpdate, Transport } from '../services/transport/Transport'
 import { linkifyInto } from '../utils/linkify'
+
+const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
 interface ChatMessage {
   id?: string
@@ -17,6 +26,7 @@ interface ChatMessage {
   type: MessageType
   payload: unknown | null
   replyTo?: string | null
+  reactions?: ReactionSummary[]
 }
 
 interface Pending {
@@ -40,6 +50,7 @@ interface QuotableMessage {
 export const ChatPage: Page = (root, go) => {
   let transport: Transport | null = null
   let unsubscribe: (() => void) | null = null
+  let unsubscribeReactions: (() => void) | null = null
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let focusHandler: (() => void) | null = null
   let disposed = false
@@ -47,6 +58,7 @@ export const ChatPage: Page = (root, go) => {
   const cleanup = (): void => {
     disposed = true
     unsubscribe?.()
+    unsubscribeReactions?.()
     transport?.disconnect()
     if (pollTimer) clearInterval(pollTimer)
     if (focusHandler) window.removeEventListener('focus', focusHandler)
@@ -146,6 +158,25 @@ export const ChatPage: Page = (root, go) => {
     const menuBtn = root.querySelector<HTMLButtonElement>('#menu-btn')!
     const chatEl = root.querySelector<HTMLElement>('.chat')!
     applyAppearance(chatEl) // TEMPORARY premium preview
+
+    // Push notifications: a menu toggle rather than an automatic prompt-on-load
+    // (unsolicited permission prompts get auto-denied by browsers/users alike).
+    // appendSystemLine is defined further down but only called from here later,
+    // after it's initialized — same pattern the leave-lifecycle code already uses.
+    const toggleNotifications = async (): Promise<void> => {
+      if (await isPushSubscribed()) {
+        await unsubscribeFromPush()
+        appendSystemLine('Notifications turned off.')
+        return
+      }
+      try {
+        await subscribeToPush()
+        appendSystemLine("Notifications turned on — you'll be notified when a message arrives and the app is closed.")
+      } catch {
+        appendSystemLine('Could not enable notifications (permission denied, or unsupported on this browser).')
+      }
+    }
+
     mountMenuDropdown(
       nav,
       menuBtn,
@@ -155,6 +186,7 @@ export const ChatPage: Page = (root, go) => {
         searchInput.focus()
       },
       () => openAppearance(nav, chatEl),
+      isPushSupported() ? () => void toggleNotifications() : undefined,
     )
 
     // --- Presence: the other side marks read every ~4s while the chat is on
@@ -170,6 +202,69 @@ export const ChatPage: Page = (root, go) => {
     // --- Message rendering -------------------------------------------------
     let lastDate: Date | null = null
     const messagesById = new Map<string, QuotableMessage>()
+
+    // --- Reactions: rendered as chips under the message body, updated live
+    // via reaction:update from the transport. sendReaction() below is defined
+    // after `transport` is populated by connectMessaging().
+    const reactionsByMessage = new Map<string, ReactionSummary[]>()
+
+    const renderReactionChips = (messageId: string): void => {
+      const row = log.querySelector<HTMLElement>(`[data-id="${CSS.escape(messageId)}"]`)
+      const body = row?.querySelector<HTMLElement>('.chat__message-body')
+      if (!body) return
+      const list = reactionsByMessage.get(messageId) ?? []
+      let container = body.querySelector<HTMLElement>('.chat__reactions')
+      if (!list.length) {
+        container?.remove()
+        return
+      }
+      if (!container) {
+        container = document.createElement('div')
+        container.className = 'chat__reactions'
+        body.append(container)
+      }
+      container.innerHTML = ''
+      for (const r of list) {
+        const chip = document.createElement('button')
+        chip.type = 'button'
+        chip.className = 'chat__reaction-chip' + (r.userIds.includes(myUserId) ? ' chat__reaction-chip--mine' : '')
+        chip.textContent = r.userIds.length > 1 ? `${r.emoji} ${r.userIds.length}` : r.emoji
+        chip.addEventListener('click', (e) => {
+          e.stopPropagation()
+          toggleReaction(messageId, r.emoji)
+        })
+        container.append(chip)
+      }
+    }
+
+    const applyReactionUpdate = (update: ReactionUpdate): void => {
+      const list = reactionsByMessage.get(update.messageId) ?? []
+      let entry = list.find((r) => r.emoji === update.emoji)
+      if (update.op === 'add') {
+        if (!entry) {
+          entry = { emoji: update.emoji, userIds: [] }
+          list.push(entry)
+        }
+        if (!entry.userIds.includes(update.userId)) entry.userIds.push(update.userId)
+      } else if (entry) {
+        entry.userIds = entry.userIds.filter((id) => id !== update.userId)
+      }
+      reactionsByMessage.set(
+        update.messageId,
+        list.filter((r) => r.userIds.length > 0),
+      )
+      renderReactionChips(update.messageId)
+    }
+
+    const toggleReaction = (messageId: string, emoji: string): void => {
+      const entry = (reactionsByMessage.get(messageId) ?? []).find((r) => r.emoji === emoji)
+      const alreadyReacted = entry?.userIds.includes(myUserId) ?? false
+      const op = alreadyReacted ? 'remove' : 'add'
+      applyReactionUpdate({ messageId, emoji, userId: myUserId, op }) // optimistic; server echo reconciles
+      transport?.sendReaction(messageId, emoji, op).catch(() => {
+        applyReactionUpdate({ messageId, emoji, userId: myUserId, op: alreadyReacted ? 'add' : 'remove' }) // revert
+      })
+    }
 
     // A reply renders as a small quoted block above the message text; tapping
     // it scrolls to (and briefly flashes) the original.
@@ -274,7 +369,13 @@ export const ChatPage: Page = (root, go) => {
         myRows.push(row)
         applyReceipt(row)
       }
-      if (message.id) messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
+      if (message.id) {
+        messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
+        if (message.reactions?.length) {
+          reactionsByMessage.set(message.id, message.reactions)
+          renderReactionChips(message.id)
+        }
+      }
       return row
     }
 
@@ -493,15 +594,60 @@ export const ChatPage: Page = (root, go) => {
     })
     input.focus()
 
-    // --- Reply gestures: right-swipe on phone, right-click on desktop -----
-    // (Reactions in a later phase reuse this same context menu.)
+    // --- Popover shared by the desktop context menu and the phone emoji
+    // picker — a small `.menu` clone positioned at a fixed point.
+    let ctxMenu: HTMLElement | null = null
+    const closeCtxMenu = (): void => {
+      ctxMenu?.remove()
+      ctxMenu = null
+    }
+
+    const openPopover = (x: number, y: number, build: (menu: HTMLElement) => void): void => {
+      closeCtxMenu()
+      const menu = document.createElement('div')
+      menu.className = 'menu chat__ctx-menu'
+      menu.style.left = `${x}px`
+      menu.style.top = `${y}px`
+      build(menu)
+      document.body.append(menu)
+      ctxMenu = menu
+      setTimeout(() => document.addEventListener('click', closeCtxMenu, { once: true }), 0)
+    }
+
+    const buildEmojiRow = (menu: HTMLElement, messageId: string): void => {
+      const row = document.createElement('div')
+      row.className = 'chat__emoji-picker'
+      for (const emoji of ALLOWED_EMOJI) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'chat__emoji-picker-btn'
+        btn.textContent = emoji
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation()
+          toggleReaction(messageId, emoji)
+          closeCtxMenu()
+        })
+        row.append(btn)
+      }
+      menu.append(row)
+    }
+
+    // --- Reply / react gestures: right-swipe = reply, long-press = react on
+    // phone; right-click opens Reply/React on desktop.
     const SWIPE_TRIGGER = 60
     const SWIPE_MAX = 80
+    const LONG_PRESS_MS = 450
     let swipeRow: HTMLElement | null = null
     let swipeStartX = 0
     let swipeStartY = 0
     let swiping = false
     let swipeIcon: HTMLElement | null = null
+    let longPressTimer: ReturnType<typeof setTimeout> | null = null
+
+    const cancelLongPress = (): void => {
+      if (longPressTimer) clearTimeout(longPressTimer)
+      longPressTimer = null
+    }
 
     const ensureSwipeIcon = (): HTMLElement => {
       if (!swipeIcon) {
@@ -522,6 +668,14 @@ export const ChatPage: Page = (root, go) => {
         swipeStartX = e.touches[0].clientX
         swipeStartY = e.touches[0].clientY
         swiping = false
+        const id = row.dataset.id
+        const x = e.touches[0].clientX
+        const y = e.touches[0].clientY
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null
+          swipeRow = null // cancel any in-progress reply-swipe tracking
+          openPopover(x, y, (menu) => buildEmojiRow(menu, id))
+        }, LONG_PRESS_MS)
       },
       { passive: true },
     )
@@ -534,6 +688,7 @@ export const ChatPage: Page = (root, go) => {
         const dy = e.touches[0].clientY - swipeStartY
         if (!swiping) {
           if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return
+          cancelLongPress()
           if (Math.abs(dy) > Math.abs(dx)) {
             swipeRow = null // vertical scroll — let it through, not a reply swipe
             return
@@ -560,6 +715,7 @@ export const ChatPage: Page = (root, go) => {
     )
 
     log.addEventListener('touchend', () => {
+      cancelLongPress()
       if (!swipeRow) return
       const triggered = swipeRow.classList.contains('chat__message--swipe-ready')
       const id = swipeRow.dataset.id!
@@ -571,35 +727,35 @@ export const ChatPage: Page = (root, go) => {
       if (triggered) startReply(id)
     })
 
-    let ctxMenu: HTMLElement | null = null
-    const closeCtxMenu = (): void => {
-      ctxMenu?.remove()
-      ctxMenu = null
-    }
-
     log.addEventListener('contextmenu', (e) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
       if (!row?.dataset.id) return
       e.preventDefault()
-      closeCtxMenu()
+      const id = row.dataset.id
+      const x = e.clientX
+      const y = e.clientY
 
-      const menu = document.createElement('div')
-      menu.className = 'menu chat__ctx-menu'
-      menu.style.left = `${e.clientX}px`
-      menu.style.top = `${e.clientY}px`
-      const replyBtn = document.createElement('button')
-      replyBtn.type = 'button'
-      replyBtn.className = 'menu__item'
-      replyBtn.textContent = 'Reply'
-      replyBtn.addEventListener('click', () => {
-        startReply(row.dataset.id!)
-        closeCtxMenu()
+      openPopover(x, y, (menu) => {
+        const replyBtn = document.createElement('button')
+        replyBtn.type = 'button'
+        replyBtn.className = 'menu__item'
+        replyBtn.textContent = 'Reply'
+        replyBtn.addEventListener('click', () => {
+          startReply(id)
+          closeCtxMenu()
+        })
+
+        const reactBtn = document.createElement('button')
+        reactBtn.type = 'button'
+        reactBtn.className = 'menu__item'
+        reactBtn.textContent = 'React'
+        reactBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation() // don't let this click reach the outside-click listener below
+          openPopover(x, y, (m) => buildEmojiRow(m, id))
+        })
+
+        menu.append(replyBtn, reactBtn)
       })
-      menu.append(replyBtn)
-      document.body.append(menu)
-      ctxMenu = menu
-
-      setTimeout(() => document.addEventListener('click', closeCtxMenu, { once: true }), 0)
     })
 
     // --- Incoming ----------------------------------------------------------
@@ -634,6 +790,7 @@ export const ChatPage: Page = (root, go) => {
         }
         transport = t
         unsubscribe = t.onMessage(onIncoming)
+        unsubscribeReactions = t.onReaction(applyReactionUpdate)
         for (const entry of pending) if (!entry.sent) trySend(entry)
         void markRead(connectionId).catch(() => {})
       })

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
+import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
 
 export type MessageType = 'text' | 'letter'
 
@@ -13,6 +14,7 @@ export interface Message {
   type: MessageType
   payload: unknown | null
   replyTo: string | null
+  reactions: ReactionSummary[]
 }
 
 interface MessageRow {
@@ -25,7 +27,7 @@ interface MessageRow {
   reply_to: string | null
 }
 
-function toMessage(row: MessageRow): Message {
+function toMessage(row: MessageRow, reactions: ReactionSummary[] = []): Message {
   return {
     id: row.id,
     senderId: row.sender_id,
@@ -34,6 +36,7 @@ function toMessage(row: MessageRow): Message {
     type: row.type ?? 'text',
     payload: row.payload ?? null,
     replyTo: row.reply_to ?? null,
+    reactions,
   }
 }
 
@@ -77,7 +80,10 @@ export async function getHistory(connectionId: string, userId: string): Promise<
     .eq('connection_id', connectionId)
     .order('created_at', { ascending: true })
   if (error) throw error
-  return (data ?? []).map(toMessage)
+
+  const rows = data ?? []
+  const reactionsByMessage = await getReactionsForMessages(rows.map((r) => r.id))
+  return rows.map((row) => toMessage(row, reactionsByMessage.get(row.id) ?? []))
 }
 
 // A reply target must be a real message in the SAME connection — never trust

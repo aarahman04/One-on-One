@@ -6,6 +6,7 @@ export function mountMenuDropdown(
   go: (screen: Screen) => void,
   onSearch?: () => void,
   onAppearance?: () => void,
+  onNotifications?: () => void,
 ): void {
   let panel: HTMLDivElement | null = null
 
@@ -36,6 +37,7 @@ export function mountMenuDropdown(
       <button class="menu__item" data-action="export">Export</button>
       <button class="menu__item" data-action="search"${onSearch ? '' : ' disabled'}>Search</button>
       ${onAppearance ? '<button class="menu__item" data-action="appearance">Appearance</button>' : ''}
+      ${onNotifications ? '<button class="menu__item" data-action="notifications">Notifications</button>' : ''}
       <div class="menu__divider"></div>
       <div class="menu__group-label">CONNECTION</div>
       <button class="menu__item menu__item--danger" data-action="leave">Leave connection</button>
@@ -60,6 +62,12 @@ export function mountMenuDropdown(
       panel.querySelector('[data-action="appearance"]')!.addEventListener('click', () => {
         close()
         onAppearance()
+      })
+    }
+    if (onNotifications) {
+      panel.querySelector('[data-action="notifications"]')!.addEventListener('click', () => {
+        close()
+        onNotifications()
       })
     }
     panel.querySelector('[data-action="leave"]')!.addEventListener('click', () => {
