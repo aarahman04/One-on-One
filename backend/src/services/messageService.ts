@@ -62,5 +62,15 @@ export async function saveMessage(connectionId: string, senderId: string, conten
     .select('id, sender_id, content, created_at')
     .single()
   if (error) throw error
+
+  // Sending proves the sender has read everything up to now, so advance their
+  // last_read_at (to the DB-issued created_at, avoiding app/DB clock skew). This
+  // records reads that the separate markRead call would otherwise miss.
+  await supabaseAdmin
+    .from('connection_members')
+    .update({ last_read_at: data.created_at })
+    .eq('connection_id', connectionId)
+    .eq('user_id', senderId)
+
   return toMessage(data)
 }

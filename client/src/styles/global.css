@@ -133,12 +133,17 @@ input:focus {
 .chat {
   flex: 1;
   min-height: 0;
+  width: 100%;
+  max-width: 720px;
+  margin-inline: auto;
+  border-inline: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   text-align: left;
 }
 
 .chat__nav {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -147,6 +152,8 @@ input:focus {
 }
 
 .chat__nav-title {
+  display: flex;
+  align-items: center;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -218,26 +225,19 @@ input:focus {
   font-size: 11px;
 }
 
-.chat__tick {
-  display: inline-block;
-  margin-left: 6px;
-  font-size: 12px;
-  line-height: 1;
-  letter-spacing: -3px;
-  vertical-align: baseline;
+/* Read indicator: hollow = your latest message unseen, solid blue = seen. */
+.chat__read-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 8px;
+  border: 1.5px solid var(--muted);
+  background: transparent;
 }
 
-.chat__tick--sending {
-  color: var(--muted);
-  opacity: 0.4;
-}
-
-.chat__tick--delivered {
-  color: var(--muted);
-}
-
-.chat__tick--seen {
-  color: var(--accent-other);
+.chat__read-dot--seen {
+  border-color: var(--accent-other);
+  background: var(--accent-other);
 }
 
 .chat__search {
@@ -354,10 +354,6 @@ input:focus {
   flex: 1;
 }
 
-.chat__nav {
-  position: relative;
-}
-
 /* Menu dropdown */
 
 .menu {
@@ -433,4 +429,77 @@ input:focus {
     padding-left: 12px;
     padding-right: 12px;
   }
+}
+
+/* PREVIEW — temporary premium-feature preview (wallpaper + Instagram bubbles).
+   Remove this whole block plus features/appearancePreview.ts and its wiring to
+   drop the preview. Nothing else depends on it. */
+
+.appearance__row {
+  display: flex;
+  gap: 6px;
+  padding: 4px 12px 8px;
+}
+
+.appearance__opt {
+  flex: 1;
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.appearance__opt--active {
+  border-color: var(--accent-other);
+  color: var(--text);
+}
+
+/* Wallpapers — the leading solid-ish gradient is a scrim so text stays legible. */
+.chat--wallpaper-1 .chat__log {
+  background:
+    linear-gradient(rgba(13, 17, 23, 0.82), rgba(13, 17, 23, 0.82)),
+    radial-gradient(circle at 18% 15%, #1b2a4a, transparent 42%),
+    radial-gradient(circle at 82% 78%, #3a1b4a, transparent 46%),
+    var(--bg);
+}
+
+.chat--wallpaper-2 .chat__log {
+  background:
+    linear-gradient(rgba(13, 17, 23, 0.8), rgba(13, 17, 23, 0.8)),
+    repeating-linear-gradient(45deg, #12181f 0 14px, #0f151b 14px 28px),
+    var(--bg);
+}
+
+/* Instagram-style bubbles: mine right + accent, theirs left + raised. */
+.chat--bubbles .chat__message-time,
+.chat--bubbles .chat__message-sender {
+  display: none;
+}
+
+.chat--bubbles .chat__message-body {
+  flex: 0 1 auto;
+  max-width: 75%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--bg-raised);
+}
+
+.chat--bubbles .chat__message-text {
+  display: inline;
+}
+
+.chat--bubbles .chat__message-text::before {
+  content: '';
+}
+
+.chat--bubbles .chat__message[data-mine='1'] {
+  justify-content: flex-end;
+}
+
+.chat--bubbles .chat__message[data-mine='1'] .chat__message-body,
+.chat--bubbles .chat__message[data-mine='1'] .chat__message-text {
+  background: var(--accent-you);
+  color: #04170a;
 }

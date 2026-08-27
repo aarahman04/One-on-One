@@ -1,6 +1,7 @@
 import type { Page } from '../state/router'
 import { formatClock, formatDateSeparator, formatFullTimestamp, isSameDay } from '../utils/formatTime'
 import { mountMenuDropdown } from '../components/MenuDropdown'
+import { applyAppearance, openAppearance } from '../features/appearancePreview'
 import { getCurrentConnection, getMessages, markRead, type CurrentConnection } from '../services/connectionsApi'
 import { connectMessaging, type IncomingMessage } from '../services/messageService'
 import type { Transport } from '../services/transport/Transport'
@@ -124,14 +125,23 @@ export const ChatPage: Page = (root, go) => {
 
     const nav = root.querySelector<HTMLElement>('.chat__nav')!
     const menuBtn = root.querySelector<HTMLButtonElement>('#menu-btn')!
-    mountMenuDropdown(nav, menuBtn, go, () => {
-      searchBar.style.display = 'flex'
-      searchInput.focus()
-    })
+    const chatEl = root.querySelector<HTMLElement>('.chat')!
+    applyAppearance(chatEl) // TEMPORARY premium preview
+    mountMenuDropdown(
+      nav,
+      menuBtn,
+      go,
+      () => {
+        searchBar.style.display = 'flex'
+        searchInput.focus()
+      },
+      () => openAppearance(nav, chatEl),
+    )
 
     // --- Presence: the other side marks read every ~4s while the chat is on
     // screen, so a fresh last_read_at means they're actually here right now.
     const navStatus = root.querySelector<HTMLDivElement>('#nav-status')!
+    const readDot = root.querySelector<HTMLSpanElement>('#read-dot')!
     const PRESENCE_WINDOW_MS = 15000
     const updatePresence = (otherLastReadAt: string | null): void => {
       const active = !!otherLastReadAt && Date.now() - new Date(otherLastReadAt).getTime() < PRESENCE_WINDOW_MS
@@ -176,41 +186,31 @@ export const ChatPage: Page = (root, go) => {
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
 
-      body.append(sender, text)
-      if (isMine) {
-        const tick = document.createElement('span')
-        tick.className = 'chat__tick'
-        body.append(tick)
-        row.dataset.mine = '1'
-        if (!pending) row.dataset.delivered = '1'
-        myRows.push(row)
-        applyTick(row)
-      }
-      body.append(fullTime)
+      body.append(sender, text, fullTime)
+      if (isMine) row.dataset.mine = '1' // keyed by the bubble-mode preview
       row.append(time, body)
       row.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
       log.appendChild(row)
       log.scrollTop = log.scrollHeight
+
+      lastMessageMine = isMine
+      if (isMine && !pending) myLastDeliveredAt = message.createdAt
+      updateReadDot()
       return row
     }
 
-    // --- Read receipts (delivery / read ticks, WhatsApp-style) ------------
-    // dim ✓ = sending, grey ✓ = delivered (saved server-side), blue ✓✓ = seen.
-    const myRows: HTMLElement[] = []
+    // --- Read indicator: one dot by the name. Hidden until my latest message
+    // is delivered, hollow while unseen, solid blue once they've seen it, and
+    // hidden again once they reply (their message becomes the latest one).
     let otherLastRead: string | null = current.otherLastReadAt
+    let lastMessageMine = false
+    let myLastDeliveredAt: string | null = null
 
-    const applyTick = (row: HTMLElement): void => {
-      const tick = row.querySelector<HTMLElement>('.chat__tick')
-      if (!tick) return
-      const at = row.dataset.at
-      let state: 'sending' | 'delivered' | 'seen' = row.dataset.delivered === '1' ? 'delivered' : 'sending'
-      if (otherLastRead && at && new Date(at) <= new Date(otherLastRead)) state = 'seen'
-      tick.className = `chat__tick chat__tick--${state}`
-      tick.textContent = state === 'seen' ? '✓✓' : '✓'
-    }
-
-    const refreshTicks = (): void => {
-      for (const row of myRows) applyTick(row)
+    const updateReadDot = (): void => {
+      const show = lastMessageMine && !!myLastDeliveredAt
+      const seen = show && !!otherLastRead && new Date(myLastDeliveredAt!) <= new Date(otherLastRead)
+      readDot.style.display = show ? 'inline-block' : 'none'
+      readDot.classList.toggle('chat__read-dot--seen', seen)
     }
 
     // --- System lines (leave events) --------------------------------------
@@ -276,7 +276,7 @@ export const ChatPage: Page = (root, go) => {
     const history = await getMessages(connectionId)
     if (disposed) return
     for (const message of history) appendMessage(message)
-    refreshTicks()
+    updateReadDot()
     renderBanner(current)
     reconcileLeave(current)
     updatePresence(current.otherLastReadAt)
@@ -322,8 +322,8 @@ export const ChatPage: Page = (root, go) => {
           const [entry] = pending.splice(idx, 1)
           entry.row.classList.remove('chat__message--pending', 'chat__message--failed')
           entry.row.dataset.at = message.createdAt
-          entry.row.dataset.delivered = '1'
-          applyTick(entry.row)
+          myLastDeliveredAt = message.createdAt
+          updateReadDot()
           return
         }
       }
@@ -370,7 +370,7 @@ export const ChatPage: Page = (root, go) => {
       reconcileLeave(next)
       renderBanner(next)
       otherLastRead = next.otherLastReadAt
-      refreshTicks()
+      updateReadDot()
       updatePresence(next.otherLastReadAt)
       // Keep marking read while the chat is actually on screen — makes the
       // other side's "seen" tick reliable even if a discrete event was missed.
@@ -390,7 +390,10 @@ function renderChat(root: HTMLElement, displayName: string): void {
     <div class="chat">
       <div class="chat__nav">
         <div>
-          <div class="chat__nav-title" id="nav-title"></div>
+          <div class="chat__nav-title">
+            <span id="nav-title"></span>
+            <span class="chat__read-dot" id="read-dot" style="display: none;" title="Seen"></span>
+          </div>
           <div class="chat__nav-status" id="nav-status">connecting…</div>
         </div>
         <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
