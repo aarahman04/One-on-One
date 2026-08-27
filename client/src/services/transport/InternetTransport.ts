@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client'
 import { supabase } from '../supabaseClient'
-import type { IncomingMessage, MessageType, Transport } from './Transport'
+import type { IncomingMessage, MessageType, ReactionUpdate, Transport } from './Transport'
 
 const API_URL = import.meta.env.VITE_API_URL
 
@@ -54,6 +54,27 @@ export class InternetTransport implements Transport {
     socket.on('message:new', callback)
     return () => {
       socket.off('message:new', callback)
+    }
+  }
+
+  async sendReaction(messageId: string, emoji: string, op: 'add' | 'remove'): Promise<void> {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+
+    await new Promise<void>((resolve, reject) => {
+      socket.emit(op === 'add' ? 'reaction:add' : 'reaction:remove', { messageId, emoji }, (res: { ok?: boolean; error?: string }) => {
+        if (res?.error) reject(new Error(res.error))
+        else resolve()
+      })
+    })
+  }
+
+  onReaction(callback: (update: ReactionUpdate) => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    socket.on('reaction:update', callback)
+    return () => {
+      socket.off('reaction:update', callback)
     }
   }
 }

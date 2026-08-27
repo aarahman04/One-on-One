@@ -11,6 +11,16 @@ Notes/deviations:
 
 ---
 
+## [Phase C] Emoji reactions: long-press (phone) / right-click React (desktop) — 2026-08-27
+Status: done (builds clean; **apply migration 012**; two accounts to verify)
+What shipped:
+- **DB:** new `reactions` table (`012_reactions.sql`) — one row per `(message_id, user_id, emoji)`, unique constraint so a user can't double-react with the same emoji; RLS enabled with no policies (same default-deny net as migration 006 — backend uses the service_role key).
+- **Backend:** `reactionService.ts` — `addReaction`/`removeReaction` resolve the message's connection and re-verify live membership before writing (never trusts the client, spec §20); a fixed 6-emoji allowlist (❤️ 👍 😂 😮 😢 🙏) is validated server-side too. `getReactionsForMessages` aggregates rows into `{ emoji, userIds }[]` per message, attached to `Message.reactions` in `getHistory`. Socket gained `reaction:add`/`reaction:remove` handlers that broadcast `reaction:update` (`{ messageId, emoji, userId, op }`) to the connection room.
+- **Transport:** `sendReaction`/`onReaction` added to the interface and `InternetTransport` — additive, matches the existing message-send/receive shape.
+- **UI, per user's interaction spec (explicit: "long press message to react in phone, in PC right click to react or reply"):** phone = long-press a row (~450ms, cancelled by real movement so it doesn't fight the reply-swipe) opens a 6-emoji picker at the touch point; desktop = the same right-click context menu from Phase B gained a **React** item that opens the identical picker. Both routes go through a new shared `openPopover()` helper. Tapping an emoji (in the picker, or an existing chip) toggles your own reaction — optimistic local update, reverted if the server call fails.
+- **Rendering:** reaction chips render under the message body (`chat__reactions`), grouped by emoji with a count once >1, highlighted when you're among the reactors; updates apply live to the right row via an in-memory `reactionsByMessage` map keyed by message id (same id-lookup pattern as Phase B's reply quotes).
+Notes/deviations: This explicitly overrides spec §29's V1 non-goals list (Reactions) — user confirmed this trade-off during planning, before any code was written. Reactions on a still-pending (unsent) message aren't offered, for the same reason replies aren't — no server id yet. Verified compile/build only; needs two accounts to confirm the long-press timing feels right and doesn't fire spuriously during scroll.
+
 ## [Phase B] Quoted replies: swipe (phone) / right-click (desktop) — 2026-08-27
 Status: done (builds clean; **apply migration 011** — already applied by user in Supabase; two accounts to verify)
 What shipped:

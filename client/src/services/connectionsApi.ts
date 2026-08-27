@@ -33,6 +33,11 @@ export interface LeaveResult {
   terminated: boolean
 }
 
+export interface ReactionSummary {
+  emoji: string
+  userIds: string[]
+}
+
 export interface HistoryMessage {
   id: string
   senderId: string
@@ -41,6 +46,7 @@ export interface HistoryMessage {
   type: 'text' | 'letter'
   payload: unknown | null
   replyTo: string | null
+  reactions: ReactionSummary[]
 }
 
 export async function getCurrentConnection(): Promise<CurrentConnection | null> {

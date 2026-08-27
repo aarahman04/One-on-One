@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { getOrCreateUser } from '../services/userService.js'
 import { getCurrentConnection } from '../services/connectionService.js'
 import { saveMessage } from '../services/messageService.js'
+import { addReaction, removeReaction } from '../services/reactionService.js'
 
 interface SocketData {
   userId: string
@@ -69,6 +70,38 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         ack?.({ error: message })
       }
     })
+
+    socket.on(
+      'reaction:add',
+      async (msg: { messageId?: unknown; emoji?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          const { userId } = socket.data as SocketData
+          const messageId = typeof msg?.messageId === 'string' ? msg.messageId : ''
+          const connId = await addReaction(messageId, userId, msg?.emoji)
+          io.to(room(connId)).emit('reaction:update', { messageId, emoji: msg?.emoji, userId, op: 'add' })
+          ack?.({ ok: true })
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'failed to add reaction'
+          ack?.({ error: message })
+        }
+      },
+    )
+
+    socket.on(
+      'reaction:remove',
+      async (msg: { messageId?: unknown; emoji?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          const { userId } = socket.data as SocketData
+          const messageId = typeof msg?.messageId === 'string' ? msg.messageId : ''
+          const connId = await removeReaction(messageId, userId, msg?.emoji)
+          io.to(room(connId)).emit('reaction:update', { messageId, emoji: msg?.emoji, userId, op: 'remove' })
+          ack?.({ ok: true })
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'failed to remove reaction'
+          ack?.({ error: message })
+        }
+      },
+    )
   })
 
   return io
