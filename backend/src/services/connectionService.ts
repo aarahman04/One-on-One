@@ -314,7 +314,7 @@ export async function confirmEndLeave(connectionId: string, userId: string): Pro
   return { status: 'terminated', myLeaveStep: mine.leave_step, daysRemaining: 0, bothLeaving: true, terminated: true }
 }
 
-const ALLOWED_WALLPAPERS = ['off', '1', '2', 'love']
+const ALLOWED_WALLPAPERS = ['off', '1', 'love', 'samurai']
 
 // Wallpaper is shared per-connection (unlike message style/theme, which stay
 // per-device localStorage preferences) — either member's choice applies to both.

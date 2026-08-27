@@ -665,13 +665,6 @@ input:focus {
     var(--bg);
 }
 
-.chat--wallpaper-2 .chat__log {
-  background:
-    linear-gradient(rgba(13, 17, 23, 0.8), rgba(13, 17, 23, 0.8)),
-    repeating-linear-gradient(45deg, #12181f 0 14px, #0f151b 14px 28px),
-    var(--bg);
-}
-
 /* Instagram-style bubbles: mine right + accent, theirs left + raised. */
 .chat--bubbles .chat__message-time,
 .chat--bubbles .chat__message-sender {
@@ -783,6 +776,22 @@ input:focus {
 
 .chat--wallpaper-love.chat--bubbles .chat__receipt--seen {
   color: #26323b;
+}
+
+/* "Samurai" wallpaper: a crimson/charcoal cinematic photo background, with
+   bubble colors pulled from the artwork's own palette
+   (wallpapers/samurai wallpaper description.txt). */
+.chat--wallpaper-samurai .chat__log {
+  background:
+    linear-gradient(rgba(10, 8, 8, 0.3), rgba(10, 8, 8, 0.3)),
+    url('/samurai.jpg') center / cover no-repeat;
+}
+
+.chat--wallpaper-samurai.chat--bubbles {
+  --bubble-mine-bg: linear-gradient(135deg, #b0003a, #d10a4a); /* deep crimson / bright crimson */
+  --bubble-mine-text: #ffffff;
+  --bubble-other-bg: #232323; /* charcoal black */
+  --bubble-other-text: #d9d3be; /* pale ivory */
 }
 
 /* --- Letters + slash commands + modal ------------------------------------ */

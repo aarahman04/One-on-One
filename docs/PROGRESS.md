@@ -11,6 +11,11 @@ Notes/deviations:
 
 ---
 
+## [Post-launch fixes] Samurai wallpaper, drop wallpaper "2" — 2026-08-27
+Status: done, builds clean
+What shipped: Replaced the generic gradient wallpaper option ("2") with a real second photo wallpaper — **Samurai** (`client/public/samurai.jpg`), bubble colors pulled from its own crimson/charcoal palette (`wallpapers/samurai wallpaper description.txt`): mine = crimson gradient, white text; them = charcoal black, pale ivory text. Wallpaper options are now Off / 1 / Love / Samurai everywhere they're validated: `appearancePreview.ts` popover, `applyAppearance`'s class toggles, and backend `ALLOWED_WALLPAPERS`.
+Notes/deviations: The user reported "Could not update the wallpaper" when picking Love — almost certainly because **migration 014 (`connections.wallpaper`) hadn't been applied in Supabase yet** (the update would fail with a missing-column error server-side, surfacing as the client's generic failure popup). Flagged to the user; not something more code can fix.
+
 ## [Post-launch fixes] Notification popup, shared wallpaper, mobile input zoom — 2026-08-27
 Status: done (**apply migration 014**; builds clean; needs live testing after deploy)
 What shipped:
