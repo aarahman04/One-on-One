@@ -152,8 +152,6 @@ input:focus {
 }
 
 .chat__nav-title {
-  display: flex;
-  align-items: center;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -225,19 +223,26 @@ input:focus {
   font-size: 11px;
 }
 
-/* Read indicator: hollow = your latest message unseen, solid blue = seen. */
-.chat__read-dot {
-  width: 8px;
-  height: 8px;
+/* Read receipt (line/terminal mode): a small dot at the end of my messages —
+   green filled = seen, hollow = not yet. Bubble-mode ticks are in the PREVIEW block. */
+.chat__receipt {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  margin-left: 8px;
+  margin-left: 6px;
   border: 1.5px solid var(--muted);
   background: transparent;
+  vertical-align: baseline;
 }
 
-.chat__read-dot--seen {
-  border-color: var(--accent-other);
-  background: var(--accent-other);
+.chat__receipt--pending {
+  opacity: 0.4;
+}
+
+.chat__receipt--seen {
+  border-color: var(--accent-you);
+  background: var(--accent-you);
 }
 
 .chat__search {
@@ -502,4 +507,34 @@ input:focus {
 .chat--bubbles .chat__message[data-mine='1'] .chat__message-text {
   background: var(--accent-you);
   color: #04170a;
+}
+
+/* Bubble mode read receipt = WhatsApp ticks (✓ sent, blue ✓✓ read) instead of
+   the line-mode dot. */
+.chat--bubbles .chat__receipt {
+  width: auto;
+  height: auto;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: -2px;
+  color: rgba(4, 23, 10, 0.55);
+}
+
+.chat--bubbles .chat__receipt--pending {
+  opacity: 0.5;
+}
+
+.chat--bubbles .chat__receipt::after {
+  content: '✓';
+}
+
+.chat--bubbles .chat__receipt--seen {
+  color: var(--accent-other);
+}
+
+.chat--bubbles .chat__receipt--seen::after {
+  content: '✓✓';
 }
