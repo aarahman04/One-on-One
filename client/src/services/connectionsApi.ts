@@ -23,6 +23,7 @@ export interface CurrentConnection {
   bothLeaving: boolean
   canAdvanceLeave: boolean
   otherLastReadAt: string | null
+  wallpaper: string
 }
 
 export interface LeaveResult {
@@ -85,6 +86,15 @@ export async function setNickname(connectionId: string, nickname: string): Promi
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ nickname }),
+  })
+  await unwrap(res)
+}
+
+export async function setWallpaper(connectionId: string, wallpaper: string): Promise<void> {
+  const res = await authedFetch(`/api/connections/${connectionId}/wallpaper`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ wallpaper }),
   })
   await unwrap(res)
 }

@@ -601,9 +601,14 @@ input:focus {
 /* Responsive */
 
 @media (max-width: 480px) {
-  /* 16px min prevents iOS zoom-on-focus, which lurches the viewport */
+  /* 16px min prevents iOS zoom-on-focus, which lurches the viewport.
+     .chat__input-bar textarea is included explicitly and by name — it sets
+     its own font-size: inherit at a higher specificity than the plain
+     `textarea` selector below, so without this the composer alone would
+     silently stay at the (too-small, zoom-triggering) inherited 15px. */
   input,
-  textarea {
+  textarea,
+  .chat__input-bar textarea {
     font-size: 16px;
   }
 
@@ -949,4 +954,11 @@ input:focus {
   gap: 10px;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+.notice-popup {
+  padding-top: 6px;
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 320px;
 }

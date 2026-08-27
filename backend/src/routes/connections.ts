@@ -11,6 +11,7 @@ import {
   markRead,
   requestConnection,
   setNickname,
+  setWallpaper,
 } from '../services/connectionService.js'
 
 export const connectionsRouter = Router()
@@ -71,6 +72,12 @@ connectionsRouter.post('/connections/:id/leave/confirm-end', async (req, res) =>
   const user = await getOrCreateUser(req.authUserId!)
   const result = await confirmEndLeave(req.params.id, user.id)
   res.json({ leave: result })
+})
+
+connectionsRouter.patch('/connections/:id/wallpaper', async (req, res) => {
+  const user = await getOrCreateUser(req.authUserId!)
+  await setWallpaper(req.params.id, user.id, String(req.body?.wallpaper ?? ''))
+  res.status(204).end()
 })
 
 connectionsRouter.post('/connections/:id/read', async (req, res) => {

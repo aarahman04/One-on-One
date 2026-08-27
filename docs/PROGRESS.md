@@ -11,6 +11,14 @@ Notes/deviations:
 
 ---
 
+## [Post-launch fixes] Notification popup, shared wallpaper, mobile input zoom — 2026-08-27
+Status: done (**apply migration 014**; builds clean; needs live testing after deploy)
+What shipped:
+- **Mobile zoom/jump on typing, fixed.** Root cause: `.chat__input-bar textarea { font-size: inherit }` (specificity 0,1,1) was silently overriding the `@media (max-width:480px) { input, textarea { font-size:16px } }` rule (specificity 0,0,1) — CSS specificity beats media-query source order, so the composer stayed at the inherited 15px on phones, triggering iOS Safari's auto-zoom-on-focus-under-16px. Added `.chat__input-bar textarea` explicitly into the mobile rule so it actually wins. Also locked `maximum-scale=1.0, user-scalable=no` on the viewport meta as a second layer against any residual pinch/auto-zoom.
+- **Notification feedback is now a popup**, not the easy-to-miss in-chat system line — reuses `components/Modal.ts`. Shows the actual error message on failure (not a generic one) so it's diagnosable. Backend `pushService.sendToUser` also gained `console.log`/`console.error` on every send attempt (visible in Railway logs) instead of silently swallowing non-404/410 failures.
+- **Wallpaper is now shared per-connection** (either member's pick applies to both) — a genuinely new architectural split, since everything else in Appearance (message style, light/dark theme) stays a per-device localStorage preference on purpose. New `connections.wallpaper` column (migration 014), `PATCH /connections/:id/wallpaper` (membership-checked like every other connection write), included in `getCurrentConnection`. `appearancePreview.ts` no longer owns wallpaper state at all — `applyAppearance`/`openAppearance` now take it as a param from `ChatPage.ts`, which applies it optimistically on change and re-syncs it off the existing 4s connection poll (no new socket event needed — reuses the same poll leave-state/read-receipts already ride).
+Notes/deviations: The actual "notifications not sending" root cause is still unconfirmed — most likely culprit is that `VITE_VAPID_PUBLIC_KEY` was only added to Vercel *after* the last deploy, and Vite bakes `VITE_*` vars in at build time, not runtime, so a redeploy is required for the client to even see the key (if the "Notifications" menu item isn't appearing at all, this is almost certainly it). The popup + server-side logging in this fix are meant to make the actual failure point visible next time, not a guaranteed fix on their own. Verified compile/build only.
+
 ## [Phase D] Web Push notifications — 2026-08-27
 Status: done, but **not live** — needs VAPID keys generated and set (see below) and migration 013 applied; builds clean; two devices to verify
 What shipped:

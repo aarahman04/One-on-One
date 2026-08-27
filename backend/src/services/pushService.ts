@@ -50,7 +50,10 @@ export async function removeSubscription(userId: string, endpoint: string): Prom
 // the push service reports as gone (410) or not found (404) so dead rows
 // don't accumulate.
 export async function sendToUser(userId: string, payload: PushPayload): Promise<void> {
-  if (!configured) return
+  if (!configured) {
+    console.warn(`push: skipped for user ${userId} — VAPID keys not configured`)
+    return
+  }
 
   const { data, error } = await supabaseAdmin
     .from('push_subscriptions')
@@ -59,7 +62,10 @@ export async function sendToUser(userId: string, payload: PushPayload): Promise<
   if (error) throw error
 
   const rows = (data ?? []) as SubscriptionRow[]
-  if (!rows.length) return
+  if (!rows.length) {
+    console.log(`push: no subscriptions for user ${userId}`)
+    return
+  }
 
   await Promise.all(
     rows.map(async (row) => {
@@ -68,10 +74,14 @@ export async function sendToUser(userId: string, payload: PushPayload): Promise<
           { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
           JSON.stringify(payload),
         )
+        console.log(`push: sent to ${row.endpoint.slice(0, 60)}…`)
       } catch (err) {
         const statusCode = (err as { statusCode?: number }).statusCode
         if (statusCode === 404 || statusCode === 410) {
           await supabaseAdmin.from('push_subscriptions').delete().eq('id', row.id)
+          console.log(`push: pruned dead subscription ${row.id} (status ${statusCode})`)
+        } else {
+          console.error(`push: send failed (status ${statusCode ?? 'n/a'}):`, err instanceof Error ? err.message : err)
         }
       }
     }),

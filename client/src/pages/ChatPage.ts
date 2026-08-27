@@ -1,6 +1,7 @@
 import type { Page } from '../state/router'
 import { formatClock, formatDateSeparator, formatFullTimestamp, isSameDay } from '../utils/formatTime'
 import { mountMenuDropdown } from '../components/MenuDropdown'
+import { openModal } from '../components/Modal'
 import { applyAppearance, openAppearance } from '../features/appearancePreview'
 import { openLetter, openLetterComposer, type LetterPayload } from '../features/letters'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
@@ -9,6 +10,7 @@ import {
   getCurrentConnection,
   getMessages,
   markRead,
+  setWallpaper,
   type CurrentConnection,
   type ReactionSummary,
 } from '../services/connectionsApi'
@@ -157,23 +159,43 @@ export const ChatPage: Page = (root, go) => {
     const nav = root.querySelector<HTMLElement>('.chat__nav')!
     const menuBtn = root.querySelector<HTMLButtonElement>('#menu-btn')!
     const chatEl = root.querySelector<HTMLElement>('.chat')!
-    applyAppearance(chatEl) // TEMPORARY premium preview
+
+    // Wallpaper is shared per-connection (either member's pick applies to
+    // both); style/theme stay per-device. Synced via the poll below.
+    let currentWallpaper = current.wallpaper
+    applyAppearance(chatEl, currentWallpaper)
+
+    const onWallpaperChange = (value: string): void => {
+      currentWallpaper = value
+      applyAppearance(chatEl, currentWallpaper) // optimistic
+      void setWallpaper(connectionId, value).catch(() => {
+        showNotice('Could not update the wallpaper — try again.')
+      })
+    }
 
     // Push notifications: a menu toggle rather than an automatic prompt-on-load
     // (unsolicited permission prompts get auto-denied by browsers/users alike).
-    // appendSystemLine is defined further down but only called from here later,
-    // after it's initialized — same pattern the leave-lifecycle code already uses.
+    // Feedback is a popup, not the quiet in-chat system line — a subscribe
+    // failure is easy to miss otherwise, and the user needs to actually see it.
+    const showNotice = (message: string): void => {
+      const content = document.createElement('div')
+      content.className = 'notice-popup'
+      content.textContent = message
+      openModal(content)
+    }
+
     const toggleNotifications = async (): Promise<void> => {
       if (await isPushSubscribed()) {
         await unsubscribeFromPush()
-        appendSystemLine('Notifications turned off.')
+        showNotice('Notifications turned off.')
         return
       }
       try {
         await subscribeToPush()
-        appendSystemLine("Notifications turned on — you'll be notified when a message arrives and the app is closed.")
-      } catch {
-        appendSystemLine('Could not enable notifications (permission denied, or unsupported on this browser).')
+        showNotice("Notifications turned on — you'll be notified when a message arrives and the app is closed.")
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'unknown error'
+        showNotice(`Could not enable notifications: ${reason}`)
       }
     }
 
@@ -185,7 +207,7 @@ export const ChatPage: Page = (root, go) => {
         searchBar.style.display = 'flex'
         searchInput.focus()
       },
-      () => openAppearance(nav, chatEl),
+      () => openAppearance(nav, chatEl, currentWallpaper, onWallpaperChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
     )
 
@@ -821,6 +843,10 @@ export const ChatPage: Page = (root, go) => {
       otherLastRead = next.otherLastReadAt
       refreshReceipts()
       updatePresence(next.otherLastReadAt)
+      if (next.wallpaper !== currentWallpaper) {
+        currentWallpaper = next.wallpaper
+        applyAppearance(chatEl, currentWallpaper)
+      }
       // Keep marking read while the chat is actually on screen — makes the
       // other side's "seen" tick reliable even if a discrete event was missed.
       if (document.visibilityState === 'visible') void markRead(connectionId).catch(() => {})
