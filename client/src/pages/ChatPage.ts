@@ -4,6 +4,7 @@ import { mountMenuDropdown } from '../components/MenuDropdown'
 import { applyAppearance, openAppearance } from '../features/appearancePreview'
 import { openLetter, openLetterComposer, type LetterPayload } from '../features/letters'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
+import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
   getCurrentConnection,
   getMessages,
@@ -157,6 +158,25 @@ export const ChatPage: Page = (root, go) => {
     const menuBtn = root.querySelector<HTMLButtonElement>('#menu-btn')!
     const chatEl = root.querySelector<HTMLElement>('.chat')!
     applyAppearance(chatEl) // TEMPORARY premium preview
+
+    // Push notifications: a menu toggle rather than an automatic prompt-on-load
+    // (unsolicited permission prompts get auto-denied by browsers/users alike).
+    // appendSystemLine is defined further down but only called from here later,
+    // after it's initialized — same pattern the leave-lifecycle code already uses.
+    const toggleNotifications = async (): Promise<void> => {
+      if (await isPushSubscribed()) {
+        await unsubscribeFromPush()
+        appendSystemLine('Notifications turned off.')
+        return
+      }
+      try {
+        await subscribeToPush()
+        appendSystemLine("Notifications turned on — you'll be notified when a message arrives and the app is closed.")
+      } catch {
+        appendSystemLine('Could not enable notifications (permission denied, or unsupported on this browser).')
+      }
+    }
+
     mountMenuDropdown(
       nav,
       menuBtn,
@@ -166,6 +186,7 @@ export const ChatPage: Page = (root, go) => {
         searchInput.focus()
       },
       () => openAppearance(nav, chatEl),
+      isPushSupported() ? () => void toggleNotifications() : undefined,
     )
 
     // --- Presence: the other side marks read every ~4s while the chat is on

@@ -4,6 +4,7 @@ import cors from 'cors'
 import { meRouter } from './routes/me.js'
 import { connectionsRouter } from './routes/connections.js'
 import { messagesRouter } from './routes/messages.js'
+import { pushRouter } from './routes/push.js'
 import { ConnectionError } from './services/connectionService.js'
 import { createSocketServer } from './websocket/socketServer.js'
 
@@ -21,6 +22,7 @@ app.get('/health', (_req, res) => {
 app.use('/api', meRouter)
 app.use('/api', connectionsRouter)
 app.use('/api', messagesRouter)
+app.use('/api', pushRouter)
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof ConnectionError) {

@@ -11,6 +11,16 @@ Notes/deviations:
 
 ---
 
+## [Phase D] Web Push notifications — 2026-08-27
+Status: done, but **not live** — needs VAPID keys generated and set (see below) and migration 013 applied; builds clean; two devices to verify
+What shipped:
+- **DB:** `push_subscriptions` table (migration 013) — one row per device/browser, unique on `endpoint`, RLS enabled.
+- **PWA shell:** `client/public/manifest.webmanifest`, `client/public/sw.js` (handles `push` → `showNotification`, and `notificationclick` → focuses or opens the app), `client/public/icon.svg` (a simple two-circle mark in the app's own accent colors), linked from `index.html` + registered in `main.ts`. This also makes the app installable — required for iOS to deliver push at all (Apple only allows it for a site Added to Home Screen).
+- **Backend:** `web-push` dependency; `pushService.ts` (`saveSubscription`/`removeSubscription`/`sendToUser` — prunes a subscription on a 404/410 from the push service); `routes/push.ts` (`POST /api/push/subscribe`, `/unsubscribe`). If `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` aren't set, push silently no-ops (logs a warning) rather than crashing — safe for local dev without keys.
+- **Send path:** in `socketServer.ts`, after a `message:send` broadcasts, `notifyIfOffline()` checks whether the recipient has a live socket in the connection's room (rooms are exactly the two 1:1 members, so "anyone else present" = the recipient is here); if not, it looks up "what the recipient calls the sender" (nicknames are stored on the *other* member's row, per spec §11 — so that's the sender's own `connection_members.nickname`) and pushes a notification with that as the title.
+- **Client subscribe flow:** `features/pushNotifications.ts` (`isPushSupported`/`isPushSubscribed`/`subscribeToPush`/`unsubscribeFromPush`) wired to a new **Notifications** item in the `•••` menu (only rendered when the browser supports push) — a deliberate toggle, not an automatic prompt-on-load, since browsers/users auto-deny unsolicited permission prompts. Confirmation reuses the existing `appendSystemLine` in-chat pattern (same one leave-lifecycle events use).
+Notes/deviations: **This phase needs user action before it does anything**: (1) apply migration 013 in Supabase, (2) generate VAPID keys with `npx web-push generate-vapid-keys`, (3) set `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` on the backend and `VITE_VAPID_PUBLIC_KEY` (the public half) on the client, both documented in the respective `.env.example`. Reactions don't trigger a push (out of scope — the plan only asked for message notifications). iOS Safari push only works after "Add to Home Screen"; no in-app hint for that yet (flagged as a follow-up in the original plan). Verified compile/build only — needs the keys set and two real devices (one with the app closed) to confirm delivery end-to-end.
+
 ## [Phase C] Emoji reactions: long-press (phone) / right-click React (desktop) — 2026-08-27
 Status: done (builds clean; **apply migration 012**; two accounts to verify)
 What shipped:

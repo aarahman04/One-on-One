@@ -57,6 +57,31 @@ Leave model (Stage E) overrides spec §25's passive auto-expire: it is a deliber
 
 Client-only, no new data flow — `features/appearancePreview.ts` persists `{ wallpaper, style, theme }` to localStorage and toggles classes/attributes on `.chat` (`applyAppearance`), read by CSS in `styles/global.css`. Bubbles is the default `style`; `theme` (light/dark) only affects bubble-mode colors via `--bubble-mine-*`/`--bubble-other-*` custom properties, scoped under `.chat--bubbles[data-theme='light']`. `wallpaper: 'love'` serves `client/public/love.jpg` (Vite's static dir) and further overrides the bubble palette (colors pulled from the artwork's own palette) so bubbles read against the art. The composer (`ChatPage.ts`) is a `<textarea>`, not `<input>`, so messages can carry blank-line paragraph gaps; `utils/linkify.ts` turns URLs/phone numbers into `<a>`/`tel:` links via text-node splitting (same XSS-safe pattern as the existing search highlighter).
 
+## Web Push notifications (V1, since 2026-08-27 — inert until keys are set)
+
+```mermaid
+sequenceDiagram
+    participant Sender
+    participant Server as Railway Backend
+    participant DB as Supabase Postgres
+    participant PushSvc as Push Service (browser vendor)
+    participant SW as Recipient's Service Worker
+
+    Sender->>Server: message:send
+    Server->>DB: saveMessage
+    Server->>Server: fetchSockets(room) — is the recipient's socket present?
+    alt recipient has no live socket in the room
+        Server->>DB: push_subscriptions for recipient
+        Server->>PushSvc: web-push send (per subscription)
+        PushSvc-->>SW: push event (app may be fully closed)
+        SW->>SW: showNotification()
+    else recipient is online
+        Server-->>Sender: (message already delivered over the open socket)
+    end
+```
+
+A connection's Socket.IO room has exactly its two members, so "any other socket present" is a cheap proxy for "the recipient is here" — no separate presence table. `push_subscriptions` (migration 013) holds one row per device; a 404/410 from the push service prunes it. The client only subscribes when the user toggles **Notifications** in the `•••` menu (`features/pushNotifications.ts`) — never an automatic prompt. Requires `client/public/manifest.webmanifest` + `sw.js` (installable PWA — mandatory for iOS to deliver push at all) and VAPID keys set via env on both sides; unset keys make the backend no-op rather than fail sends.
+
 ## Transport abstraction
 
 Load-bearing for V3/V4 — every client message path routes through this, not directly through Socket.IO.

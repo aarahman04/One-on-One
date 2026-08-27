@@ -22,6 +22,12 @@ registerPage('chat', ChatPage)
 registerPage('export', ExportPage)
 registerPage('leave', LeavePage)
 
+// Registers the push-notification service worker; harmless no-op in
+// browsers that don't support it.
+if ('serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('/sw.js')
+}
+
 async function resolveInitialScreen(): Promise<Screen> {
   const session = await getSession()
   if (!session) return 'login'

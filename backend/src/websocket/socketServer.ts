@@ -3,8 +3,9 @@ import { Server, type Socket } from 'socket.io'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { getOrCreateUser } from '../services/userService.js'
 import { getCurrentConnection } from '../services/connectionService.js'
-import { saveMessage } from '../services/messageService.js'
+import { saveMessage, type Message } from '../services/messageService.js'
 import { addReaction, removeReaction } from '../services/reactionService.js'
+import { sendToUser } from '../services/pushService.js'
 
 interface SocketData {
   userId: string
@@ -13,6 +14,41 @@ interface SocketData {
 
 function room(connectionId: string): string {
   return `conn:${connectionId}`
+}
+
+// Push only when the recipient has no live socket in the room — a room is
+// exactly the two members of a 1:1 connection, so "any other socket present"
+// means the recipient is already here and will get the message over the
+// open connection instead.
+async function notifyIfOffline(io: Server, connId: string, senderId: string, message: Message): Promise<void> {
+  try {
+    const sockets = await io.in(room(connId)).fetchSockets()
+    const recipientOnline = sockets.some((s) => (s.data as SocketData).userId !== senderId)
+    if (recipientOnline) return
+
+    const { data: conn } = await supabaseAdmin
+      .from('connections')
+      .select('user_a_id, user_b_id')
+      .eq('id', connId)
+      .maybeSingle()
+    if (!conn) return
+    const recipientId = conn.user_a_id === senderId ? conn.user_b_id : conn.user_a_id
+
+    // Nicknames are stored on the OTHER member's row (spec §11) — so "what
+    // the recipient calls the sender" lives on the sender's own member row.
+    const { data: senderMember } = await supabaseAdmin
+      .from('connection_members')
+      .select('nickname')
+      .eq('connection_id', connId)
+      .eq('user_id', senderId)
+      .maybeSingle()
+
+    const title = senderMember?.nickname ?? 'New message'
+    const body = message.type === 'letter' ? 'sent you a letter' : message.content.slice(0, 120)
+    await sendToUser(recipientId, { title, body })
+  } catch {
+    /* best-effort — never fail the send because push failed */
+  }
 }
 
 export function createSocketServer(httpServer: HttpServer, allowedOrigins: string[]): Server {
@@ -64,6 +100,7 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         const replyTo = typeof msg?.replyTo === 'string' ? msg.replyTo : null
         const message = await saveMessage(connId, userId, content, type, msg?.payload ?? null, replyTo)
         io.to(room(connId)).emit('message:new', message)
+        void notifyIfOffline(io, connId, userId, message)
         ack?.({ ok: true })
       } catch (err) {
         const message = err instanceof Error ? err.message : 'failed to send message'
