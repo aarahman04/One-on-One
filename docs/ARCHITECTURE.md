@@ -32,6 +32,8 @@ sequenceDiagram
 
 **Message types (since 2026-08-27):** a message carries `type` ('text' | 'letter' | future 'voice') + `payload` (jsonb) alongside `content`. The whole pipeline (`saveMessage` → socket → `Transport.sendMessage(content, type?, payload?)` → `IncomingMessage`/`HistoryMessage` → `appendMessage`) threads these additively, so new types don't re-plumb the flow. **Letters:** body in `content`, `{ appearance, from, to }` in `payload`; rendered as a folded card that opens a styled letter (downloadable as HTML). **Slash commands** (`/letter`, `/shrug`, …) live client-side in `features/slashCommands.ts` — `/letter` is the only one that produces a special message.
 
+**Replies (since 2026-08-27):** `messages.reply_to` (nullable FK to `messages.id`, `on delete set null`) rides the same pipeline — `Transport.sendMessage`'s optional 4th arg, threaded through `saveMessage`/socket/`IncomingMessage`/`HistoryMessage`. The backend re-validates the reply target is a real message in the same connection before storing (never trusts the client id, spec §20). Client-side, `ChatPage.ts` keeps an in-memory `messagesById` map (populated as messages render) to resolve a `reply_to` id into a "sender + snippet" quote block without a re-fetch. Triggering a reply: phone = right-swipe a row; desktop = right-click a row for a small context menu (`.chat__ctx-menu`) — the same menu Phase C's reactions extend with a second "React" item.
+
 ## Connection state machine
 
 ```mermaid
@@ -51,7 +53,7 @@ Leave model (Stage E) overrides spec §25's passive auto-expire: it is a deliber
 
 ## Client appearance (V1, since 2026-08-27)
 
-Client-only, no new data flow — `features/appearancePreview.ts` persists `{ wallpaper, style, theme }` to localStorage and toggles classes/attributes on `.chat` (`applyAppearance`), read by CSS in `styles/global.css`. Bubbles is the default `style`; `theme` (light/dark) only affects bubble-mode colors via `--bubble-mine-*`/`--bubble-other-*` custom properties, scoped under `.chat--bubbles[data-theme='light']`. `wallpaper: 'love'` serves `client/public/Love.webp` (Vite's static dir) and further overrides the bubble palette to a rose tone so bubbles read against the art. The composer (`ChatPage.ts`) is a `<textarea>`, not `<input>`, so messages can carry blank-line paragraph gaps; `utils/linkify.ts` turns URLs/phone numbers into `<a>`/`tel:` links via text-node splitting (same XSS-safe pattern as the existing search highlighter).
+Client-only, no new data flow — `features/appearancePreview.ts` persists `{ wallpaper, style, theme }` to localStorage and toggles classes/attributes on `.chat` (`applyAppearance`), read by CSS in `styles/global.css`. Bubbles is the default `style`; `theme` (light/dark) only affects bubble-mode colors via `--bubble-mine-*`/`--bubble-other-*` custom properties, scoped under `.chat--bubbles[data-theme='light']`. `wallpaper: 'love'` serves `client/public/love.jpg` (Vite's static dir) and further overrides the bubble palette (colors pulled from the artwork's own palette) so bubbles read against the art. The composer (`ChatPage.ts`) is a `<textarea>`, not `<input>`, so messages can carry blank-line paragraph gaps; `utils/linkify.ts` turns URLs/phone numbers into `<a>`/`tel:` links via text-node splitting (same XSS-safe pattern as the existing search highlighter).
 
 ## Transport abstraction
 
