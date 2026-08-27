@@ -1,6 +1,12 @@
 import type { Page } from '../state/router'
 import { getCurrentConnection, getMessages, type HistoryMessage } from '../services/connectionsApi'
 import { formatFullTimestamp } from '../utils/formatTime'
+import { downloadFile, escapeHtml } from '../utils/download'
+
+function letterMeta(m: HistoryMessage): { to: string; from: string } {
+  const p = (m.payload ?? {}) as { to?: string; from?: string }
+  return { to: p.to ?? '', from: p.from ?? '' }
+}
 
 export const ExportPage: Page = (root, go) => {
   root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
@@ -31,13 +37,13 @@ export const ExportPage: Page = (root, go) => {
     `
 
     root.querySelector<HTMLButtonElement>('#export-html')!.addEventListener('click', () => {
-      download('one-on-one.html', 'text/html', toHtml(messages, current.myUserId, otherName))
+      downloadFile('one-on-one.html', 'text/html', toHtml(messages, current.myUserId, otherName))
     })
     root.querySelector<HTMLButtonElement>('#export-txt')!.addEventListener('click', () => {
-      download('one-on-one.txt', 'text/plain', toTxt(messages, current.myUserId, otherName))
+      downloadFile('one-on-one.txt', 'text/plain', toTxt(messages, current.myUserId, otherName))
     })
     root.querySelector<HTMLButtonElement>('#export-json')!.addEventListener('click', () => {
-      download('one-on-one.json', 'application/json', toJson(messages, current.myUserId, otherName))
+      downloadFile('one-on-one.json', 'application/json', toJson(messages, current.myUserId, otherName))
     })
     root.querySelector<HTMLButtonElement>('#back-btn')!.addEventListener('click', () => go('chat'))
   })().catch(() => go('connection-id'))
@@ -47,7 +53,12 @@ function toTxt(messages: HistoryMessage[], myUserId: string, otherName: string):
   return messages
     .map((m) => {
       const who = m.senderId === myUserId ? 'YOU' : otherName
-      return `[${formatFullTimestamp(new Date(m.createdAt)).replace('\n', ' ')}] ${who}: ${m.content}`
+      const when = formatFullTimestamp(new Date(m.createdAt)).replace('\n', ' ')
+      if (m.type === 'letter') {
+        const { to, from } = letterMeta(m)
+        return `[${when}] ${who}: [letter to ${to} from ${from}]\n${m.content}`
+      }
+      return `[${when}] ${who}: ${m.content}`
     })
     .join('\n')
 }
@@ -55,17 +66,12 @@ function toTxt(messages: HistoryMessage[], myUserId: string, otherName: string):
 function toJson(messages: HistoryMessage[], myUserId: string, otherName: string): string {
   const out = messages.map((m) => ({
     sender: m.senderId === myUserId ? 'you' : otherName,
+    type: m.type,
     content: m.content,
+    ...(m.type === 'letter' ? { letter: m.payload } : {}),
     at: m.createdAt,
   }))
   return JSON.stringify(out, null, 2)
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
-  )
 }
 
 // Readable HTML export: left/right layout so the conversation is easy to follow.
@@ -75,7 +81,12 @@ function toHtml(messages: HistoryMessage[], myUserId: string, otherName: string)
       const mine = m.senderId === myUserId
       const who = mine ? 'You' : otherName
       const when = formatFullTimestamp(new Date(m.createdAt)).replace('\n', ' ')
-      return `    <div class="msg ${mine ? 'me' : 'them'}"><div class="meta">${escapeHtml(who)} · ${escapeHtml(when)}</div><div class="text">${escapeHtml(m.content)}</div></div>`
+      const meta = `<div class="meta">${escapeHtml(who)} · ${escapeHtml(when)}</div>`
+      if (m.type === 'letter') {
+        const { to, from } = letterMeta(m)
+        return `    <div class="msg ${mine ? 'me' : 'them'}">${meta}<div class="letter"><div class="letter-h">✉ A letter — to ${escapeHtml(to)}, from ${escapeHtml(from)}</div><div class="text">${escapeHtml(m.content)}</div></div></div>`
+      }
+      return `    <div class="msg ${mine ? 'me' : 'them'}">${meta}<div class="text">${escapeHtml(m.content)}</div></div>`
     })
     .join('\n')
 
@@ -92,20 +103,12 @@ function toHtml(messages: HistoryMessage[], myUserId: string, otherName: string)
   .msg.them { background: #12181f; margin-right: auto; }
   .meta { font-size: 11px; color: #9aa4af; margin-bottom: 4px; }
   .text { white-space: pre-wrap; word-wrap: break-word; }
+  .letter { border: 1px solid #3a4a2f; border-radius: 8px; padding: 10px 12px; background: rgba(120, 150, 90, 0.08); }
+  .letter-h { font-size: 12px; color: #cdebc0; margin-bottom: 6px; }
 </style></head>
 <body>
   <h1>Conversation with ${escapeHtml(otherName)}</h1>
   <div class="count">${messages.length} messages · exported ${escapeHtml(new Date().toLocaleString())}</div>
 ${rows}
 </body></html>`
-}
-
-function download(filename: string, mime: string, content: string): void {
-  const blob = new Blob([content], { type: mime })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
 }

@@ -38,6 +38,8 @@ export interface HistoryMessage {
   senderId: string
   content: string
   createdAt: string
+  type: 'text' | 'letter'
+  payload: unknown | null
 }
 
 export async function getCurrentConnection(): Promise<CurrentConnection | null> {

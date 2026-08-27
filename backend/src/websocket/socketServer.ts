@@ -46,15 +46,18 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
     const { connectionId } = socket.data as SocketData
     if (connectionId) socket.join(room(connectionId))
 
-    socket.on('message:send', async (payload: { content?: unknown }, ack?: (res: unknown) => void) => {
+    socket.on(
+      'message:send',
+      async (msg: { content?: unknown; type?: unknown; payload?: unknown }, ack?: (res: unknown) => void) => {
       try {
         const { userId, connectionId: connId } = socket.data as SocketData
         if (!connId) {
           ack?.({ error: 'no active connection' })
           return
         }
-        const content = typeof payload?.content === 'string' ? payload.content : ''
-        const message = await saveMessage(connId, userId, content)
+        const content = typeof msg?.content === 'string' ? msg.content : ''
+        const type = msg?.type === 'letter' ? 'letter' : 'text'
+        const message = await saveMessage(connId, userId, content, type, msg?.payload ?? null)
         io.to(room(connId)).emit('message:new', message)
         ack?.({ ok: true })
       } catch (err) {

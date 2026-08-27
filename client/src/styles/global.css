@@ -520,7 +520,7 @@ input:focus {
   font-size: 11px;
   line-height: 1;
   letter-spacing: -2px;
-  color: rgba(4, 23, 10, 0.55);
+  color: rgba(4, 23, 10, 0.85);
 }
 
 .chat--bubbles .chat__receipt--pending {
@@ -537,4 +537,175 @@ input:focus {
 
 .chat--bubbles .chat__receipt--seen::after {
   content: '✓✓';
+}
+
+/* --- Letters + slash commands + modal ------------------------------------ */
+
+.letter-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: linear-gradient(135deg, #2a2140, #241d33);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.letter-card:hover {
+  border-color: var(--text-dim);
+}
+
+.letter-card__icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.letter-card__hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat--bubbles .chat__message[data-mine='1'] .letter-card {
+  color: var(--text); /* keep the card readable even inside a green bubble */
+}
+
+.slash-menu {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: calc(100% + 6px);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  z-index: 20;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.slash-item {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 8px 14px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.slash-item--active,
+.slash-item:hover {
+  background: var(--bg);
+}
+
+.slash-item__name {
+  color: var(--accent-other);
+  font-weight: 600;
+}
+
+.slash-item__desc {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 50;
+}
+
+.modal-panel {
+  position: relative;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 22px;
+  width: 100%;
+  max-width: 620px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  padding: 4px 8px;
+}
+
+.letter-compose__title {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.letter-compose__to {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.letter-compose__body {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 16px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+.letter-compose__from {
+  width: 100%;
+  margin-top: 10px;
+  box-sizing: border-box;
+}
+
+.letter-compose__picker {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.letter-appearance-opt {
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+.letter-appearance-opt--active {
+  border-color: var(--accent-other);
+  color: var(--text);
+}
+
+.letter-compose__actions,
+.letter-view__actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 16px;
 }

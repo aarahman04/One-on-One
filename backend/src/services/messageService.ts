@@ -1,11 +1,17 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
 
+export type MessageType = 'text' | 'letter'
+
+const LETTER_APPEARANCES = ['dawn', 'botanical']
+
 export interface Message {
   id: string
   senderId: string
   content: string
   createdAt: string
+  type: MessageType
+  payload: unknown | null
 }
 
 interface MessageRow {
@@ -13,10 +19,32 @@ interface MessageRow {
   sender_id: string
   content: string
   created_at: string
+  type: MessageType | null
+  payload: unknown | null
 }
 
 function toMessage(row: MessageRow): Message {
-  return { id: row.id, senderId: row.sender_id, content: row.content, createdAt: row.created_at }
+  return {
+    id: row.id,
+    senderId: row.sender_id,
+    content: row.content,
+    createdAt: row.created_at,
+    type: row.type ?? 'text',
+    payload: row.payload ?? null,
+  }
+}
+
+// Letters carry structured metadata in `payload`; the letter body stays in
+// `content` (so length/search/export keep working). Validate like nicknames.
+function validateLetterPayload(payload: unknown): { appearance: string; from: string; to: string } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  const appearance = String(p.appearance ?? '')
+  const from = String(p.from ?? '').trim()
+  const to = String(p.to ?? '').trim()
+  if (!LETTER_APPEARANCES.includes(appearance)) throw new ConnectionError(400, 'invalid letter appearance')
+  if (from.length < 1 || from.length > 40) throw new ConnectionError(400, 'from must be 1-40 characters')
+  if (to.length < 1 || to.length > 40) throw new ConnectionError(400, 'to must be 1-40 characters')
+  return { appearance, from, to }
 }
 
 // Never trust the client for connection/sender/state (spec §20). Every
@@ -42,24 +70,33 @@ export async function getHistory(connectionId: string, userId: string): Promise<
 
   const { data, error } = await supabaseAdmin
     .from('messages')
-    .select('id, sender_id, content, created_at')
+    .select('id, sender_id, content, created_at, type, payload')
     .eq('connection_id', connectionId)
     .order('created_at', { ascending: true })
   if (error) throw error
   return (data ?? []).map(toMessage)
 }
 
-export async function saveMessage(connectionId: string, senderId: string, content: string): Promise<Message> {
+export async function saveMessage(
+  connectionId: string,
+  senderId: string,
+  content: string,
+  type: MessageType = 'text',
+  payload: unknown = null,
+): Promise<Message> {
   const trimmed = content.trim()
   if (trimmed.length < 1 || trimmed.length > 4000) {
     throw new ConnectionError(400, 'message must be 1-4000 characters')
   }
+  if (type !== 'text' && type !== 'letter') throw new ConnectionError(400, 'invalid message type')
+  const storedPayload = type === 'letter' ? validateLetterPayload(payload) : null
+
   await assertMemberOfLiveConnection(connectionId, senderId)
 
   const { data, error } = await supabaseAdmin
     .from('messages')
-    .insert({ connection_id: connectionId, sender_id: senderId, content: trimmed })
-    .select('id, sender_id, content, created_at')
+    .insert({ connection_id: connectionId, sender_id: senderId, content: trimmed, type, payload: storedPayload })
+    .select('id, sender_id, content, created_at, type, payload')
     .single()
   if (error) throw error
 

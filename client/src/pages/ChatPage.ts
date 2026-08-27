@@ -2,20 +2,26 @@ import type { Page } from '../state/router'
 import { formatClock, formatDateSeparator, formatFullTimestamp, isSameDay } from '../utils/formatTime'
 import { mountMenuDropdown } from '../components/MenuDropdown'
 import { applyAppearance, openAppearance } from '../features/appearancePreview'
+import { openLetter, openLetterComposer, type LetterPayload } from '../features/letters'
+import { mountSlashCommands } from '../features/slashCommands'
 import { getCurrentConnection, getMessages, markRead, type CurrentConnection } from '../services/connectionsApi'
-import { connectMessaging, type IncomingMessage } from '../services/messageService'
+import { connectMessaging, type IncomingMessage, type MessageType } from '../services/messageService'
 import type { Transport } from '../services/transport/Transport'
 
 interface ChatMessage {
   senderId: string
   content: string
   createdAt: string
+  type: MessageType
+  payload: unknown | null
 }
 
 interface Pending {
   content: string
   row: HTMLElement
   sent: boolean
+  type: MessageType
+  payload: unknown
 }
 
 export const ChatPage: Page = (root, go) => {
@@ -151,6 +157,30 @@ export const ChatPage: Page = (root, go) => {
     // --- Message rendering -------------------------------------------------
     let lastDate: Date | null = null
 
+    // A letter renders as a folded card in the chat; tapping opens the full letter.
+    const letterCard = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<LetterPayload>
+      const card = document.createElement('button')
+      card.type = 'button'
+      card.className = 'letter-card'
+      const icon = document.createElement('span')
+      icon.className = 'letter-card__icon'
+      icon.textContent = '✉'
+      const txt = document.createElement('span')
+      txt.className = 'letter-card__text'
+      txt.textContent = `A letter — to ${p.to ?? ''}, from ${p.from ?? ''}`
+      const hint = document.createElement('span')
+      hint.className = 'letter-card__hint'
+      hint.textContent = 'tap to open'
+      txt.append(document.createElement('br'), hint)
+      card.append(icon, txt)
+      card.addEventListener('click', (e) => {
+        e.stopPropagation() // don't also toggle the row's timestamp
+        openLetter(message.content, p)
+      })
+      return card
+    }
+
     const appendMessage = (message: ChatMessage, pending = false): HTMLElement => {
       const at = new Date(message.createdAt)
       if (!lastDate || !isSameDay(lastDate, at)) {
@@ -185,7 +215,8 @@ export const ChatPage: Page = (root, go) => {
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
 
-      body.append(sender, text)
+      body.append(sender)
+      body.append(message.type === 'letter' ? letterCard(message) : text)
       if (isMine) {
         row.dataset.mine = '1' // keyed by the bubble-mode preview
         if (!pending) row.dataset.delivered = '1'
@@ -302,7 +333,7 @@ export const ChatPage: Page = (root, go) => {
     const trySend = (entry: Pending): void => {
       if (!transport) return // stays queued; flushed on connect
       entry.sent = true
-      transport.sendMessage(entry.content).catch(() => {
+      transport.sendMessage(entry.content, entry.type, entry.payload).catch(() => {
         entry.sent = false
         entry.row.classList.add('chat__message--failed')
       })
@@ -311,14 +342,18 @@ export const ChatPage: Page = (root, go) => {
     const input = root.querySelector<HTMLInputElement>('#message-input')!
     const composer = root.querySelector<HTMLFormElement>('#composer')!
 
+    const sendMessage = (content: string, type: MessageType = 'text', payload: unknown = null): void => {
+      const row = appendMessage({ senderId: myUserId, content, createdAt: new Date().toISOString(), type, payload }, true)
+      const entry: Pending = { content, row, sent: false, type, payload }
+      pending.push(entry)
+      trySend(entry)
+    }
+
     const send = (): void => {
       const content = input.value.trim()
       if (!content) return
       input.value = ''
-      const row = appendMessage({ senderId: myUserId, content, createdAt: new Date().toISOString() }, true)
-      const entry: Pending = { content, row, sent: false }
-      pending.push(entry)
-      trySend(entry)
+      sendMessage(content)
     }
 
     // Form submit fires for Enter (desktop) and the iOS keyboard's Go/Send key.
@@ -326,12 +361,22 @@ export const ChatPage: Page = (root, go) => {
       e.preventDefault()
       send()
     })
+
+    // Slash commands ("/letter" opens the letter composer; others insert text).
+    mountSlashCommands(composer, input, {
+      input,
+      writeLetter: () =>
+        openLetterComposer({
+          toName: current.otherNickname ?? 'them',
+          onSend: (letterBody, letterPayload) => sendMessage(letterBody, 'letter', letterPayload),
+        }),
+    })
     input.focus()
 
     // --- Incoming ----------------------------------------------------------
     const onIncoming = (message: IncomingMessage): void => {
       if (message.senderId === myUserId) {
-        const idx = pending.findIndex((p) => p.content === message.content)
+        const idx = pending.findIndex((p) => p.content === message.content && p.type === message.type)
         if (idx >= 0) {
           const [entry] = pending.splice(idx, 1)
           entry.row.classList.remove('chat__message--pending', 'chat__message--failed')

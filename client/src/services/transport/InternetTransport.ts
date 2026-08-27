@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client'
 import { supabase } from '../supabaseClient'
-import type { IncomingMessage, Transport } from './Transport'
+import type { IncomingMessage, MessageType, Transport } from './Transport'
 
 const API_URL = import.meta.env.VITE_API_URL
 
@@ -31,12 +31,12 @@ export class InternetTransport implements Transport {
     this.socket = null
   }
 
-  async sendMessage(content: string): Promise<void> {
+  async sendMessage(content: string, type: MessageType = 'text', payload: unknown = null): Promise<void> {
     const socket = this.socket
     if (!socket) throw new Error('not connected')
 
     await new Promise<void>((resolve, reject) => {
-      socket.emit('message:send', { content }, (res: { ok?: boolean; error?: string }) => {
+      socket.emit('message:send', { content, type, payload }, (res: { ok?: boolean; error?: string }) => {
         if (res?.error) reject(new Error(res.error))
         else resolve()
       })
