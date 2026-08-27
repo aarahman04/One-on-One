@@ -3,10 +3,11 @@ import { formatClock, formatDateSeparator, formatFullTimestamp, isSameDay } from
 import { mountMenuDropdown } from '../components/MenuDropdown'
 import { applyAppearance, openAppearance } from '../features/appearancePreview'
 import { openLetter, openLetterComposer, type LetterPayload } from '../features/letters'
-import { mountSlashCommands } from '../features/slashCommands'
+import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { getCurrentConnection, getMessages, markRead, type CurrentConnection } from '../services/connectionsApi'
 import { connectMessaging, type IncomingMessage, type MessageType } from '../services/messageService'
 import type { Transport } from '../services/transport/Transport'
+import { linkifyInto } from '../utils/linkify'
 
 interface ChatMessage {
   senderId: string
@@ -64,7 +65,7 @@ export const ChatPage: Page = (root, go) => {
 
     const clearHighlights = (): void => {
       for (const el of log.querySelectorAll<HTMLElement>('.chat__message-text')) {
-        if (el.querySelector('mark')) el.textContent = el.textContent // flatten <mark>s back to plain text
+        if (el.querySelector('mark')) linkifyInto(el, el.textContent ?? '') // drop <mark>s, restore links
       }
       for (const row of log.querySelectorAll('.chat__message--current')) row.classList.remove('chat__message--current')
     }
@@ -209,7 +210,7 @@ export const ChatPage: Page = (root, go) => {
 
       const text = document.createElement('div')
       text.className = 'chat__message-text'
-      text.textContent = message.content
+      linkifyInto(text, message.content)
 
       const fullTime = document.createElement('div')
       fullTime.className = 'chat__message-full-time'
@@ -339,8 +340,18 @@ export const ChatPage: Page = (root, go) => {
       })
     }
 
-    const input = root.querySelector<HTMLInputElement>('#message-input')!
+    const input = root.querySelector<HTMLTextAreaElement>('#message-input')!
     const composer = root.querySelector<HTMLFormElement>('#composer')!
+
+    // Auto-grow the composer (a textarea, so blank-line paragraph gaps survive)
+    // up to a few lines, then it scrolls internally.
+    const MAX_INPUT_HEIGHT = 120
+    const autoGrow = (): void => {
+      input.style.height = 'auto'
+      input.style.height = `${Math.min(input.scrollHeight, MAX_INPUT_HEIGHT)}px`
+    }
+    input.addEventListener('input', autoGrow)
+    autoGrow()
 
     const sendMessage = (content: string, type: MessageType = 'text', payload: unknown = null): void => {
       const row = appendMessage({ senderId: myUserId, content, createdAt: new Date().toISOString(), type, payload }, true)
@@ -353,23 +364,47 @@ export const ChatPage: Page = (root, go) => {
       const content = input.value.trim()
       if (!content) return
       input.value = ''
+      autoGrow()
       sendMessage(content)
     }
 
-    // Form submit fires for Enter (desktop) and the iOS keyboard's Go/Send key.
-    composer.addEventListener('submit', (e) => {
-      e.preventDefault()
-      send()
-    })
-
-    // Slash commands ("/letter" opens the letter composer; others insert text).
-    mountSlashCommands(composer, input, {
+    const slashCtx = {
       input,
       writeLetter: () =>
         openLetterComposer({
           toName: current.otherNickname ?? 'them',
           onSend: (letterBody, letterPayload) => sendMessage(letterBody, 'letter', letterPayload),
         }),
+    }
+
+    // Form submit fires for the send button and the iOS keyboard's Go/Send key.
+    // A phone's soft keyboard can submit "/letter" as literal text without ever
+    // producing a catchable Enter keydown, so check for an exact command match
+    // here too before falling back to a normal send.
+    composer.addEventListener('submit', (e) => {
+      e.preventDefault()
+      if (runIfCommand(input.value, slashCtx)) {
+        input.value = ''
+        autoGrow()
+        return
+      }
+      send()
+    })
+
+    // Slash commands ("/letter" opens the letter composer; others insert text).
+    mountSlashCommands(composer, input, slashCtx)
+
+    // Desktop: Enter sends, Shift+Enter inserts a newline (default textarea
+    // behavior). Touch devices leave Enter alone — it inserts a newline, and
+    // sending happens via the button — which is what lets paragraph gaps work
+    // from a phone keyboard. Registered after mountSlashCommands so an open
+    // slash-menu's own Enter handling (stopImmediatePropagation) takes priority.
+    const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !isCoarsePointer) {
+        e.preventDefault()
+        composer.requestSubmit()
+      }
     })
     input.focus()
 
@@ -464,7 +499,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
       <div class="chat__leave-banner" id="leave-banner" style="display: none;"></div>
       <div class="chat__log" id="chat-log"></div>
       <form class="chat__input-bar" id="composer">
-        <input id="message-input" placeholder="Type a message..." autocomplete="off" enterkeyhint="send" />
+        <textarea id="message-input" placeholder="Type a message..." autocomplete="off" enterkeyhint="send" rows="1"></textarea>
         <button class="primary" id="send-btn" type="submit">&uarr;</button>
       </form>
     </div>
