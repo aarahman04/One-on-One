@@ -594,10 +594,11 @@ input:focus {
   content: '✓✓';
 }
 
-/* "Love" wallpaper: a rose photo background, with bubble colors swapped to a
-   rose/frosted-white palette so they read against the art instead of clashing
-   with it (WALLPAPER note: place a licensed copy of Love.webp — the current
-   one is a watermarked stock preview — at client/public/Love.webp). */
+/* "Love" wallpaper: the rose/hearts photo background, with bubble colors
+   pulled from the artwork's own palette (wallpapers/wallpaper description.txt)
+   so they read as part of the scene instead of clashing with it.
+   (WALLPAPER note: the current Love.webp is a watermarked stock preview —
+   swap for a licensed copy at client/public/Love.webp before shipping.) */
 .chat--wallpaper-love .chat__log {
   background:
     linear-gradient(rgba(30, 10, 25, 0.28), rgba(30, 10, 25, 0.28)),
@@ -605,10 +606,10 @@ input:focus {
 }
 
 .chat--wallpaper-love.chat--bubbles {
-  --bubble-mine-bg: linear-gradient(135deg, #d6337c, #e0559f);
+  --bubble-mine-bg: linear-gradient(135deg, #f25a7e, #f1708c); /* main pink / soft pink */
   --bubble-mine-text: #ffffff;
-  --bubble-other-bg: rgba(255, 255, 255, 0.82);
-  --bubble-other-text: #3a1030;
+  --bubble-other-bg: rgba(217, 212, 232, 0.88); /* lavender */
+  --bubble-other-text: #2f3150; /* dark navy */
 }
 
 /* --- Letters + slash commands + modal ------------------------------------ */
