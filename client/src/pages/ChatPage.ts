@@ -141,7 +141,6 @@ export const ChatPage: Page = (root, go) => {
     // --- Presence: the other side marks read every ~4s while the chat is on
     // screen, so a fresh last_read_at means they're actually here right now.
     const navStatus = root.querySelector<HTMLDivElement>('#nav-status')!
-    const readDot = root.querySelector<HTMLSpanElement>('#read-dot')!
     const PRESENCE_WINDOW_MS = 15000
     const updatePresence = (otherLastReadAt: string | null): void => {
       const active = !!otherLastReadAt && Date.now() - new Date(otherLastReadAt).getTime() < PRESENCE_WINDOW_MS
@@ -186,31 +185,46 @@ export const ChatPage: Page = (root, go) => {
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
 
-      body.append(sender, text, fullTime)
-      if (isMine) row.dataset.mine = '1' // keyed by the bubble-mode preview
+      body.append(sender, text)
+      if (isMine) {
+        row.dataset.mine = '1' // keyed by the bubble-mode preview
+        if (!pending) row.dataset.delivered = '1'
+        const receipt = document.createElement('span')
+        receipt.className = 'chat__receipt'
+        body.append(receipt) // sits at the end of the message
+      }
+      body.append(fullTime)
       row.append(time, body)
       row.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
       log.appendChild(row)
       log.scrollTop = log.scrollHeight
 
-      lastMessageMine = isMine
-      if (isMine && !pending) myLastDeliveredAt = message.createdAt
-      updateReadDot()
+      if (isMine) {
+        myRows.push(row)
+        applyReceipt(row)
+      }
       return row
     }
 
-    // --- Read indicator: one dot by the name. Hidden until my latest message
-    // is delivered, hollow while unseen, solid blue once they've seen it, and
-    // hidden again once they reply (their message becomes the latest one).
+    // --- Read receipts: a small per-message indicator on my own messages, at
+    // the end of the message. Line mode renders it as a dot (green = seen,
+    // hollow = unseen); bubble mode renders WhatsApp ticks (✓ sent, blue ✓✓
+    // read) — both driven by these classes, styled in global.css.
+    const myRows: HTMLElement[] = []
     let otherLastRead: string | null = current.otherLastReadAt
-    let lastMessageMine = false
-    let myLastDeliveredAt: string | null = null
 
-    const updateReadDot = (): void => {
-      const show = lastMessageMine && !!myLastDeliveredAt
-      const seen = show && !!otherLastRead && new Date(myLastDeliveredAt!) <= new Date(otherLastRead)
-      readDot.style.display = show ? 'inline-block' : 'none'
-      readDot.classList.toggle('chat__read-dot--seen', seen)
+    const applyReceipt = (row: HTMLElement): void => {
+      const receipt = row.querySelector<HTMLElement>('.chat__receipt')
+      if (!receipt) return
+      const at = row.dataset.at
+      const delivered = row.dataset.delivered === '1'
+      const seen = delivered && !!otherLastRead && !!at && new Date(at) <= new Date(otherLastRead)
+      receipt.classList.toggle('chat__receipt--pending', !delivered)
+      receipt.classList.toggle('chat__receipt--seen', seen)
+    }
+
+    const refreshReceipts = (): void => {
+      for (const row of myRows) applyReceipt(row)
     }
 
     // --- System lines (leave events) --------------------------------------
@@ -276,7 +290,7 @@ export const ChatPage: Page = (root, go) => {
     const history = await getMessages(connectionId)
     if (disposed) return
     for (const message of history) appendMessage(message)
-    updateReadDot()
+    refreshReceipts()
     renderBanner(current)
     reconcileLeave(current)
     updatePresence(current.otherLastReadAt)
@@ -322,8 +336,8 @@ export const ChatPage: Page = (root, go) => {
           const [entry] = pending.splice(idx, 1)
           entry.row.classList.remove('chat__message--pending', 'chat__message--failed')
           entry.row.dataset.at = message.createdAt
-          myLastDeliveredAt = message.createdAt
-          updateReadDot()
+          entry.row.dataset.delivered = '1'
+          applyReceipt(entry.row)
           return
         }
       }
@@ -370,7 +384,7 @@ export const ChatPage: Page = (root, go) => {
       reconcileLeave(next)
       renderBanner(next)
       otherLastRead = next.otherLastReadAt
-      updateReadDot()
+      refreshReceipts()
       updatePresence(next.otherLastReadAt)
       // Keep marking read while the chat is actually on screen — makes the
       // other side's "seen" tick reliable even if a discrete event was missed.
@@ -390,10 +404,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
     <div class="chat">
       <div class="chat__nav">
         <div>
-          <div class="chat__nav-title">
-            <span id="nav-title"></span>
-            <span class="chat__read-dot" id="read-dot" style="display: none;" title="Seen"></span>
-          </div>
+          <div class="chat__nav-title" id="nav-title"></div>
           <div class="chat__nav-status" id="nav-status">connecting…</div>
         </div>
         <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
