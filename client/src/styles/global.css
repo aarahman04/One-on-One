@@ -407,6 +407,56 @@ input:focus {
   right: auto;
 }
 
+.chat__emoji-picker {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+.chat__emoji-picker-btn {
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.chat__emoji-picker-btn:hover {
+  background: var(--bg);
+}
+
+.chat__reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.chat__reaction-chip {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.chat__reaction-chip--mine {
+  border-color: var(--accent-other);
+}
+
+.chat--bubbles .chat__reaction-chip {
+  background: rgba(0, 0, 0, 0.16);
+  border-color: transparent;
+  color: inherit;
+}
+
+.chat--bubbles .chat__reaction-chip--mine {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
 .chat__message-time {
   color: var(--muted);
   font-size: 12px;
