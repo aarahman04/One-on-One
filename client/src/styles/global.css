@@ -594,22 +594,32 @@ input:focus {
   content: '✓✓';
 }
 
-/* "Love" wallpaper: the rose/hearts photo background, with bubble colors
-   pulled from the artwork's own palette (wallpapers/wallpaper description.txt)
-   so they read as part of the scene instead of clashing with it.
-   (WALLPAPER note: the current Love.webp is a watermarked stock preview —
-   swap for a licensed copy at client/public/Love.webp before shipping.) */
+/* "Love" wallpaper: a dusk couple-silhouette photo background, with bubble
+   colors pulled from the artwork's own palette
+   (wallpapers/wallpaper description.txt) so they read as part of the scene
+   instead of clashing with it. */
 .chat--wallpaper-love .chat__log {
   background:
-    linear-gradient(rgba(30, 10, 25, 0.28), rgba(30, 10, 25, 0.28)),
-    url('/Love.webp') center / cover no-repeat;
+    linear-gradient(rgba(10, 14, 20, 0.22), rgba(10, 14, 20, 0.22)),
+    url('/love.jpg') center / cover no-repeat;
 }
 
 .chat--wallpaper-love.chat--bubbles {
-  --bubble-mine-bg: linear-gradient(135deg, #f25a7e, #f1708c); /* main pink / soft pink */
-  --bubble-mine-text: #ffffff;
-  --bubble-other-bg: #6f7699; /* slate blue — solid, reads clearly against the pink art */
+  --bubble-mine-bg: linear-gradient(135deg, #efd08a, #f5e6b5); /* soft gold / warm cream — the horizon glow */
+  --bubble-mine-text: #26323b; /* charcoal blue — dark enough to read on the gold */
+  --bubble-other-bg: #6f8fa3; /* steel blue — solid, reads clearly against the gold/dusk sky */
   --bubble-other-text: #ffffff;
+}
+
+/* The default bubble ticks are white (readable on the blue "mine" bubble
+   elsewhere), but Love's "mine" bubble is light gold — white would wash out
+   the same way the old receiver bubble did. Use dark ticks here. */
+.chat--wallpaper-love.chat--bubbles .chat__receipt {
+  color: rgba(38, 50, 59, 0.55);
+}
+
+.chat--wallpaper-love.chat--bubbles .chat__receipt--seen {
+  color: #26323b;
 }
 
 /* --- Letters + slash commands + modal ------------------------------------ */
