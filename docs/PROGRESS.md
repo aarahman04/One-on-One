@@ -11,6 +11,16 @@ Notes/deviations:
 
 ---
 
+## [Phase B] Quoted replies: swipe (phone) / right-click (desktop) — 2026-08-27
+Status: done (builds clean; **apply migration 011** — already applied by user in Supabase; two accounts to verify)
+What shipped:
+- **DB:** `messages.reply_to` (nullable, `references messages(id) on delete set null`) via `011_message_reply.sql`.
+- **Backend:** `saveMessage(..., replyTo)` validates the target is a real message **in the same connection** (never trusts a client-supplied id, spec §20) before storing; `getHistory`/`toMessage` return `replyTo`. Socket `message:send` reads `replyTo` off the payload.
+- **Transport:** `Transport.sendMessage` gained an optional `replyTo` 4th arg; `IncomingMessage`/`HistoryMessage` gained `replyTo`. Additive — `BluetoothTransport` (V3) just needs to plumb the same field.
+- **Reply UI, per user's interaction spec:** phone = right-swipe a message row (translateX + a fading "↩" icon, ~60px trigger); desktop = right-click a row opens a small context menu with **Reply** (`.chat__ctx-menu`, reuses `.menu` styling) — built as a shared menu so Phase C's **React** can be added as a second item without rebuilding it. Both call `startReply(id)`, which shows a quoted-reply bar above the composer (sender + snippet, ✕ to cancel); the next send carries `replyTo` and clears the bar.
+- **Rendering:** replied-to messages show a small quoted block above their text (`quoteBlock()`) — sender + one-line snippet, resolved from an in-memory `messagesById` map populated as messages render (history load, live incoming, and pending→confirmed). Tapping the quote scrolls to the original and briefly flashes it (`chat__message--flash`).
+Notes/deviations: Reply is disabled on still-pending (not-yet-confirmed) rows — they have no server id yet, so `dataset.id` is unset and the swipe/right-click handlers no-op; this is implicit, not a special-cased guard. Letters don't carry reply context (composing `/letter` while a reply is staged just clears the reply bar rather than attaching it) — a deliberate scope cut, not a bug. Verified compile/build only; needs two accounts to confirm the swipe threshold feels right and the desktop context menu behaves.
+
 ## [Phase A] Appearance overhaul + multi-line composer + linkify + mobile `/letter` fix — 2026-08-27
 Status: done (client-only, no migration; builds clean; browser + phone testing pending)
 What shipped:

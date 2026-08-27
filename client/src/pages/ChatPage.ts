@@ -10,11 +10,13 @@ import type { Transport } from '../services/transport/Transport'
 import { linkifyInto } from '../utils/linkify'
 
 interface ChatMessage {
+  id?: string
   senderId: string
   content: string
   createdAt: string
   type: MessageType
   payload: unknown | null
+  replyTo?: string | null
 }
 
 interface Pending {
@@ -23,6 +25,16 @@ interface Pending {
   sent: boolean
   type: MessageType
   payload: unknown
+  replyTo: string | null
+}
+
+// Minimal record kept per rendered message so a reply can show a "sender +
+// snippet" preview without re-fetching. Keyed by the message's server id.
+interface QuotableMessage {
+  id: string
+  senderId: string
+  content: string
+  type: MessageType
 }
 
 export const ChatPage: Page = (root, go) => {
@@ -157,6 +169,31 @@ export const ChatPage: Page = (root, go) => {
 
     // --- Message rendering -------------------------------------------------
     let lastDate: Date | null = null
+    const messagesById = new Map<string, QuotableMessage>()
+
+    // A reply renders as a small quoted block above the message text; tapping
+    // it scrolls to (and briefly flashes) the original.
+    const quoteBlock = (replyTo: string): HTMLElement => {
+      const original = messagesById.get(replyTo)
+      const q = document.createElement('div')
+      q.className = 'chat__quote'
+      const name = document.createElement('div')
+      name.className = 'chat__quote-name'
+      name.textContent = original ? (original.senderId === myUserId ? 'You' : otherName) : otherName
+      const snippet = document.createElement('div')
+      snippet.className = 'chat__quote-snippet'
+      snippet.textContent = original ? (original.type === 'letter' ? 'A letter' : original.content) : 'Original message'
+      q.append(name, snippet)
+      q.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const target = log.querySelector<HTMLElement>(`[data-id="${CSS.escape(replyTo)}"]`)
+        if (!target) return
+        target.scrollIntoView({ block: 'center' })
+        target.classList.add('chat__message--flash')
+        setTimeout(() => target.classList.remove('chat__message--flash'), 900)
+      })
+      return q
+    }
 
     // A letter renders as a folded card in the chat; tapping opens the full letter.
     const letterCard = (message: ChatMessage): HTMLElement => {
@@ -196,6 +233,7 @@ export const ChatPage: Page = (root, go) => {
       const row = document.createElement('div')
       row.className = 'chat__message' + (pending ? ' chat__message--pending' : '')
       row.dataset.at = message.createdAt
+      if (message.id) row.dataset.id = message.id
 
       const time = document.createElement('div')
       time.className = 'chat__message-time'
@@ -217,6 +255,7 @@ export const ChatPage: Page = (root, go) => {
       fullTime.textContent = formatFullTimestamp(at)
 
       body.append(sender)
+      if (message.replyTo) body.append(quoteBlock(message.replyTo))
       body.append(message.type === 'letter' ? letterCard(message) : text)
       if (isMine) {
         row.dataset.mine = '1' // keyed by the bubble-mode preview
@@ -235,6 +274,7 @@ export const ChatPage: Page = (root, go) => {
         myRows.push(row)
         applyReceipt(row)
       }
+      if (message.id) messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
       return row
     }
 
@@ -334,7 +374,7 @@ export const ChatPage: Page = (root, go) => {
     const trySend = (entry: Pending): void => {
       if (!transport) return // stays queued; flushed on connect
       entry.sent = true
-      transport.sendMessage(entry.content, entry.type, entry.payload).catch(() => {
+      transport.sendMessage(entry.content, entry.type, entry.payload, entry.replyTo).catch(() => {
         entry.sent = false
         entry.row.classList.add('chat__message--failed')
       })
@@ -353,19 +393,61 @@ export const ChatPage: Page = (root, go) => {
     input.addEventListener('input', autoGrow)
     autoGrow()
 
-    const sendMessage = (content: string, type: MessageType = 'text', payload: unknown = null): void => {
-      const row = appendMessage({ senderId: myUserId, content, createdAt: new Date().toISOString(), type, payload }, true)
-      const entry: Pending = { content, row, sent: false, type, payload }
+    const sendMessage = (
+      content: string,
+      type: MessageType = 'text',
+      payload: unknown = null,
+      replyTo: string | null = null,
+    ): void => {
+      const row = appendMessage(
+        { senderId: myUserId, content, createdAt: new Date().toISOString(), type, payload, replyTo },
+        true,
+      )
+      const entry: Pending = { content, row, sent: false, type, payload, replyTo }
       pending.push(entry)
       trySend(entry)
     }
+
+    // --- Reply: swipe (phone) or right-click "Reply" (desktop) sets a target;
+    // the next send carries it as replyTo and clears the bar.
+    const replyBar = root.querySelector<HTMLDivElement>('#reply-bar')!
+    const replyBarName = root.querySelector<HTMLDivElement>('#reply-bar-name')!
+    const replyBarSnippet = root.querySelector<HTMLDivElement>('#reply-bar-snippet')!
+    let replyTarget: QuotableMessage | null = null
+
+    const renderReplyBar = (): void => {
+      if (!replyTarget) {
+        replyBar.style.display = 'none'
+        return
+      }
+      replyBar.style.display = 'flex'
+      replyBarName.textContent = replyTarget.senderId === myUserId ? 'You' : otherName
+      replyBarSnippet.textContent = replyTarget.type === 'letter' ? 'A letter' : replyTarget.content
+    }
+
+    const startReply = (id: string): void => {
+      const target = messagesById.get(id)
+      if (!target) return
+      replyTarget = target
+      renderReplyBar()
+      input.focus()
+    }
+
+    const cancelReply = (): void => {
+      replyTarget = null
+      renderReplyBar()
+    }
+
+    root.querySelector<HTMLButtonElement>('#reply-bar-cancel')!.addEventListener('click', cancelReply)
 
     const send = (): void => {
       const content = input.value.trim()
       if (!content) return
       input.value = ''
       autoGrow()
-      sendMessage(content)
+      const replyTo = replyTarget?.id ?? null
+      cancelReply()
+      sendMessage(content, 'text', null, replyTo)
     }
 
     const slashCtx = {
@@ -373,7 +455,10 @@ export const ChatPage: Page = (root, go) => {
       writeLetter: () =>
         openLetterComposer({
           toName: current.otherNickname ?? 'them',
-          onSend: (letterBody, letterPayload) => sendMessage(letterBody, 'letter', letterPayload),
+          onSend: (letterBody, letterPayload) => {
+            sendMessage(letterBody, 'letter', letterPayload)
+            cancelReply() // letters don't carry reply context; don't leave the bar stuck open
+          },
         }),
     }
 
@@ -408,15 +493,128 @@ export const ChatPage: Page = (root, go) => {
     })
     input.focus()
 
+    // --- Reply gestures: right-swipe on phone, right-click on desktop -----
+    // (Reactions in a later phase reuse this same context menu.)
+    const SWIPE_TRIGGER = 60
+    const SWIPE_MAX = 80
+    let swipeRow: HTMLElement | null = null
+    let swipeStartX = 0
+    let swipeStartY = 0
+    let swiping = false
+    let swipeIcon: HTMLElement | null = null
+
+    const ensureSwipeIcon = (): HTMLElement => {
+      if (!swipeIcon) {
+        swipeIcon = document.createElement('div')
+        swipeIcon.className = 'chat__swipe-icon'
+        swipeIcon.textContent = '↩'
+        log.appendChild(swipeIcon)
+      }
+      return swipeIcon
+    }
+
+    log.addEventListener(
+      'touchstart',
+      (e) => {
+        const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
+        if (!row?.dataset.id) return
+        swipeRow = row
+        swipeStartX = e.touches[0].clientX
+        swipeStartY = e.touches[0].clientY
+        swiping = false
+      },
+      { passive: true },
+    )
+
+    log.addEventListener(
+      'touchmove',
+      (e) => {
+        if (!swipeRow) return
+        const dx = e.touches[0].clientX - swipeStartX
+        const dy = e.touches[0].clientY - swipeStartY
+        if (!swiping) {
+          if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return
+          if (Math.abs(dy) > Math.abs(dx)) {
+            swipeRow = null // vertical scroll — let it through, not a reply swipe
+            return
+          }
+          swiping = true
+        }
+        if (dx <= 0) {
+          swipeRow.style.transform = ''
+          return
+        }
+        const clamped = Math.min(dx, SWIPE_MAX)
+        swipeRow.style.transform = `translateX(${clamped}px)`
+        const ready = clamped >= SWIPE_TRIGGER
+        swipeRow.classList.toggle('chat__message--swipe-ready', ready)
+
+        const icon = ensureSwipeIcon()
+        const rowRect = swipeRow.getBoundingClientRect()
+        const logRect = log.getBoundingClientRect()
+        icon.style.top = `${rowRect.top - logRect.top + log.scrollTop + rowRect.height / 2 - 8}px`
+        icon.style.opacity = String(Math.min(clamped / SWIPE_TRIGGER, 1))
+        icon.classList.toggle('chat__swipe-icon--ready', ready)
+      },
+      { passive: true },
+    )
+
+    log.addEventListener('touchend', () => {
+      if (!swipeRow) return
+      const triggered = swipeRow.classList.contains('chat__message--swipe-ready')
+      const id = swipeRow.dataset.id!
+      swipeRow.style.transform = ''
+      swipeRow.classList.remove('chat__message--swipe-ready')
+      swipeIcon?.remove()
+      swipeIcon = null
+      swipeRow = null
+      if (triggered) startReply(id)
+    })
+
+    let ctxMenu: HTMLElement | null = null
+    const closeCtxMenu = (): void => {
+      ctxMenu?.remove()
+      ctxMenu = null
+    }
+
+    log.addEventListener('contextmenu', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
+      if (!row?.dataset.id) return
+      e.preventDefault()
+      closeCtxMenu()
+
+      const menu = document.createElement('div')
+      menu.className = 'menu chat__ctx-menu'
+      menu.style.left = `${e.clientX}px`
+      menu.style.top = `${e.clientY}px`
+      const replyBtn = document.createElement('button')
+      replyBtn.type = 'button'
+      replyBtn.className = 'menu__item'
+      replyBtn.textContent = 'Reply'
+      replyBtn.addEventListener('click', () => {
+        startReply(row.dataset.id!)
+        closeCtxMenu()
+      })
+      menu.append(replyBtn)
+      document.body.append(menu)
+      ctxMenu = menu
+
+      setTimeout(() => document.addEventListener('click', closeCtxMenu, { once: true }), 0)
+    })
+
     // --- Incoming ----------------------------------------------------------
     const onIncoming = (message: IncomingMessage): void => {
       if (message.senderId === myUserId) {
-        const idx = pending.findIndex((p) => p.content === message.content && p.type === message.type)
+        const idx = pending.findIndex(
+          (p) => p.content === message.content && p.type === message.type && p.replyTo === message.replyTo,
+        )
         if (idx >= 0) {
           const [entry] = pending.splice(idx, 1)
           entry.row.classList.remove('chat__message--pending', 'chat__message--failed')
           entry.row.dataset.at = message.createdAt
+          entry.row.dataset.id = message.id
           entry.row.dataset.delivered = '1'
+          messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
           applyReceipt(entry.row)
           return
         }
@@ -498,6 +696,13 @@ function renderChat(root: HTMLElement, displayName: string): void {
       </div>
       <div class="chat__leave-banner" id="leave-banner" style="display: none;"></div>
       <div class="chat__log" id="chat-log"></div>
+      <div class="chat__reply-bar" id="reply-bar" style="display: none;">
+        <div class="chat__reply-bar-info">
+          <div class="chat__reply-bar-name" id="reply-bar-name"></div>
+          <div class="chat__reply-bar-snippet" id="reply-bar-snippet"></div>
+        </div>
+        <button type="button" class="chat__reply-bar-cancel" id="reply-bar-cancel">✕</button>
+      </div>
       <form class="chat__input-bar" id="composer">
         <textarea id="message-input" placeholder="Type a message..." autocomplete="off" enterkeyhint="send" rows="1"></textarea>
         <button class="primary" id="send-btn" type="submit">&uarr;</button>

@@ -40,6 +40,7 @@ export interface HistoryMessage {
   createdAt: string
   type: 'text' | 'letter'
   payload: unknown | null
+  replyTo: string | null
 }
 
 export async function getCurrentConnection(): Promise<CurrentConnection | null> {

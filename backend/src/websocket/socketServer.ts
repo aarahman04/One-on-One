@@ -48,7 +48,10 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
 
     socket.on(
       'message:send',
-      async (msg: { content?: unknown; type?: unknown; payload?: unknown }, ack?: (res: unknown) => void) => {
+      async (
+        msg: { content?: unknown; type?: unknown; payload?: unknown; replyTo?: unknown },
+        ack?: (res: unknown) => void,
+      ) => {
       try {
         const { userId, connectionId: connId } = socket.data as SocketData
         if (!connId) {
@@ -57,7 +60,8 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         }
         const content = typeof msg?.content === 'string' ? msg.content : ''
         const type = msg?.type === 'letter' ? 'letter' : 'text'
-        const message = await saveMessage(connId, userId, content, type, msg?.payload ?? null)
+        const replyTo = typeof msg?.replyTo === 'string' ? msg.replyTo : null
+        const message = await saveMessage(connId, userId, content, type, msg?.payload ?? null, replyTo)
         io.to(room(connId)).emit('message:new', message)
         ack?.({ ok: true })
       } catch (err) {

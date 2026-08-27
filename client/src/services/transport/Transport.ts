@@ -11,11 +11,12 @@ export interface IncomingMessage {
   createdAt: string
   type: MessageType
   payload: unknown | null
+  replyTo: string | null
 }
 
 export interface Transport {
   connect(): Promise<void>
   disconnect(): void
-  sendMessage(content: string, type?: MessageType, payload?: unknown): Promise<void>
+  sendMessage(content: string, type?: MessageType, payload?: unknown, replyTo?: string | null): Promise<void>
   onMessage(callback: (message: IncomingMessage) => void): () => void
 }

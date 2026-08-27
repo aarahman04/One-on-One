@@ -12,6 +12,7 @@ export interface Message {
   createdAt: string
   type: MessageType
   payload: unknown | null
+  replyTo: string | null
 }
 
 interface MessageRow {
@@ -21,6 +22,7 @@ interface MessageRow {
   created_at: string
   type: MessageType | null
   payload: unknown | null
+  reply_to: string | null
 }
 
 function toMessage(row: MessageRow): Message {
@@ -31,6 +33,7 @@ function toMessage(row: MessageRow): Message {
     createdAt: row.created_at,
     type: row.type ?? 'text',
     payload: row.payload ?? null,
+    replyTo: row.reply_to ?? null,
   }
 }
 
@@ -70,11 +73,24 @@ export async function getHistory(connectionId: string, userId: string): Promise<
 
   const { data, error } = await supabaseAdmin
     .from('messages')
-    .select('id, sender_id, content, created_at, type, payload')
+    .select('id, sender_id, content, created_at, type, payload, reply_to')
     .eq('connection_id', connectionId)
     .order('created_at', { ascending: true })
   if (error) throw error
   return (data ?? []).map(toMessage)
+}
+
+// A reply target must be a real message in the SAME connection — never trust
+// a client-supplied id (spec §20).
+async function assertReplyTargetInConnection(connectionId: string, replyTo: string): Promise<void> {
+  const { data, error } = await supabaseAdmin
+    .from('messages')
+    .select('id')
+    .eq('id', replyTo)
+    .eq('connection_id', connectionId)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) throw new ConnectionError(400, 'reply target not found in this connection')
 }
 
 export async function saveMessage(
@@ -83,6 +99,7 @@ export async function saveMessage(
   content: string,
   type: MessageType = 'text',
   payload: unknown = null,
+  replyTo: string | null = null,
 ): Promise<Message> {
   const trimmed = content.trim()
   if (trimmed.length < 1 || trimmed.length > 4000) {
@@ -92,11 +109,19 @@ export async function saveMessage(
   const storedPayload = type === 'letter' ? validateLetterPayload(payload) : null
 
   await assertMemberOfLiveConnection(connectionId, senderId)
+  if (replyTo) await assertReplyTargetInConnection(connectionId, replyTo)
 
   const { data, error } = await supabaseAdmin
     .from('messages')
-    .insert({ connection_id: connectionId, sender_id: senderId, content: trimmed, type, payload: storedPayload })
-    .select('id, sender_id, content, created_at, type, payload')
+    .insert({
+      connection_id: connectionId,
+      sender_id: senderId,
+      content: trimmed,
+      type,
+      payload: storedPayload,
+      reply_to: replyTo,
+    })
+    .select('id, sender_id, content, created_at, type, payload, reply_to')
     .single()
   if (error) throw error
 

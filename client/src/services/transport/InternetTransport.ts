@@ -31,12 +31,17 @@ export class InternetTransport implements Transport {
     this.socket = null
   }
 
-  async sendMessage(content: string, type: MessageType = 'text', payload: unknown = null): Promise<void> {
+  async sendMessage(
+    content: string,
+    type: MessageType = 'text',
+    payload: unknown = null,
+    replyTo: string | null = null,
+  ): Promise<void> {
     const socket = this.socket
     if (!socket) throw new Error('not connected')
 
     await new Promise<void>((resolve, reject) => {
-      socket.emit('message:send', { content, type, payload }, (res: { ok?: boolean; error?: string }) => {
+      socket.emit('message:send', { content, type, payload, replyTo }, (res: { ok?: boolean; error?: string }) => {
         if (res?.error) reject(new Error(res.error))
         else resolve()
       })
