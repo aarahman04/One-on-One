@@ -608,8 +608,8 @@ input:focus {
 .chat--wallpaper-love.chat--bubbles {
   --bubble-mine-bg: linear-gradient(135deg, #f25a7e, #f1708c); /* main pink / soft pink */
   --bubble-mine-text: #ffffff;
-  --bubble-other-bg: rgba(217, 212, 232, 0.88); /* lavender */
-  --bubble-other-text: #2f3150; /* dark navy */
+  --bubble-other-bg: #6f7699; /* slate blue — solid, reads clearly against the pink art */
+  --bubble-other-text: #ffffff;
 }
 
 /* --- Letters + slash commands + modal ------------------------------------ */
