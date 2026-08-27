@@ -140,6 +140,7 @@ export interface CurrentConnection {
   bothLeaving: boolean
   canAdvanceLeave: boolean
   otherLastReadAt: string | null
+  wallpaper: string
 }
 
 export async function getCurrentConnection(userId: string): Promise<CurrentConnection | null> {
@@ -180,6 +181,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     bothLeaving: myLeaveStep > 0 && otherLeaveStep > 0,
     canAdvanceLeave: canAdvance(mine?.leave_last_step_at ?? null),
     otherLastReadAt: other?.last_read_at ?? null,
+    wallpaper: data.wallpaper ?? 'off',
   }
 }
 
@@ -310,6 +312,21 @@ export async function confirmEndLeave(connectionId: string, userId: string): Pro
 
   await terminate(connectionId)
   return { status: 'terminated', myLeaveStep: mine.leave_step, daysRemaining: 0, bothLeaving: true, terminated: true }
+}
+
+const ALLOWED_WALLPAPERS = ['off', '1', '2', 'love']
+
+// Wallpaper is shared per-connection (unlike message style/theme, which stay
+// per-device localStorage preferences) — either member's choice applies to both.
+export async function setWallpaper(connectionId: string, userId: string, wallpaper: string): Promise<void> {
+  await getConnectionForMember(connectionId, userId)
+  if (!ALLOWED_WALLPAPERS.includes(wallpaper)) throw new ConnectionError(400, 'invalid wallpaper')
+
+  const { error } = await supabaseAdmin
+    .from('connections')
+    .update({ wallpaper, updated_at: new Date().toISOString() })
+    .eq('id', connectionId)
+  if (error) throw error
 }
 
 export async function setNickname(connectionId: string, userId: string, nickname: string): Promise<void> {
