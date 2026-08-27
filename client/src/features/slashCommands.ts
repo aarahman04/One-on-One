@@ -1,0 +1,100 @@
+// Slash-command system: type "/" in the composer to get a drop-up menu.
+// Adding a command is a one-liner in COMMANDS below (groundwork for more later).
+
+export interface SlashContext {
+  input: HTMLInputElement
+  writeLetter: () => void
+}
+
+interface SlashCommand {
+  name: string
+  description: string
+  run: (ctx: SlashContext) => void
+}
+
+const insert = (ctx: SlashContext, text: string): void => {
+  ctx.input.value = text
+  ctx.input.focus()
+}
+
+const COMMANDS: SlashCommand[] = [
+  { name: 'letter', description: 'Write a letter', run: (ctx) => { ctx.input.value = ''; ctx.writeLetter() } },
+  { name: 'shrug', description: '¯\\_(ツ)_/¯', run: (ctx) => insert(ctx, '¯\\_(ツ)_/¯') },
+  { name: 'flip', description: '(╯°□°)╯︵ ┻━┻', run: (ctx) => insert(ctx, '(╯°□°)╯︵ ┻━┻') },
+]
+
+// Wires the composer input to a drop-up menu. Returns nothing; self-manages.
+export function mountSlashCommands(composer: HTMLElement, input: HTMLInputElement, ctx: SlashContext): void {
+  let menu: HTMLElement | null = null
+  let filtered: SlashCommand[] = []
+  let active = 0
+
+  const hide = (): void => {
+    menu?.remove()
+    menu = null
+  }
+
+  const run = (cmd: SlashCommand | undefined): void => {
+    if (!cmd) return
+    hide()
+    cmd.run(ctx)
+  }
+
+  const render = (): void => {
+    const val = input.value
+    if (!val.startsWith('/')) {
+      hide()
+      return
+    }
+    const q = val.slice(1).toLowerCase()
+    filtered = COMMANDS.filter((c) => c.name.startsWith(q))
+    if (!filtered.length) {
+      hide()
+      return
+    }
+    if (active >= filtered.length) active = filtered.length - 1
+    if (active < 0) active = 0
+
+    if (!menu) {
+      menu = document.createElement('div')
+      menu.className = 'slash-menu'
+      composer.append(menu)
+    }
+    menu.innerHTML = ''
+    filtered.forEach((c, i) => {
+      const item = document.createElement('button')
+      item.type = 'button'
+      item.className = 'slash-item' + (i === active ? ' slash-item--active' : '')
+      const name = document.createElement('span')
+      name.className = 'slash-item__name'
+      name.textContent = `/${c.name}`
+      const desc = document.createElement('span')
+      desc.className = 'slash-item__desc'
+      desc.textContent = c.description
+      item.append(name, desc)
+      item.addEventListener('click', () => run(c))
+      menu!.append(item)
+    })
+  }
+
+  input.addEventListener('input', render)
+  input.addEventListener('keydown', (e) => {
+    if (!menu) return
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      active = (active - 1 + filtered.length) % filtered.length
+      render()
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      active = (active + 1) % filtered.length
+      render()
+    } else if (e.key === 'Enter') {
+      // Take Enter before the composer's submit handler runs.
+      e.preventDefault()
+      e.stopPropagation()
+      run(filtered[active])
+    } else if (e.key === 'Escape') {
+      hide()
+    }
+  })
+}

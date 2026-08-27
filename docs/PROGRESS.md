@@ -11,6 +11,16 @@ Notes/deviations:
 
 ---
 
+## [1.x] Message-type foundation + `/letter` slash command (+ bubble tick) — 2026-08-27
+Status: done (builds clean; **apply migration 010**; two accounts to verify)
+What shipped:
+- **Message-type groundwork (reusable):** `messages` gains `type` ('text'|'letter'|future 'voice') + `payload` (jsonb) via migration `010_message_types.sql` (**user applies**). The shape is threaded additively through the whole pipeline — backend `Message`/`saveMessage`/`getHistory` (letter body stays in `content`, so the length CHECK/search/export keep working; appearance+from+to go in `payload`, validated like nicknames), the socket `message:send`, `Transport.sendMessage(content, type?, payload?)` + `IncomingMessage`, `connectionsApi.HistoryMessage`, and `ChatPage` render. Adding voice later is now additive.
+- **Slash commands:** new `features/slashCommands.ts` — a registry + drop-up menu on the composer (arrow/Enter/click, filters as you type). `/letter` (special), `/shrug` + `/flip` (text-insert). Grow the registry for more.
+- **`/letter` end-to-end:** compose modal (write → preview with **2 appearances** `dawn`/`botanical`) → sends as a **folded letter card** in chat ("to X, from Y") → recipient taps → styled letter opens in a modal → **Download .html** (self-contained). "To" auto = sender's nickname for recipient; "From" = typed signature (remembered per device). New `components/Modal.ts` (reusable overlay), `features/letters.ts` (themes/compose/view/`buildLetterHtml`), `utils/download.ts` (shared `downloadFile`+`escapeHtml`, extracted from ExportPage).
+- **Export is type-aware:** TXT/JSON/HTML each render letters sensibly (HTML export shows a styled letter block).
+- **Bubble tick darkened** (`rgba(4,23,10,0.55)`→`0.85`) so ✓ stands out on the green bubble.
+Notes/deviations: Letter bodies aren't in the in-chat text search yet (card, not `.chat__message-text`) — minor. Optimistic dedup now keys on content+type. Image/PDF letter download deferred (needs a library). Master plan updated with the message-type foundation + voice-note/custom-wallpaper/extra-slash plans. Verified compile/build only; needs migration 010 + two accounts to confirm runtime.
+
 ## [1.D/1.F polish] Read-dot receipts, desktop centering, appearance preview — 2026-08-27
 Status: done (builds clean; **apply migration 009**; two accounts to verify)
 What shipped:
