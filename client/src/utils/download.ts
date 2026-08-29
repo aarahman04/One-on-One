@@ -13,6 +13,10 @@ export function downloadFile(filename: string, mime: string, content: string): v
   const a = document.createElement('a')
   a.href = url
   a.download = filename
+  // Firefox only fires the download when the anchor is in the document, and
+  // revoking the URL synchronously races the download (Safari/old Firefox → empty file).
+  document.body.append(a)
   a.click()
-  URL.revokeObjectURL(url)
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
 }
