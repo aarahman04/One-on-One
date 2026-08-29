@@ -182,6 +182,7 @@ input:focus {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden; /* contains the reply-swipe translateX, never the document */
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   padding: 20px;
@@ -405,10 +406,13 @@ input:focus {
   position: fixed;
   top: auto;
   right: auto;
+  min-width: 0; /* drop the inherited .menu 200px so it can't overflow a narrow viewport */
+  max-width: calc(100vw - 16px);
 }
 
 .chat__emoji-picker {
   display: flex;
+  flex-wrap: wrap; /* 6 emoji wrap on a very narrow screen instead of forcing width */
   gap: 4px;
   padding: 6px 8px;
 }
@@ -599,6 +603,17 @@ input:focus {
 }
 
 /* Responsive */
+
+/* Touch: long-press a message is the react/menu gesture, so suppress the
+   native selection + iOS callout that would otherwise fight it. Desktop keeps
+   normal text selection; Copy is available from the message menu on both. */
+@media (pointer: coarse) {
+  .chat__message-body {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
 
 @media (max-width: 480px) {
   /* 16px min prevents iOS zoom-on-focus, which lurches the viewport.

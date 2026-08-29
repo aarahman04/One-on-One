@@ -62,6 +62,15 @@ export async function getMessages(connectionId: string): Promise<HistoryMessage[
   return body.messages
 }
 
+export async function reportMessage(messageId: string, reason: string): Promise<void> {
+  const res = await authedFetch(`/api/messages/${messageId}/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  })
+  await unwrap(res)
+}
+
 export async function requestConnection(connectionCode: string): Promise<void> {
   const res = await authedFetch('/api/connections/request', {
     method: 'POST',
