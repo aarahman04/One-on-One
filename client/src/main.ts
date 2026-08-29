@@ -9,7 +9,8 @@ import { NicknamePage } from './pages/NicknamePage'
 import { ChatPage } from './pages/ChatPage'
 import { ExportPage } from './pages/ExportPage'
 import { LeavePage } from './pages/LeavePage'
-import { getSession } from './services/authService'
+import { getSession, onSignedOut, signOut } from './services/authService'
+import { setUnauthorizedHandler } from './services/apiClient'
 import { getCurrentConnection } from './services/connectionsApi'
 
 registerPage('login', LoginPage)
@@ -22,10 +23,21 @@ registerPage('chat', ChatPage)
 registerPage('export', ExportPage)
 registerPage('leave', LeavePage)
 
+// Last-resort visibility for otherwise-silent failures.
+window.addEventListener('unhandledrejection', (e) => console.error('unhandledrejection:', e.reason))
+window.addEventListener('error', (e) => console.error('window error:', e.error ?? e.message))
+
+// A 401 from the API (revoked/rotated session) → sign out and reload to login.
+setUnauthorizedHandler(() => {
+  void signOut()
+  location.assign('/')
+})
+
 // Registers the push-notification service worker; harmless no-op in
-// browsers that don't support it.
+// browsers that don't support it. Catch so a failed registration isn't an
+// unhandled rejection.
 if ('serviceWorker' in navigator) {
-  void navigator.serviceWorker.register('/sw.js')
+  navigator.serviceWorker.register('/sw.js').catch(() => {})
 }
 
 async function resolveInitialScreen(): Promise<Screen> {
@@ -39,5 +51,14 @@ async function resolveInitialScreen(): Promise<Screen> {
   return current.otherNickname ? 'chat' : 'nickname'
 }
 
-const initialScreen = await resolveInitialScreen()
-mountRouter(document.querySelector<HTMLDivElement>('#app')!, initialScreen)
+const app = document.querySelector<HTMLDivElement>('#app')!
+try {
+  mountRouter(app, await resolveInitialScreen())
+} catch (err) {
+  // A transient network failure on cold load must not leave a blank page.
+  console.error('startup failed, falling back to login:', err)
+  mountRouter(app, 'login')
+}
+
+// Cross-tab sign-out → back to login.
+onSignedOut(() => location.assign('/'))

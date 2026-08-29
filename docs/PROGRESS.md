@@ -11,6 +11,43 @@ Notes/deviations:
 
 ---
 
+## [Security & correctness audit] Batches 0–3 (Critical + all High) — 2026-08-29
+Status: done, builds clean; **apply migrations 016, 017, 018**; rotate secrets (see below)
+What shipped: Remediation of the ruthless full-repo audit (3 Critical, 13 High, plus folded-in
+Mediums). Four stacked commits on `fix/audit-critical-high` (branched off the reaction-picker PR).
+- **Batch 0 — secrets:** `backend/.env.example` had the real VAPID keypair pasted in → reverted.
+  Added `.githooks/pre-commit` (gitleaks + `.env.example`-has-no-values), `.gitleaks.toml`,
+  `.github/workflows/gitleaks.yml`. **Manual:** rotate the Supabase service-role key, Postgres
+  password, and VAPID keypair — they were on disk in `.env` and briefly in the tracked template.
+- **Batch 1 — backend correctness:** `getHistory` paginates newest-first (limit 50) + `before`
+  cursor + client "Load older" button (past ~1000 messages PostgREST's row cap was returning the
+  *oldest* 1000 and hiding everything recent). Migration 016: partial unique indexes +
+  advisory-locked trigger so concurrent requests can't create two live connections;
+  `getCurrentConnection` tolerates >1 row instead of 500ing and locking the user out. Conditional
+  state transitions (accept/decline/advanceLeave pin the from-state) so accept can't resurrect a
+  declined row and the 24h leave gate can't be raced. Migration 017: `ON DELETE CASCADE` on
+  `connections.user_*`/`messages.sender_id` (user deletion was impossible) + `type`/`emoji`
+  CHECKs. `connection_members` insert now error-checked + rolled back.
+- **Batch 2 — backend hardening:** push endpoint host-allowlist (was blind SSRF); `crypto.randomInt`
+  8-char codes (was `Math.random`); `express-rate-limit` (global 240/min + 10/min on request/
+  subscribe/report) + 32kb json + per-socket flood guard; socket events re-resolve the live
+  connection per event (not the handshake pin); `requestConnection` returns one generic error
+  (no enumeration oracle); `POST /connections/:id/cancel` for the requester + WaitingPage Cancel
+  button; `connection:ended` broadcast on terminate; `reportMessage` works after termination and
+  snapshots the message (migration 018: unique per reporter, `message_id` nullable + SET NULL,
+  `message_content` column); error middleware `headersSent` guard + socket acks no longer leak
+  raw PG strings.
+- **Batch 3 — frontend reliability:** `ChatPage.cleanup()` tears down the popover + its global
+  listeners, the menu dropdown, the appearance panel, and open modals (were leaked every visit);
+  startup try/catch + global handlers (no more blank page on a cold-load blip); 401 → sign out +
+  login; reconnect supervisor + 10s ack timeout + fresh-token socket auth (messages no longer
+  stuck forever); optimistic reconcile on a client `tempId` echoed by the server (was matched on
+  content → duplicates) + incoming dedup; `disposed` guards after every await; long-press picker
+  no longer dismissed by the trailing synthetic click; self-scheduling poll.
+Notes/deviations: ~25 Medium and ~10 Low findings from the audit are documented in the plan file
+(`~/.claude/plans/fix-chat-responsive-layout-splendid-babbage.md`) for a follow-up pass — this
+batch was scoped to Critical + High.
+
 ## [Post-launch fixes] Reaction-picker viewport clamp, responsive hardening, Copy/Report — 2026-08-29
 Status: done (**apply migration 015**); builds clean; needs live testing across viewports
 What shipped:

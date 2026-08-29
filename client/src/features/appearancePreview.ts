@@ -41,6 +41,15 @@ export function applyAppearance(chat: HTMLElement, wallpaper: string): void {
   chat.dataset.theme = a.theme
 }
 
+// The one open appearance panel's teardown (panel + its outside-click
+// listener), so re-opening or a page cleanup can't leak it.
+let activeAppearanceDispose: (() => void) | null = null
+
+export function closeAppearance(): void {
+  activeAppearanceDispose?.()
+  activeAppearanceDispose = null
+}
+
 // Small popover anchored to the nav (reuses the .menu positioning).
 // `wallpaper` is the connection's current (shared) value; `onWallpaperChange`
 // persists a new choice server-side — this module never writes it locally.
@@ -50,9 +59,8 @@ export function openAppearance(
   wallpaper: string,
   onWallpaperChange: (value: string) => void,
 ): void {
-  const existing = anchor.querySelector('.appearance')
-  if (existing) {
-    existing.remove()
+  if (activeAppearanceDispose) {
+    closeAppearance()
     return
   }
 
@@ -110,10 +118,12 @@ export function openAppearance(
   })
 
   const onOutside = (e: MouseEvent): void => {
-    if (!panel.contains(e.target as Node) && e.target !== anchor) {
-      panel.remove()
-      document.removeEventListener('click', onOutside)
-    }
+    if (!panel.contains(e.target as Node) && e.target !== anchor) closeAppearance()
   }
   setTimeout(() => document.addEventListener('click', onOutside), 0)
+
+  activeAppearanceDispose = () => {
+    panel.remove()
+    document.removeEventListener('click', onOutside)
+  }
 }

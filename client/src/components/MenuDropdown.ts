@@ -7,7 +7,7 @@ export function mountMenuDropdown(
   onSearch?: () => void,
   onAppearance?: () => void,
   onNotifications?: () => void,
-): void {
+): () => void {
   let panel: HTMLDivElement | null = null
 
   const close = (): void => {
@@ -20,7 +20,7 @@ export function mountMenuDropdown(
     if (panel && !panel.contains(e.target as Node) && e.target !== anchor) close()
   }
 
-  anchor.addEventListener('click', (e) => {
+  const onAnchorClick = (e: MouseEvent): void => {
     e.stopPropagation()
     if (panel) {
       close()
@@ -76,5 +76,12 @@ export function mountMenuDropdown(
     })
 
     document.addEventListener('click', onOutsideClick)
-  })
+  }
+
+  anchor.addEventListener('click', onAnchorClick)
+
+  return () => {
+    close()
+    anchor.removeEventListener('click', onAnchorClick)
+  }
 }

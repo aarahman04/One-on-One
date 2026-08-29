@@ -25,3 +25,18 @@ shared/     Types/constants shared across clients
 database/   Migrations + seed data
 docs/       Progress log + architecture diagrams
 ```
+
+## Development setup
+
+Secrets live only in `backend/.env` / the deploy platform env — never in a tracked file.
+`backend/.env.example` and any `*.example` must contain `KEY=` placeholders with no values.
+
+Enable the secret-scanning pre-commit hook once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+It runs `gitleaks protect --staged` (install: https://github.com/gitleaks/gitleaks#installing)
+and rejects a non-empty `backend/.env.example`. CI (`.github/workflows/gitleaks.yml`) enforces
+the same on every PR.

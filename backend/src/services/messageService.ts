@@ -71,17 +71,30 @@ async function assertMemberOfLiveConnection(connectionId: string, userId: string
   }
 }
 
-export async function getHistory(connectionId: string, userId: string): Promise<Message[]> {
+export const HISTORY_PAGE_SIZE = 50
+
+// Paginated newest-first (then reversed for display). Without a limit, PostgREST's
+// row cap silently returned the OLDEST 1000 messages once a chat grew past that,
+// hiding everything recent. `before` is a created_at cursor for "load older".
+export async function getHistory(
+  connectionId: string,
+  userId: string,
+  before?: string,
+): Promise<Message[]> {
   await assertMemberOfLiveConnection(connectionId, userId)
 
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from('messages')
     .select('id, sender_id, content, created_at, type, payload, reply_to')
     .eq('connection_id', connectionId)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
+    .limit(HISTORY_PAGE_SIZE)
+  if (before) query = query.lt('created_at', before)
+
+  const { data, error } = await query
   if (error) throw error
 
-  const rows = data ?? []
+  const rows = (data ?? []).reverse()
   const reactionsByMessage = await getReactionsForMessages(rows.map((r) => r.id))
   return rows.map((row) => toMessage(row, reactionsByMessage.get(row.id) ?? []))
 }
@@ -134,11 +147,12 @@ export async function saveMessage(
   // Sending proves the sender has read everything up to now, so advance their
   // last_read_at (to the DB-issued created_at, avoiding app/DB clock skew). This
   // records reads that the separate markRead call would otherwise miss.
-  await supabaseAdmin
+  const { error: readError } = await supabaseAdmin
     .from('connection_members')
     .update({ last_read_at: data.created_at })
     .eq('connection_id', connectionId)
     .eq('user_id', senderId)
+  if (readError) console.error('saveMessage: failed to bump sender last_read_at', readError)
 
   return toMessage(data)
 }
