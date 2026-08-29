@@ -3,27 +3,40 @@ import { supabase } from '../supabaseClient'
 import type { IncomingMessage, MessageType, ReactionUpdate, Transport } from './Transport'
 
 const API_URL = import.meta.env.VITE_API_URL
+const CONNECT_TIMEOUT_MS = 15000
+const ACK_TIMEOUT_MS = 10000
 
 export class InternetTransport implements Transport {
   private socket: Socket | null = null
 
   async connect(): Promise<void> {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (!session) throw new Error('not signed in')
-
-    // Default transports (polling upgrading to websocket) — more robust than
-    // websocket-only across proxies/restrictive networks.
+    // Auth as a callback so socket.io reconnects fetch a *fresh* token — a
+    // token captured once expires after ~1h and every reconnect then fails.
     const socket = io(API_URL, {
-      auth: { token: session.access_token },
+      auth: (cb) => {
+        void supabase.auth.getSession().then(({ data }) => cb({ token: data.session?.access_token ?? '' }))
+      },
     })
     this.socket = socket
 
-    await new Promise<void>((resolve, reject) => {
-      socket.once('connect', () => resolve())
-      socket.once('connect_error', (err) => reject(err))
-    })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('connect timeout')), CONNECT_TIMEOUT_MS)
+        socket.once('connect', () => {
+          clearTimeout(timer)
+          resolve()
+        })
+        socket.once('connect_error', (err) => {
+          clearTimeout(timer)
+          reject(err)
+        })
+      })
+    } catch (err) {
+      // Don't leave a zombie socket retrying in the background with nobody listening.
+      socket.disconnect()
+      this.socket = null
+      throw err
+    }
   }
 
   disconnect(): void {
@@ -31,21 +44,27 @@ export class InternetTransport implements Transport {
     this.socket = null
   }
 
+  private emitWithAck(event: string, payload: unknown): Promise<void> {
+    const socket = this.socket
+    if (!socket || !socket.connected) throw new Error('not connected')
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('send timeout')), ACK_TIMEOUT_MS)
+      socket.emit(event, payload, (res: { ok?: boolean; error?: string }) => {
+        clearTimeout(timer)
+        if (res?.error) reject(new Error(res.error))
+        else resolve()
+      })
+    })
+  }
+
   async sendMessage(
     content: string,
     type: MessageType = 'text',
     payload: unknown = null,
     replyTo: string | null = null,
+    tempId?: string,
   ): Promise<void> {
-    const socket = this.socket
-    if (!socket) throw new Error('not connected')
-
-    await new Promise<void>((resolve, reject) => {
-      socket.emit('message:send', { content, type, payload, replyTo }, (res: { ok?: boolean; error?: string }) => {
-        if (res?.error) reject(new Error(res.error))
-        else resolve()
-      })
-    })
+    await this.emitWithAck('message:send', { content, type, payload, replyTo, tempId })
   }
 
   onMessage(callback: (message: IncomingMessage) => void): () => void {
@@ -58,15 +77,7 @@ export class InternetTransport implements Transport {
   }
 
   async sendReaction(messageId: string, emoji: string, op: 'add' | 'remove'): Promise<void> {
-    const socket = this.socket
-    if (!socket) throw new Error('not connected')
-
-    await new Promise<void>((resolve, reject) => {
-      socket.emit(op === 'add' ? 'reaction:add' : 'reaction:remove', { messageId, emoji }, (res: { ok?: boolean; error?: string }) => {
-        if (res?.error) reject(new Error(res.error))
-        else resolve()
-      })
-    })
+    await this.emitWithAck(op === 'add' ? 'reaction:add' : 'reaction:remove', { messageId, emoji })
   }
 
   onReaction(callback: (update: ReactionUpdate) => void): () => void {
@@ -75,6 +86,15 @@ export class InternetTransport implements Transport {
     socket.on('reaction:update', callback)
     return () => {
       socket.off('reaction:update', callback)
+    }
+  }
+
+  onConnectionEnded(callback: () => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    socket.on('connection:ended', callback)
+    return () => {
+      socket.off('connection:ended', callback)
     }
   }
 }

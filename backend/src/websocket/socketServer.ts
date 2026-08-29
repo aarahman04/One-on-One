@@ -122,7 +122,7 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
     socket.on(
       'message:send',
       async (
-        msg: { content?: unknown; type?: unknown; payload?: unknown; replyTo?: unknown },
+        msg: { content?: unknown; type?: unknown; payload?: unknown; replyTo?: unknown; tempId?: unknown },
         ack?: (res: unknown) => void,
       ) => {
       try {
@@ -140,8 +140,10 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         const content = typeof msg?.content === 'string' ? msg.content : ''
         const type = msg?.type === 'letter' ? 'letter' : 'text'
         const replyTo = typeof msg?.replyTo === 'string' ? msg.replyTo : null
+        const tempId = typeof msg?.tempId === 'string' ? msg.tempId : undefined
         const message = await saveMessage(connId, userId, content, type, msg?.payload ?? null, replyTo)
-        io.to(room(connId)).emit('message:new', message)
+        // tempId echoed so the sender can reconcile its optimistic row exactly.
+        io.to(room(connId)).emit('message:new', { ...message, tempId })
         void notifyIfOffline(io, connId, userId, message)
         ack?.({ ok: true })
       } catch (err) {

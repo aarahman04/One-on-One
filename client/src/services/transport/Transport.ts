@@ -12,6 +12,7 @@ export interface IncomingMessage {
   type: MessageType
   payload: unknown | null
   replyTo: string | null
+  tempId?: string // echoed back to the sender for optimistic reconciliation
 }
 
 export interface ReactionUpdate {
@@ -24,8 +25,15 @@ export interface ReactionUpdate {
 export interface Transport {
   connect(): Promise<void>
   disconnect(): void
-  sendMessage(content: string, type?: MessageType, payload?: unknown, replyTo?: string | null): Promise<void>
+  sendMessage(
+    content: string,
+    type?: MessageType,
+    payload?: unknown,
+    replyTo?: string | null,
+    tempId?: string,
+  ): Promise<void>
   onMessage(callback: (message: IncomingMessage) => void): () => void
   sendReaction(messageId: string, emoji: string, op: 'add' | 'remove'): Promise<void>
   onReaction(callback: (update: ReactionUpdate) => void): () => void
+  onConnectionEnded(callback: () => void): () => void
 }
