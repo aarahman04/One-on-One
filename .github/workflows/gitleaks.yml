@@ -17,14 +17,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  env-example-has-no-values:
+  env-examples-have-no-secrets:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: backend/.env.example must be placeholders only
-        run: |
-          if grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.+' backend/.env.example; then
-            echo "::error file=backend/.env.example::contains a non-empty value; templates must be KEY= only"
-            grep -nE '^[A-Za-z_][A-Za-z0-9_]*=.+' backend/.env.example
-            exit 1
-          fi
+      - name: sensitive keys must be blank in *.env.example
+        run: sh scripts/check-env-examples.sh

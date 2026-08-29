@@ -16,10 +16,10 @@ else
   echo "  install: https://github.com/gitleaks/gitleaks#installing"
 fi
 
-# .env.example must never contain real values (KEY= only).
-if git diff --cached --name-only | grep -qx "backend/.env.example"; then
-  if git show ":backend/.env.example" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.+'; then
-    echo "backend/.env.example has a non-empty value — it must be placeholders only. Commit blocked."
+# *.env.example must never carry a value for a sensitive key.
+if git diff --cached --name-only | grep -qE '\.env\.example$'; then
+  if ! sh scripts/check-env-examples.sh; then
+    echo "commit blocked — see above."
     exit 1
   fi
 fi
