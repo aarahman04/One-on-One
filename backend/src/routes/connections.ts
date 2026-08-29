@@ -1,10 +1,13 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/requireAuth.js'
+import { strictLimiter } from '../middleware/rateLimit.js'
+import { emitConnectionEnded } from '../websocket/socketServer.js'
 import { getOrCreateUser } from '../services/userService.js'
 import {
   acceptConnection,
   advanceLeave,
   cancelLeave,
+  cancelRequest,
   confirmEndLeave,
   declineConnection,
   getCurrentConnection,
@@ -24,7 +27,7 @@ connectionsRouter.get('/connections/current', async (req, res) => {
   res.json({ connection: current })
 })
 
-connectionsRouter.post('/connections/request', async (req, res) => {
+connectionsRouter.post('/connections/request', strictLimiter, async (req, res) => {
   const user = await getOrCreateUser(req.authUserId!)
   const code = String(req.body?.connectionCode ?? '')
     .trim()
@@ -35,6 +38,12 @@ connectionsRouter.post('/connections/request', async (req, res) => {
   }
   const connection = await requestConnection(user.id, code)
   res.status(201).json({ connection })
+})
+
+connectionsRouter.post('/connections/:id/cancel', async (req, res) => {
+  const user = await getOrCreateUser(req.authUserId!)
+  const connection = await cancelRequest(req.params.id, user.id)
+  res.json({ connection })
 })
 
 connectionsRouter.post('/connections/:id/accept', async (req, res) => {
@@ -59,6 +68,7 @@ connectionsRouter.patch('/connections/:id/nickname', async (req, res) => {
 connectionsRouter.post('/connections/:id/leave', async (req, res) => {
   const user = await getOrCreateUser(req.authUserId!)
   const result = await advanceLeave(req.params.id, user.id)
+  if (result.terminated) emitConnectionEnded(req.params.id)
   res.json({ leave: result })
 })
 
@@ -71,6 +81,7 @@ connectionsRouter.post('/connections/:id/leave/cancel', async (req, res) => {
 connectionsRouter.post('/connections/:id/leave/confirm-end', async (req, res) => {
   const user = await getOrCreateUser(req.authUserId!)
   const result = await confirmEndLeave(req.params.id, user.id)
+  if (result.terminated) emitConnectionEnded(req.params.id)
   res.json({ leave: result })
 })
 

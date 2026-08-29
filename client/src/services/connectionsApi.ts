@@ -91,6 +91,11 @@ export async function declineConnection(connectionId: string): Promise<void> {
   await unwrap(res)
 }
 
+export async function cancelRequest(connectionId: string): Promise<void> {
+  const res = await authedFetch(`/api/connections/${connectionId}/cancel`, { method: 'POST' })
+  await unwrap(res)
+}
+
 export async function setNickname(connectionId: string, nickname: string): Promise<void> {
   const res = await authedFetch(`/api/connections/${connectionId}/nickname`, {
     method: 'PATCH',

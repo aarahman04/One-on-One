@@ -39,15 +39,24 @@ async function hasActiveOrPendingConnection(userId: string): Promise<boolean> {
 }
 
 export async function requestConnection(requesterUserId: string, targetCode: string): Promise<ConnectionRow> {
-  const target = await findUserByConnectionCode(targetCode)
-  if (!target) throw new ConnectionError(404, 'connection ID not found')
-  if (target.id === requesterUserId) throw new ConnectionError(400, "that's your own connection ID")
+  // One generic failure for "can't connect to that code" so the response can't
+  // be used to enumerate which codes are real users or who is already paired.
+  // The specific reason is logged, not returned.
+  const cannotConnect = new ConnectionError(404, "couldn't send a request to that connection ID")
 
   if (await hasActiveOrPendingConnection(requesterUserId)) {
     throw new ConnectionError(409, 'you already have an active or pending connection')
   }
+
+  const target = await findUserByConnectionCode(targetCode)
+  if (!target) {
+    console.warn('requestConnection: unknown code')
+    throw cannotConnect
+  }
+  if (target.id === requesterUserId) throw new ConnectionError(400, "that's your own connection ID")
   if (await hasActiveOrPendingConnection(target.id)) {
-    throw new ConnectionError(409, 'that person already has an active or pending connection')
+    console.warn('requestConnection: target already has a live connection')
+    throw cannotConnect
   }
 
   const { data, error } = await supabaseAdmin
@@ -125,6 +134,14 @@ export async function acceptConnection(connectionId: string, userId: string): Pr
 export async function declineConnection(connectionId: string, userId: string): Promise<ConnectionRow> {
   const connection = await getConnectionForMember(connectionId, userId)
   if (connection.user_b_id !== userId) throw new ConnectionError(403, 'only the recipient can decline')
+  return transitionStatus(connectionId, 'pending', 'declined', 'connection is no longer pending')
+}
+
+// The requester withdrawing their own outbound request (mistyped code, no
+// response). Without this a stale pending row blocks both users forever.
+export async function cancelRequest(connectionId: string, userId: string): Promise<ConnectionRow> {
+  const connection = await getConnectionForMember(connectionId, userId)
+  if (connection.user_a_id !== userId) throw new ConnectionError(403, 'only the requester can cancel')
   return transitionStatus(connectionId, 'pending', 'declined', 'connection is no longer pending')
 }
 

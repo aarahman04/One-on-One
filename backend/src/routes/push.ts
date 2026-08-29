@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/requireAuth.js'
+import { strictLimiter } from '../middleware/rateLimit.js'
 import { getOrCreateUser } from '../services/userService.js'
 import { saveSubscription, removeSubscription } from '../services/pushService.js'
 
@@ -7,7 +8,7 @@ export const pushRouter = Router()
 
 pushRouter.use(requireAuth)
 
-pushRouter.post('/push/subscribe', async (req, res) => {
+pushRouter.post('/push/subscribe', strictLimiter, async (req, res) => {
   const user = await getOrCreateUser(req.authUserId!)
   const { endpoint, keys } = req.body ?? {}
   if (typeof endpoint !== 'string' || typeof keys?.p256dh !== 'string' || typeof keys?.auth !== 'string') {
