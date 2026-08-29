@@ -1,0 +1,27 @@
+#!/bin/sh
+# Blocks a commit that stages a secret. Requires gitleaks (https://github.com/gitleaks/gitleaks).
+# Enable once per clone:  git config core.hooksPath .githooks
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --verbose
+  status=$?
+  if [ $status -ne 0 ]; then
+    echo
+    echo "gitleaks found a staged secret — commit blocked."
+    echo "Remove it, or (only if it is a false positive) commit with --no-verify."
+    exit 1
+  fi
+else
+  echo "warning: gitleaks not installed — skipping secret scan."
+  echo "  install: https://github.com/gitleaks/gitleaks#installing"
+fi
+
+# .env.example must never contain real values (KEY= only).
+if git diff --cached --name-only | grep -qx "backend/.env.example"; then
+  if git show ":backend/.env.example" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.+'; then
+    echo "backend/.env.example has a non-empty value — it must be placeholders only. Commit blocked."
+    exit 1
+  fi
+fi
+
+exit 0

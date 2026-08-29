@@ -1,0 +1,30 @@
+name: secret-scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  env-example-has-no-values:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: backend/.env.example must be placeholders only
+        run: |
+          if grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.+' backend/.env.example; then
+            echo "::error file=backend/.env.example::contains a non-empty value; templates must be KEY= only"
+            grep -nE '^[A-Za-z_][A-Za-z0-9_]*=.+' backend/.env.example
+            exit 1
+          fi
