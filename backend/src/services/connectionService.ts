@@ -61,10 +61,16 @@ export async function requestConnection(requesterUserId: string, targetCode: str
     throw error
   }
 
-  await supabaseAdmin.from('connection_members').insert([
+  const { error: memberError } = await supabaseAdmin.from('connection_members').insert([
     { connection_id: data.id, user_id: requesterUserId },
     { connection_id: data.id, user_id: target.id },
   ])
+  if (memberError) {
+    // The connection row is already committed; without both member rows the
+    // leave/nickname/current-connection paths break. Roll it back.
+    await supabaseAdmin.from('connections').delete().eq('id', data.id)
+    throw memberError
+  }
 
   return data
 }
@@ -79,34 +85,47 @@ async function getConnectionForMember(connectionId: string, userId: string): Pro
   return data
 }
 
-export async function acceptConnection(connectionId: string, userId: string): Promise<ConnectionRow> {
+// A member-scoped read that also requires the connection to be live — for
+// writes that make no sense on a pending/declined/terminated connection.
+async function getLiveConnectionForMember(connectionId: string, userId: string): Promise<ConnectionRow> {
   const connection = await getConnectionForMember(connectionId, userId)
-  if (connection.status !== 'pending') throw new ConnectionError(409, 'connection is not pending')
-  if (connection.user_b_id !== userId) throw new ConnectionError(403, 'only the recipient can accept')
+  if (connection.status !== 'active' && connection.status !== 'leave_pending') {
+    throw new ConnectionError(409, 'connection is not active')
+  }
+  return connection
+}
 
+// Conditional status transition: the UPDATE itself carries the from-state, so
+// concurrent accept/accept or accept/decline can't both win or resurrect a
+// just-declined row. 0 rows updated = someone else moved it first.
+async function transitionStatus(
+  connectionId: string,
+  from: ConnectionStatus,
+  to: ConnectionStatus,
+  conflictMessage: string,
+): Promise<ConnectionRow> {
   const { data, error } = await supabaseAdmin
     .from('connections')
-    .update({ status: 'active', updated_at: new Date().toISOString() })
+    .update({ status: to, updated_at: new Date().toISOString() })
     .eq('id', connectionId)
+    .eq('status', from)
     .select()
-    .single()
+    .maybeSingle()
   if (error) throw error
+  if (!data) throw new ConnectionError(409, conflictMessage)
   return data
+}
+
+export async function acceptConnection(connectionId: string, userId: string): Promise<ConnectionRow> {
+  const connection = await getConnectionForMember(connectionId, userId)
+  if (connection.user_b_id !== userId) throw new ConnectionError(403, 'only the recipient can accept')
+  return transitionStatus(connectionId, 'pending', 'active', 'connection is no longer pending')
 }
 
 export async function declineConnection(connectionId: string, userId: string): Promise<ConnectionRow> {
   const connection = await getConnectionForMember(connectionId, userId)
-  if (connection.status !== 'pending') throw new ConnectionError(409, 'connection is not pending')
   if (connection.user_b_id !== userId) throw new ConnectionError(403, 'only the recipient can decline')
-
-  const { data, error } = await supabaseAdmin
-    .from('connections')
-    .update({ status: 'declined', updated_at: new Date().toISOString() })
-    .eq('id', connectionId)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+  return transitionStatus(connectionId, 'pending', 'declined', 'connection is no longer pending')
 }
 
 // Stage E leave model (overrides spec §25 auto-expire): 5 deliberate steps, one per 24h,
@@ -144,13 +163,18 @@ export interface CurrentConnection {
 }
 
 export async function getCurrentConnection(userId: string): Promise<CurrentConnection | null> {
-  const { data, error } = await supabaseAdmin
+  // Tolerate >1 row defensively: a race past the single-active guard (see
+  // migration 016) must not turn every request into a PGRST116 500 and lock
+  // the user out. Newest wins.
+  const { data: connRows, error } = await supabaseAdmin
     .from('connections')
     .select()
     .in('status', ['pending', 'active', 'leave_pending'])
     .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
-    .maybeSingle()
+    .order('updated_at', { ascending: false })
+    .limit(1)
   if (error) throw error
+  const data = connRows?.[0]
   if (!data) return null
 
   const otherUserId = data.user_a_id === userId ? data.user_b_id : data.user_a_id
@@ -159,7 +183,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
       .from('connection_members')
       .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
       .eq('connection_id', data.id),
-    supabaseAdmin.from('users').select('connection_code').eq('id', otherUserId).single(),
+    supabaseAdmin.from('users').select('connection_code').eq('id', otherUserId).maybeSingle(),
   ])
 
   const rows = (members ?? []) as MemberLeaveRow[]
@@ -188,7 +212,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
 // Mark the conversation read up to now for this member (drives the other
 // member's "Seen" indicator). Connection state, not a message — kept off Transport.
 export async function markRead(connectionId: string, userId: string): Promise<void> {
-  await getConnectionForMember(connectionId, userId)
+  await getLiveConnectionForMember(connectionId, userId)
   const { error } = await supabaseAdmin
     .from('connection_members')
     .update({ last_read_at: new Date().toISOString() })
@@ -203,8 +227,9 @@ async function getMemberLeave(connectionId: string, userId: string): Promise<Mem
     .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
     .eq('connection_id', connectionId)
     .eq('user_id', userId)
-    .single()
+    .maybeSingle()
   if (error) throw error
+  if (!data) throw new ConnectionError(404, 'connection membership not found')
   return data as MemberLeaveRow
 }
 
@@ -237,13 +262,22 @@ export async function advanceLeave(connectionId: string, userId: string): Promis
     throw new ConnectionError(429, 'you can advance the countdown once every 24 hours')
   }
 
+  // Conditional update: pin the from-step and re-assert the 24h gate in the
+  // WHERE clause so two parallel requests can't both advance / both bypass the
+  // cooldown from stale reads. 0 rows = another request got there first.
   const newStep = mine.leave_step + 1
-  const { error } = await supabaseAdmin
+  const cutoff = new Date(Date.now() - LEAVE_STEP_INTERVAL_MS).toISOString()
+  const { data: updated, error } = await supabaseAdmin
     .from('connection_members')
     .update({ leave_step: newStep, leave_last_step_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('connection_id', connectionId)
     .eq('user_id', userId)
+    .eq('leave_step', mine.leave_step)
+    .or(`leave_last_step_at.is.null,leave_last_step_at.lt.${cutoff}`)
+    .select('user_id')
+    .maybeSingle()
   if (error) throw error
+  if (!updated) throw new ConnectionError(429, 'the countdown was already advanced')
 
   if (newStep >= LEAVE_STEPS_TOTAL) {
     await terminate(connectionId)
@@ -319,7 +353,7 @@ const ALLOWED_WALLPAPERS = ['off', '1', 'love', 'samurai']
 // Wallpaper is shared per-connection (unlike message style/theme, which stay
 // per-device localStorage preferences) — either member's choice applies to both.
 export async function setWallpaper(connectionId: string, userId: string, wallpaper: string): Promise<void> {
-  await getConnectionForMember(connectionId, userId)
+  await getLiveConnectionForMember(connectionId, userId)
   if (!ALLOWED_WALLPAPERS.includes(wallpaper)) throw new ConnectionError(400, 'invalid wallpaper')
 
   const { error } = await supabaseAdmin
@@ -330,7 +364,7 @@ export async function setWallpaper(connectionId: string, userId: string, wallpap
 }
 
 export async function setNickname(connectionId: string, userId: string, nickname: string): Promise<void> {
-  const connection = await getConnectionForMember(connectionId, userId)
+  const connection = await getLiveConnectionForMember(connectionId, userId)
 
   const trimmed = nickname.trim()
   if (trimmed.length < 1 || trimmed.length > 40) {

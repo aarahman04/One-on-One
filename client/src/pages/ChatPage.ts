@@ -337,16 +337,17 @@ export const ChatPage: Page = (root, go) => {
       return card
     }
 
-    const appendMessage = (message: ChatMessage, pending = false): HTMLElement => {
-      const at = new Date(message.createdAt)
-      if (!lastDate || !isSameDay(lastDate, at)) {
-        const sep = document.createElement('div')
-        sep.className = 'chat__date-separator'
-        sep.textContent = formatDateSeparator(at)
-        log.appendChild(sep)
-        lastDate = at
-      }
+    const dateSeparator = (at: Date): HTMLElement => {
+      const sep = document.createElement('div')
+      sep.className = 'chat__date-separator'
+      sep.textContent = formatDateSeparator(at)
+      return sep
+    }
 
+    // Pure row build (no DOM insertion, no side effects) so both the forward
+    // append and the "load older" prepend can share it.
+    const buildMessageRow = (message: ChatMessage, pending: boolean): HTMLElement => {
+      const at = new Date(message.createdAt)
       const isMine = message.senderId === myUserId
       const row = document.createElement('div')
       row.className = 'chat__message' + (pending ? ' chat__message--pending' : '')
@@ -385,20 +386,32 @@ export const ChatPage: Page = (root, go) => {
       body.append(fullTime)
       row.append(time, body)
       row.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
-      log.appendChild(row)
-      log.scrollTop = log.scrollHeight
+      return row
+    }
 
-      if (isMine) {
+    // Side effects after a row is in the DOM (receipts, id map, reaction chips).
+    const registerMessageRow = (message: ChatMessage, row: HTMLElement): void => {
+      if (message.senderId === myUserId) {
         myRows.push(row)
         applyReceipt(row)
       }
       if (message.id) {
         messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
-        if (message.reactions?.length) {
-          reactionsByMessage.set(message.id, message.reactions)
-          renderReactionChips(message.id)
-        }
+        if (message.reactions?.length) reactionsByMessage.set(message.id, message.reactions)
+        if (reactionsByMessage.has(message.id)) renderReactionChips(message.id)
       }
+    }
+
+    const appendMessage = (message: ChatMessage, pending = false): HTMLElement => {
+      const at = new Date(message.createdAt)
+      if (!lastDate || !isSameDay(lastDate, at)) {
+        log.appendChild(dateSeparator(at))
+        lastDate = at
+      }
+      const row = buildMessageRow(message, pending)
+      log.appendChild(row)
+      log.scrollTop = log.scrollHeight
+      registerMessageRow(message, row)
       return row
     }
 
@@ -482,10 +495,71 @@ export const ChatPage: Page = (root, go) => {
       }
     }
 
-    // --- Load history ------------------------------------------------------
+    // --- Load history (paginated newest-first; "load older" pages back) -----
+    const HISTORY_PAGE = 50
+    let oldestLoadedAt: string | null = null
+    let loadingOlder = false
+
+    const loadOlderBtn = document.createElement('button')
+    loadOlderBtn.type = 'button'
+    loadOlderBtn.className = 'chat__load-older'
+    loadOlderBtn.textContent = 'Load older messages'
+
+    const loadOlder = async (): Promise<void> => {
+      if (loadingOlder || !oldestLoadedAt) return
+      loadingOlder = true
+      loadOlderBtn.disabled = true
+      let older: Awaited<ReturnType<typeof getMessages>> = []
+      try {
+        older = await getMessages(connectionId, oldestLoadedAt)
+      } catch {
+        loadingOlder = false
+        loadOlderBtn.disabled = false
+        return
+      }
+      if (disposed) return
+      if (!older.length) {
+        loadOlderBtn.remove()
+        return
+      }
+      const prevHeight = log.scrollHeight
+      const prevTop = log.scrollTop
+      const firstSep = loadOlderBtn.nextSibling // the original leading date separator
+      let batchDate: Date | null = null
+      for (const m of older) {
+        const at = new Date(m.createdAt)
+        if (!batchDate || !isSameDay(batchDate, at)) {
+          log.insertBefore(dateSeparator(at), firstSep)
+          batchDate = at
+        }
+        const row = buildMessageRow(m, false)
+        log.insertBefore(row, firstSep)
+        registerMessageRow(m, row)
+      }
+      // Drop the pre-existing leading separator if the batch already ended on that day.
+      if (
+        firstSep instanceof HTMLElement &&
+        firstSep.classList.contains('chat__date-separator') &&
+        batchDate &&
+        isSameDay(batchDate, new Date(older[older.length - 1].createdAt))
+      ) {
+        firstSep.remove()
+      }
+      oldestLoadedAt = older[0].createdAt
+      log.scrollTop = prevTop + (log.scrollHeight - prevHeight)
+      if (older.length < HISTORY_PAGE) loadOlderBtn.remove()
+      else {
+        loadingOlder = false
+        loadOlderBtn.disabled = false
+      }
+    }
+    loadOlderBtn.addEventListener('click', () => void loadOlder())
+
     const history = await getMessages(connectionId)
     if (disposed) return
     for (const message of history) appendMessage(message)
+    oldestLoadedAt = history[0]?.createdAt ?? null
+    if (history.length >= HISTORY_PAGE) log.prepend(loadOlderBtn)
     refreshReceipts()
     renderBanner(current)
     reconcileLeave(current)
