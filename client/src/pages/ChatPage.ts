@@ -10,6 +10,7 @@ import {
   getCurrentConnection,
   getMessages,
   markRead,
+  reportMessage,
   setWallpaper,
   type CurrentConnection,
   type ReactionSummary,
@@ -617,22 +618,67 @@ export const ChatPage: Page = (root, go) => {
     input.focus()
 
     // --- Popover shared by the desktop context menu and the phone emoji
-    // picker — a small `.menu` clone positioned at a fixed point.
+    // picker — a small `.menu` clone anchored to a message (or a click point)
+    // and clamped so it can never leave the visible viewport.
     let ctxMenu: HTMLElement | null = null
+    let menuCleanup: (() => void) | null = null
     const closeCtxMenu = (): void => {
+      menuCleanup?.()
+      menuCleanup = null
       ctxMenu?.remove()
       ctxMenu = null
     }
 
-    const openPopover = (x: number, y: number, build: (menu: HTMLElement) => void): void => {
+    type Anchor = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
+
+    const openPopover = (anchor: Anchor, build: (menu: HTMLElement) => void): void => {
       closeCtxMenu()
+      const M = 8 // safe margin from every viewport edge
       const menu = document.createElement('div')
       menu.className = 'menu chat__ctx-menu'
-      menu.style.left = `${x}px`
-      menu.style.top = `${y}px`
+      menu.style.visibility = 'hidden'
+      menu.style.left = '0'
+      menu.style.top = '0'
       build(menu)
       document.body.append(menu)
+
+      const place = (): void => {
+        const vv = window.visualViewport
+        const vw = vv?.width ?? document.documentElement.clientWidth
+        const vh = vv?.height ?? document.documentElement.clientHeight
+        const ox = vv?.offsetLeft ?? 0
+        const oy = vv?.offsetTop ?? 0
+        menu.style.maxWidth = `${vw - 2 * M}px`
+        const r = menu.getBoundingClientRect()
+        let left = anchor.left + anchor.width / 2 - r.width / 2
+        left = Math.max(ox + M, Math.min(left, ox + vw - r.width - M))
+        let top = anchor.top - r.height - M // prefer above the message
+        if (top < oy + M) top = anchor.top + anchor.height + M // not enough room — flip below
+        top = Math.max(oy + M, Math.min(top, oy + vh - r.height - M))
+        menu.style.left = `${left}px`
+        menu.style.top = `${top}px`
+        menu.style.visibility = ''
+      }
+      place()
+
       ctxMenu = menu
+      const onScroll = (): void => closeCtxMenu()
+      const onResize = (): void => place()
+      const onKey = (e: KeyboardEvent): void => {
+        if (e.key === 'Escape') closeCtxMenu()
+      }
+      log.addEventListener('scroll', onScroll, { passive: true })
+      window.addEventListener('resize', onResize)
+      window.visualViewport?.addEventListener('resize', onResize)
+      window.visualViewport?.addEventListener('scroll', onScroll)
+      document.addEventListener('keydown', onKey)
+      menuCleanup = () => {
+        log.removeEventListener('scroll', onScroll)
+        window.removeEventListener('resize', onResize)
+        window.visualViewport?.removeEventListener('resize', onResize)
+        window.visualViewport?.removeEventListener('scroll', onScroll)
+        document.removeEventListener('keydown', onKey)
+      }
       setTimeout(() => document.addEventListener('click', closeCtxMenu, { once: true }), 0)
     }
 
@@ -652,6 +698,93 @@ export const ChatPage: Page = (root, go) => {
         row.append(btn)
       }
       menu.append(row)
+    }
+
+    const menuItem = (label: string, danger: boolean, onClick: () => void): HTMLButtonElement => {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'menu__item' + (danger ? ' menu__item--danger' : '')
+      btn.textContent = label
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        onClick()
+      })
+      return btn
+    }
+
+    // The message menu: emoji row + Copy + Report everywhere; Reply only on
+    // desktop (phone replies via the right-swipe gesture).
+    const buildMessageMenu = (menu: HTMLElement, messageId: string, isDesktop: boolean): void => {
+      buildEmojiRow(menu, messageId)
+      const message = messagesById.get(messageId)
+      if (isDesktop) {
+        menu.append(
+          menuItem('Reply', false, () => {
+            startReply(messageId)
+            closeCtxMenu()
+          }),
+        )
+      }
+      if (message?.type === 'text') {
+        menu.append(
+          menuItem('Copy', false, () => {
+            void navigator.clipboard?.writeText(message.content)
+            closeCtxMenu()
+          }),
+        )
+      }
+      menu.append(
+        menuItem('Report', true, () => {
+          closeCtxMenu()
+          openReportModal(messageId)
+        }),
+      )
+    }
+
+    const openReportModal = (messageId: string): void => {
+      const box = document.createElement('div')
+      box.className = 'notice-popup'
+
+      const heading = document.createElement('div')
+      heading.className = 'letter-compose__title'
+      heading.textContent = 'Report this message?'
+
+      const explain = document.createElement('div')
+      explain.className = 'letter-compose__to'
+      explain.textContent = "We'll review it. Add a note if you'd like (optional)."
+
+      const reason = document.createElement('textarea')
+      reason.className = 'letter-compose__body'
+      reason.rows = 3
+      reason.placeholder = 'What’s wrong with this message?'
+
+      const actions = document.createElement('div')
+      actions.className = 'letter-view__actions'
+      const cancelBtn = document.createElement('button')
+      cancelBtn.type = 'button'
+      cancelBtn.textContent = 'Cancel'
+      const reportBtn = document.createElement('button')
+      reportBtn.type = 'button'
+      reportBtn.className = 'primary'
+      reportBtn.textContent = 'Report'
+      actions.append(cancelBtn, reportBtn)
+
+      box.append(heading, explain, reason, actions)
+      const modal = openModal(box)
+
+      cancelBtn.addEventListener('click', () => modal.close())
+      reportBtn.addEventListener('click', () => {
+        reportBtn.disabled = true
+        void reportMessage(messageId, reason.value.trim())
+          .then(() => {
+            modal.close()
+            showNotice('Thanks — this message has been reported.')
+          })
+          .catch(() => {
+            reportBtn.disabled = false
+            showNotice('Could not send the report — try again.')
+          })
+      })
     }
 
     // --- Reply / react gestures: right-swipe = reply, long-press = react on
@@ -691,12 +824,11 @@ export const ChatPage: Page = (root, go) => {
         swipeStartY = e.touches[0].clientY
         swiping = false
         const id = row.dataset.id
-        const x = e.touches[0].clientX
-        const y = e.touches[0].clientY
         longPressTimer = setTimeout(() => {
           longPressTimer = null
           swipeRow = null // cancel any in-progress reply-swipe tracking
-          openPopover(x, y, (menu) => buildEmojiRow(menu, id))
+          const bubble = row.querySelector<HTMLElement>('.chat__message-body') ?? row
+          openPopover(bubble.getBoundingClientRect(), (menu) => buildMessageMenu(menu, id, false))
         }, LONG_PRESS_MS)
       },
       { passive: true },
@@ -754,30 +886,8 @@ export const ChatPage: Page = (root, go) => {
       if (!row?.dataset.id) return
       e.preventDefault()
       const id = row.dataset.id
-      const x = e.clientX
-      const y = e.clientY
-
-      openPopover(x, y, (menu) => {
-        const replyBtn = document.createElement('button')
-        replyBtn.type = 'button'
-        replyBtn.className = 'menu__item'
-        replyBtn.textContent = 'Reply'
-        replyBtn.addEventListener('click', () => {
-          startReply(id)
-          closeCtxMenu()
-        })
-
-        const reactBtn = document.createElement('button')
-        reactBtn.type = 'button'
-        reactBtn.className = 'menu__item'
-        reactBtn.textContent = 'React'
-        reactBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation() // don't let this click reach the outside-click listener below
-          openPopover(x, y, (m) => buildEmojiRow(m, id))
-        })
-
-        menu.append(replyBtn, reactBtn)
-      })
+      const at: Anchor = { left: e.clientX, top: e.clientY, width: 0, height: 0 }
+      openPopover(at, (menu) => buildMessageMenu(menu, id, true))
     })
 
     // --- Incoming ----------------------------------------------------------

@@ -11,6 +11,16 @@ Notes/deviations:
 
 ---
 
+## [Post-launch fixes] Reaction-picker viewport clamp, responsive hardening, Copy/Report — 2026-08-29
+Status: done (**apply migration 015**); builds clean; needs live testing across viewports
+What shipped:
+- **Root cause of the mobile "zoomed page / misaligned header / blank right strip":** the reaction/context popover. `openPopover()` in `ChatPage.ts` placed the `.menu.chat__ctx-menu` (`position:fixed`, inheriting `.menu { min-width:200px }`) at the raw touch/click coordinates — no viewport clamp, no flip, no dimension measurement. Near the right/bottom edge the box overflowed the viewport; on iOS Safari off-screen fixed content lets the visual viewport pan/zoom. The normal layout chain was already sound (no `100vw`, no `overflow-x`, no forced widths).
+- **`openPopover` rewritten** to take an anchor rect (the message bubble, or a zero-size rect at the cursor on desktop) instead of `(x, y)`. It measures the built menu, then clamps `left`/`top` into the visual viewport with an 8px safe margin and flips above↔below the message when there isn't room. Repositions on `visualViewport` + window resize, dismisses on log scroll / Escape / outside click. CSS: `.chat__ctx-menu { min-width:0; max-width:calc(100vw - 16px) }`, `.chat__emoji-picker { flex-wrap:wrap }`.
+- **Viewport meta corrected** to `width=device-width, initial-scale=1, viewport-fit=cover` — dropped `maximum-scale=1.0, user-scalable=no` (restores pinch-zoom; the 16px composer font on ≤480px is the real iOS focus-zoom fix and stays).
+- **Touch text selection suppressed on message bubbles** (`@media (pointer: coarse)` — `user-select:none` + `-webkit-touch-callout:none`) so long-press-to-react doesn't fight native selection/callout. Desktop keeps selection. `.chat__log { overflow-x:hidden }` contains the reply-swipe `translateX`.
+- **Copy + Report actions** added to the message menu (both touch and desktop), via a shared `buildMessageMenu()`. Copy uses the clipboard API (text messages only). Report opens a modal (reuses `components/Modal.ts`) with an optional reason → `POST /api/messages/:id/report` → new `message_reports` table (migration 015, RLS enabled). `reportService.reportMessage` re-verifies connection membership server-side via `assertMemberOfMessageConnection` (now exported from `reactionService`), never trusting the client (spec §20). No moderation UI in V1 — rows are for manual review; satisfies the Play Store UGC reporting requirement (blocking is already the one-connection / leave model).
+Notes/deviations: Picker dismisses rather than repositions on log scroll — matches native context-menu behaviour.
+
 ## [Post-launch fixes] Samurai wallpaper, drop wallpaper "2" — 2026-08-27
 Status: done, builds clean
 What shipped: Replaced the generic gradient wallpaper option ("2") with a real second photo wallpaper — **Samurai** (`client/public/samurai.jpg`), bubble colors pulled from its own crimson/charcoal palette (`wallpapers/samurai wallpaper description.txt`): mine = crimson gradient, white text; them = charcoal black, pale ivory text. Wallpaper options are now Off / 1 / Love / Samurai everywhere they're validated: `appearancePreview.ts` popover, `applyAppearance`'s class toggles, and backend `ALLOWED_WALLPAPERS`.
