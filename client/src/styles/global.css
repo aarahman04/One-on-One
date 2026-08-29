@@ -199,6 +199,20 @@ input:focus {
   margin: 10px 0;
 }
 
+.chat__load-older {
+  align-self: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 6px 14px;
+  margin-bottom: 4px;
+}
+
+.chat__load-older:disabled {
+  opacity: 0.5;
+}
+
 .chat__leave-banner {
   padding: 10px 20px;
   background: rgba(248, 81, 73, 0.08);

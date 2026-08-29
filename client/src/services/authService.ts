@@ -13,9 +13,15 @@ export async function getSession() {
   return data.session
 }
 
-export function onAuthStateChange(callback: (isSignedIn: boolean) => void): () => void {
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(session !== null)
+export async function signOut(): Promise<void> {
+  await supabase.auth.signOut().catch(() => {})
+}
+
+// Fires on an actual sign-out transition only (not the initial no-session
+// state, which would otherwise cause a reload loop on the login screen).
+export function onSignedOut(callback: () => void): () => void {
+  const { data } = supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT') callback()
   })
   return () => data.subscription.unsubscribe()
 }

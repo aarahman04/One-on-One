@@ -56,10 +56,11 @@ export async function getCurrentConnection(): Promise<CurrentConnection | null> 
   return body.connection
 }
 
-export async function getMessages(connectionId: string): Promise<HistoryMessage[]> {
-  const res = await authedFetch(`/api/connections/${connectionId}/messages`)
+export async function getMessages(connectionId: string, before?: string): Promise<HistoryMessage[]> {
+  const qs = before ? `?before=${encodeURIComponent(before)}` : ''
+  const res = await authedFetch(`/api/connections/${connectionId}/messages${qs}`)
   const body = await unwrap<{ messages: HistoryMessage[] }>(res)
-  return body.messages
+  return Array.isArray(body?.messages) ? body.messages : []
 }
 
 export async function reportMessage(messageId: string, reason: string): Promise<void> {
@@ -87,6 +88,11 @@ export async function acceptConnection(connectionId: string): Promise<void> {
 
 export async function declineConnection(connectionId: string): Promise<void> {
   const res = await authedFetch(`/api/connections/${connectionId}/decline`, { method: 'POST' })
+  await unwrap(res)
+}
+
+export async function cancelRequest(connectionId: string): Promise<void> {
+  const res = await authedFetch(`/api/connections/${connectionId}/cancel`, { method: 'POST' })
   await unwrap(res)
 }
 

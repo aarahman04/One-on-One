@@ -2,7 +2,7 @@ import type { Page } from '../state/router'
 import { formatClock, formatDateSeparator, formatFullTimestamp, isSameDay } from '../utils/formatTime'
 import { mountMenuDropdown } from '../components/MenuDropdown'
 import { openModal } from '../components/Modal'
-import { applyAppearance, openAppearance } from '../features/appearancePreview'
+import { applyAppearance, closeAppearance, openAppearance } from '../features/appearancePreview'
 import { openLetter, openLetterComposer, type LetterPayload } from '../features/letters'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
@@ -33,6 +33,7 @@ interface ChatMessage {
 }
 
 interface Pending {
+  tempId: string
   content: string
   row: HTMLElement
   sent: boolean
@@ -54,23 +55,45 @@ export const ChatPage: Page = (root, go) => {
   let transport: Transport | null = null
   let unsubscribe: (() => void) | null = null
   let unsubscribeReactions: (() => void) | null = null
-  let pollTimer: ReturnType<typeof setInterval> | null = null
+  let unsubscribeEnded: (() => void) | null = null
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
   let focusHandler: (() => void) | null = null
   let disposed = false
 
+  // Modals/popovers/menus append to document.body, which the router's
+  // `root.innerHTML = ''` does not touch — so their teardown must be tracked
+  // and run here or they (and their global listeners) outlive the page.
+  const overlays = new Set<() => void>()
+  let disposeMenuDropdown: (() => void) | null = null
+  let disposePopover: (() => void) | null = null
+
   const cleanup = (): void => {
+    if (disposed) return
     disposed = true
+    disposePopover?.()
+    disposeMenuDropdown?.()
+    closeAppearance()
+    for (const dispose of overlays) dispose()
+    overlays.clear()
     unsubscribe?.()
+    unsubscribe = null
     unsubscribeReactions?.()
+    unsubscribeReactions = null
+    unsubscribeEnded?.()
+    unsubscribeEnded = null
     transport?.disconnect()
-    if (pollTimer) clearInterval(pollTimer)
+    transport = null
+    if (pollTimer) clearTimeout(pollTimer)
+    pollTimer = null
     if (focusHandler) window.removeEventListener('focus', focusHandler)
+    focusHandler = null
   }
 
   root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
 
   ;(async () => {
     const current = await getCurrentConnection()
+    if (disposed) return
     if (!current || (current.status !== 'active' && current.status !== 'leave_pending')) {
       go('connection-id')
       return
@@ -178,29 +201,37 @@ export const ChatPage: Page = (root, go) => {
     // (unsolicited permission prompts get auto-denied by browsers/users alike).
     // Feedback is a popup, not the quiet in-chat system line — a subscribe
     // failure is easy to miss otherwise, and the user needs to actually see it.
+    // Track every body-level overlay so cleanup() can tear it (and its
+    // document listeners) down on navigation.
+    const openTrackedModal = (content: HTMLElement): void => {
+      const dispose = (): void => modal.close()
+      const modal = openModal(content, { onClose: () => overlays.delete(dispose) })
+      overlays.add(dispose)
+    }
+
     const showNotice = (message: string): void => {
       const content = document.createElement('div')
       content.className = 'notice-popup'
       content.textContent = message
-      openModal(content)
+      openTrackedModal(content)
     }
 
     const toggleNotifications = async (): Promise<void> => {
-      if (await isPushSubscribed()) {
-        await unsubscribeFromPush()
-        showNotice('Notifications turned off.')
-        return
-      }
       try {
+        if (await isPushSubscribed()) {
+          await unsubscribeFromPush()
+          showNotice('Notifications turned off.')
+          return
+        }
         await subscribeToPush()
         showNotice("Notifications turned on — you'll be notified when a message arrives and the app is closed.")
       } catch (err) {
         const reason = err instanceof Error ? err.message : 'unknown error'
-        showNotice(`Could not enable notifications: ${reason}`)
+        showNotice(`Could not update notifications: ${reason}`)
       }
     }
 
-    mountMenuDropdown(
+    disposeMenuDropdown = mountMenuDropdown(
       nav,
       menuBtn,
       go,
@@ -337,16 +368,17 @@ export const ChatPage: Page = (root, go) => {
       return card
     }
 
-    const appendMessage = (message: ChatMessage, pending = false): HTMLElement => {
-      const at = new Date(message.createdAt)
-      if (!lastDate || !isSameDay(lastDate, at)) {
-        const sep = document.createElement('div')
-        sep.className = 'chat__date-separator'
-        sep.textContent = formatDateSeparator(at)
-        log.appendChild(sep)
-        lastDate = at
-      }
+    const dateSeparator = (at: Date): HTMLElement => {
+      const sep = document.createElement('div')
+      sep.className = 'chat__date-separator'
+      sep.textContent = formatDateSeparator(at)
+      return sep
+    }
 
+    // Pure row build (no DOM insertion, no side effects) so both the forward
+    // append and the "load older" prepend can share it.
+    const buildMessageRow = (message: ChatMessage, pending: boolean): HTMLElement => {
+      const at = new Date(message.createdAt)
       const isMine = message.senderId === myUserId
       const row = document.createElement('div')
       row.className = 'chat__message' + (pending ? ' chat__message--pending' : '')
@@ -385,20 +417,32 @@ export const ChatPage: Page = (root, go) => {
       body.append(fullTime)
       row.append(time, body)
       row.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
-      log.appendChild(row)
-      log.scrollTop = log.scrollHeight
+      return row
+    }
 
-      if (isMine) {
+    // Side effects after a row is in the DOM (receipts, id map, reaction chips).
+    const registerMessageRow = (message: ChatMessage, row: HTMLElement): void => {
+      if (message.senderId === myUserId) {
         myRows.push(row)
         applyReceipt(row)
       }
       if (message.id) {
         messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
-        if (message.reactions?.length) {
-          reactionsByMessage.set(message.id, message.reactions)
-          renderReactionChips(message.id)
-        }
+        if (message.reactions?.length) reactionsByMessage.set(message.id, message.reactions)
+        if (reactionsByMessage.has(message.id)) renderReactionChips(message.id)
       }
+    }
+
+    const appendMessage = (message: ChatMessage, pending = false): HTMLElement => {
+      const at = new Date(message.createdAt)
+      if (!lastDate || !isSameDay(lastDate, at)) {
+        log.appendChild(dateSeparator(at))
+        lastDate = at
+      }
+      const row = buildMessageRow(message, pending)
+      log.appendChild(row)
+      log.scrollTop = log.scrollHeight
+      registerMessageRow(message, row)
       return row
     }
 
@@ -482,10 +526,71 @@ export const ChatPage: Page = (root, go) => {
       }
     }
 
-    // --- Load history ------------------------------------------------------
+    // --- Load history (paginated newest-first; "load older" pages back) -----
+    const HISTORY_PAGE = 50
+    let oldestLoadedAt: string | null = null
+    let loadingOlder = false
+
+    const loadOlderBtn = document.createElement('button')
+    loadOlderBtn.type = 'button'
+    loadOlderBtn.className = 'chat__load-older'
+    loadOlderBtn.textContent = 'Load older messages'
+
+    const loadOlder = async (): Promise<void> => {
+      if (loadingOlder || !oldestLoadedAt) return
+      loadingOlder = true
+      loadOlderBtn.disabled = true
+      let older: Awaited<ReturnType<typeof getMessages>> = []
+      try {
+        older = await getMessages(connectionId, oldestLoadedAt)
+      } catch {
+        loadingOlder = false
+        loadOlderBtn.disabled = false
+        return
+      }
+      if (disposed) return
+      if (!older.length) {
+        loadOlderBtn.remove()
+        return
+      }
+      const prevHeight = log.scrollHeight
+      const prevTop = log.scrollTop
+      const firstSep = loadOlderBtn.nextSibling // the original leading date separator
+      let batchDate: Date | null = null
+      for (const m of older) {
+        const at = new Date(m.createdAt)
+        if (!batchDate || !isSameDay(batchDate, at)) {
+          log.insertBefore(dateSeparator(at), firstSep)
+          batchDate = at
+        }
+        const row = buildMessageRow(m, false)
+        log.insertBefore(row, firstSep)
+        registerMessageRow(m, row)
+      }
+      // Drop the pre-existing leading separator if the batch already ended on that day.
+      if (
+        firstSep instanceof HTMLElement &&
+        firstSep.classList.contains('chat__date-separator') &&
+        batchDate &&
+        isSameDay(batchDate, new Date(older[older.length - 1].createdAt))
+      ) {
+        firstSep.remove()
+      }
+      oldestLoadedAt = older[0].createdAt
+      log.scrollTop = prevTop + (log.scrollHeight - prevHeight)
+      if (older.length < HISTORY_PAGE) loadOlderBtn.remove()
+      else {
+        loadingOlder = false
+        loadOlderBtn.disabled = false
+      }
+    }
+    loadOlderBtn.addEventListener('click', () => void loadOlder())
+
     const history = await getMessages(connectionId)
     if (disposed) return
     for (const message of history) appendMessage(message)
+    oldestLoadedAt = history[0]?.createdAt ?? null
+    if (history.length >= HISTORY_PAGE) log.prepend(loadOlderBtn)
     refreshReceipts()
     renderBanner(current)
     reconcileLeave(current)
@@ -496,12 +601,17 @@ export const ChatPage: Page = (root, go) => {
     const pending: Pending[] = []
 
     const trySend = (entry: Pending): void => {
-      if (!transport) return // stays queued; flushed on connect
+      if (!transport) return // stays queued; flushed on (re)connect
       entry.sent = true
-      transport.sendMessage(entry.content, entry.type, entry.payload, entry.replyTo).catch(() => {
+      entry.row.classList.remove('chat__message--failed')
+      transport.sendMessage(entry.content, entry.type, entry.payload, entry.replyTo, entry.tempId).catch(() => {
         entry.sent = false
         entry.row.classList.add('chat__message--failed')
       })
+    }
+
+    const flushPending = (): void => {
+      for (const entry of pending) if (!entry.sent) trySend(entry)
     }
 
     const input = root.querySelector<HTMLTextAreaElement>('#message-input')!
@@ -523,11 +633,12 @@ export const ChatPage: Page = (root, go) => {
       payload: unknown = null,
       replyTo: string | null = null,
     ): void => {
+      const tempId = crypto.randomUUID()
       const row = appendMessage(
         { senderId: myUserId, content, createdAt: new Date().toISOString(), type, payload, replyTo },
         true,
       )
-      const entry: Pending = { content, row, sent: false, type, payload, replyTo }
+      const entry: Pending = { tempId, content, row, sent: false, type, payload, replyTo }
       pending.push(entry)
       trySend(entry)
     }
@@ -622,11 +733,27 @@ export const ChatPage: Page = (root, go) => {
     // and clamped so it can never leave the visible viewport.
     let ctxMenu: HTMLElement | null = null
     let menuCleanup: (() => void) | null = null
+    // After a long-press opens the menu, the browser still fires a synthetic
+    // click on touchend — swallow clicks for a moment so it doesn't
+    // immediately dismiss the menu it just opened (or toggle the row).
+    let suppressClickUntil = 0
     const closeCtxMenu = (): void => {
       menuCleanup?.()
       menuCleanup = null
       ctxMenu?.remove()
       ctxMenu = null
+    }
+
+    const swallowGhostClick = (e: MouseEvent): void => {
+      if (Date.now() < suppressClickUntil) {
+        e.stopImmediatePropagation()
+        e.preventDefault()
+      }
+    }
+    document.addEventListener('click', swallowGhostClick, { capture: true })
+    disposePopover = () => {
+      closeCtxMenu()
+      document.removeEventListener('click', swallowGhostClick, { capture: true })
     }
 
     type Anchor = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
@@ -667,19 +794,22 @@ export const ChatPage: Page = (root, go) => {
       const onKey = (e: KeyboardEvent): void => {
         if (e.key === 'Escape') closeCtxMenu()
       }
+      const onDocClick = (): void => closeCtxMenu()
       log.addEventListener('scroll', onScroll, { passive: true })
       window.addEventListener('resize', onResize)
       window.visualViewport?.addEventListener('resize', onResize)
       window.visualViewport?.addEventListener('scroll', onScroll)
       document.addEventListener('keydown', onKey)
+      const armTimer = setTimeout(() => document.addEventListener('click', onDocClick, { once: true }), 0)
       menuCleanup = () => {
+        clearTimeout(armTimer)
         log.removeEventListener('scroll', onScroll)
         window.removeEventListener('resize', onResize)
         window.visualViewport?.removeEventListener('resize', onResize)
         window.visualViewport?.removeEventListener('scroll', onScroll)
         document.removeEventListener('keydown', onKey)
+        document.removeEventListener('click', onDocClick)
       }
-      setTimeout(() => document.addEventListener('click', closeCtxMenu, { once: true }), 0)
     }
 
     const buildEmojiRow = (menu: HTMLElement, messageId: string): void => {
@@ -728,8 +858,13 @@ export const ChatPage: Page = (root, go) => {
       if (message?.type === 'text') {
         menu.append(
           menuItem('Copy', false, () => {
-            void navigator.clipboard?.writeText(message.content)
             closeCtxMenu()
+            const text = message.content
+            if (navigator.clipboard?.writeText) {
+              void navigator.clipboard.writeText(text).catch(() => showNotice('Could not copy.'))
+            } else {
+              showNotice('Copy is not available in this browser.')
+            }
           }),
         )
       }
@@ -770,7 +905,9 @@ export const ChatPage: Page = (root, go) => {
       actions.append(cancelBtn, reportBtn)
 
       box.append(heading, explain, reason, actions)
-      const modal = openModal(box)
+      const dispose = (): void => modal.close()
+      const modal = openModal(box, { onClose: () => overlays.delete(dispose) })
+      overlays.add(dispose)
 
       cancelBtn.addEventListener('click', () => modal.close())
       reportBtn.addEventListener('click', () => {
@@ -798,6 +935,9 @@ export const ChatPage: Page = (root, go) => {
     let swiping = false
     let swipeIcon: HTMLElement | null = null
     let longPressTimer: ReturnType<typeof setTimeout> | null = null
+    // Android fires a native contextmenu ~right after the long-press timer;
+    // this dedupes so the menu isn't built twice for the same message.
+    let lastMenuFor: string | null = null
 
     const cancelLongPress = (): void => {
       if (longPressTimer) clearTimeout(longPressTimer)
@@ -827,6 +967,8 @@ export const ChatPage: Page = (root, go) => {
         longPressTimer = setTimeout(() => {
           longPressTimer = null
           swipeRow = null // cancel any in-progress reply-swipe tracking
+          suppressClickUntil = Date.now() + 600 // eat the trailing touchend->click
+          lastMenuFor = id
           const bubble = row.querySelector<HTMLElement>('.chat__message-body') ?? row
           openPopover(bubble.getBoundingClientRect(), (menu) => buildMessageMenu(menu, id, false))
         }, LONG_PRESS_MS)
@@ -886,16 +1028,18 @@ export const ChatPage: Page = (root, go) => {
       if (!row?.dataset.id) return
       e.preventDefault()
       const id = row.dataset.id
+      // The long-press timer already opened this menu on touch — don't rebuild.
+      if (Date.now() < suppressClickUntil && lastMenuFor === id) return
       const at: Anchor = { left: e.clientX, top: e.clientY, width: 0, height: 0 }
       openPopover(at, (menu) => buildMessageMenu(menu, id, true))
     })
 
     // --- Incoming ----------------------------------------------------------
     const onIncoming = (message: IncomingMessage): void => {
-      if (message.senderId === myUserId) {
-        const idx = pending.findIndex(
-          (p) => p.content === message.content && p.type === message.type && p.replyTo === message.replyTo,
-        )
+      // Reconcile our own optimistic row by the client tempId echoed back —
+      // never by content (server may normalise it) which duplicated rows.
+      if (message.senderId === myUserId && message.tempId) {
+        const idx = pending.findIndex((p) => p.tempId === message.tempId)
         if (idx >= 0) {
           const [entry] = pending.splice(idx, 1)
           entry.row.classList.remove('chat__message--pending', 'chat__message--failed')
@@ -907,6 +1051,9 @@ export const ChatPage: Page = (root, go) => {
           return
         }
       }
+      // Dedup: a reconnect can re-deliver recent message:new events.
+      if (message.id && messagesById.has(message.id)) return
+
       appendMessage(message)
       if (message.senderId !== myUserId) {
         void markRead(connectionId).catch(() => {})
@@ -914,27 +1061,43 @@ export const ChatPage: Page = (root, go) => {
     }
 
     // --- Connect (non-blocking: chat is already usable) --------------------
-    connectMessaging()
-      .then((t) => {
+    let connecting = false
+    const attachTransport = (t: Transport): void => {
+      transport = t
+      unsubscribe = t.onMessage(onIncoming)
+      unsubscribeReactions = t.onReaction(applyReactionUpdate)
+      unsubscribeEnded = t.onConnectionEnded(() => {
+        if (!disposed) go('connection-id')
+      })
+      flushPending()
+      void markRead(connectionId).catch(() => {})
+    }
+    const ensureConnected = async (): Promise<void> => {
+      if (transport || connecting || disposed) return
+      connecting = true
+      try {
+        const t = await connectMessaging()
         if (disposed) {
           t.disconnect()
           return
         }
-        transport = t
-        unsubscribe = t.onMessage(onIncoming)
-        unsubscribeReactions = t.onReaction(applyReactionUpdate)
-        for (const entry of pending) if (!entry.sent) trySend(entry)
-        void markRead(connectionId).catch(() => {})
-      })
-      .catch(() => {
-        /* keep chat usable; messages stay queued and flush on a later poll-triggered reconnect */
-      })
+        attachTransport(t)
+      } catch {
+        /* chat stays usable; retried on the next poll tick */
+      } finally {
+        connecting = false
+      }
+    }
+    void ensureConnected()
 
     focusHandler = () => void markRead(connectionId).catch(() => {})
     window.addEventListener('focus', focusHandler)
 
-    // --- Poll: leave state, termination, seen ------------------------------
+    // --- Poll: leave state, termination, seen, reconnect ------------------
     const poll = async (): Promise<void> => {
+      void ensureConnected() // recover a failed initial transport
+      if (transport && pending.some((p) => !p.sent)) flushPending() // retry stuck sends
+
       let next: CurrentConnection | null
       try {
         next = await getCurrentConnection()
@@ -943,9 +1106,7 @@ export const ChatPage: Page = (root, go) => {
       }
       if (disposed) return
       if (!next) {
-        // Connection was terminated (excluded from getCurrentConnection).
-        cleanup()
-        go('connection-id')
+        go('connection-id') // terminated; router runs cleanup
         return
       }
       reconcileLeave(next)
@@ -962,7 +1123,14 @@ export const ChatPage: Page = (root, go) => {
       if (document.visibilityState === 'visible') void markRead(connectionId).catch(() => {})
     }
 
-    pollTimer = setInterval(() => void poll(), 4000)
+    // Self-scheduling so a slow tick can't stack overlapping polls.
+    const schedulePoll = (): void => {
+      if (disposed) return
+      pollTimer = setTimeout(() => {
+        void poll().finally(schedulePoll)
+      }, 4000)
+    }
+    if (!disposed) schedulePoll()
   })().catch(() => {
     if (!disposed) go('connection-id')
   })

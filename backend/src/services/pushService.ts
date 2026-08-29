@@ -1,5 +1,30 @@
 import webPush from 'web-push'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
+import { ConnectionError } from './connectionService.js'
+
+// A push endpoint is a URL the server will POST to on every message. Without a
+// check, a client can point it at an internal address (169.254.169.254,
+// localhost:6379, …) and turn message delivery into a blind SSRF. Restrict to
+// the real browser-push services.
+const ALLOWED_PUSH_HOSTS = [
+  /(^|\.)googleapis\.com$/,
+  /(^|\.)push\.services\.mozilla\.com$/,
+  /(^|\.)notify\.windows\.com$/,
+  /(^|\.)push\.apple\.com$/,
+]
+
+export function assertValidPushEndpoint(raw: string): void {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new ConnectionError(400, 'invalid push endpoint')
+  }
+  if (url.protocol !== 'https:') throw new ConnectionError(400, 'push endpoint must be https')
+  if (!ALLOWED_PUSH_HOSTS.some((re) => re.test(url.hostname))) {
+    throw new ConnectionError(400, 'unsupported push endpoint')
+  }
+}
 
 const publicKey = process.env.VAPID_PUBLIC_KEY
 const privateKey = process.env.VAPID_PRIVATE_KEY
@@ -31,6 +56,7 @@ export async function saveSubscription(
   endpoint: string,
   keys: { p256dh: string; auth: string },
 ): Promise<void> {
+  assertValidPushEndpoint(endpoint)
   const { error } = await supabaseAdmin
     .from('push_subscriptions')
     .upsert({ user_id: userId, endpoint, p256dh: keys.p256dh, auth: keys.auth }, { onConflict: 'endpoint' })

@@ -1,0 +1,10 @@
+# gitleaks config. Extends the default ruleset; add project-specific allow/deny below.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholder env templates and lockfiles"
+paths = [
+  '''.*\.example$''',
+  '''package-lock\.json$''',
+]
