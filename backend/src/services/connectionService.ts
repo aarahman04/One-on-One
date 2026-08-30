@@ -155,35 +155,52 @@ interface CurrentConnection {
   wallpaper: string
 }
 
+interface CurrentConnectionRow {
+  id: string
+  status: ConnectionStatus
+  user_a_id: string
+  user_b_id: string
+  wallpaper: string | null
+  connection_members: MemberLeaveRow[]
+}
+
 export async function getCurrentConnection(userId: string): Promise<CurrentConnection | null> {
-  // Tolerate >1 row defensively: a race past the single-active guard (see
-  // migration 016) must not turn every request into a PGRST116 500 and lock
-  // the user out. Newest wins.
+  // One query: the connection plus its two member rows (embedded). Tolerate >1
+  // connection row defensively — a race past the single-active guard (migration
+  // 016) must not 500 every request and lock the user out. Newest wins.
   const { data: connRows, error } = await supabaseAdmin
     .from('connections')
-    .select()
+    .select(
+      'id, status, user_a_id, user_b_id, wallpaper, ' +
+        'connection_members(user_id, nickname, leave_step, leave_last_step_at, last_read_at)',
+    )
     .in('status', ['pending', 'active', 'leave_pending'])
     .or(memberOrFilter(userId))
     .order('updated_at', { ascending: false })
     .limit(1)
   if (error) throw error
-  const data = connRows?.[0]
+  const data = (connRows?.[0] as unknown as CurrentConnectionRow | undefined) ?? null
   if (!data) return null
 
   const otherUserId = otherMemberId(data, userId)
-  const [{ data: members }, { data: otherUser }] = await Promise.all([
-    supabaseAdmin
-      .from('connection_members')
-      .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
-      .eq('connection_id', data.id),
-    supabaseAdmin.from('users').select('connection_code').eq('id', otherUserId).maybeSingle(),
-  ])
-
-  const rows = (members ?? []) as MemberLeaveRow[]
+  const rows = data.connection_members ?? []
   const mine = rows.find((m) => m.user_id === userId)
   const other = rows.find((m) => m.user_id === otherUserId)
   const myLeaveStep = mine?.leave_step ?? 0
   const otherLeaveStep = other?.leave_step ?? 0
+
+  // The other member's connection code is only rendered on the pending-request
+  // screen — the active-chat poll (every ~4s) never reads it, so skip the users
+  // lookup unless we're actually pending.
+  let otherConnectionCode = ''
+  if (data.status === 'pending') {
+    const { data: otherUser } = await supabaseAdmin
+      .from('users')
+      .select('connection_code')
+      .eq('id', otherUserId)
+      .maybeSingle()
+    otherConnectionCode = otherUser?.connection_code ?? ''
+  }
 
   return {
     id: data.id,
@@ -191,7 +208,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     myUserId: userId,
     isRequester: data.user_a_id === userId,
     otherNickname: other?.nickname ?? null,
-    otherConnectionCode: otherUser?.connection_code ?? '',
+    otherConnectionCode,
     myLeaveStep,
     otherLeaveStep,
     daysRemaining: myLeaveStep > 0 ? LEAVE_STEPS_TOTAL - myLeaveStep : null,
@@ -226,6 +243,17 @@ async function getMemberLeave(connectionId: string, userId: string): Promise<Mem
   return data as MemberLeaveRow
 }
 
+// Both member rows in one query (leave paths that need to look at both members).
+async function getMemberLeaveRows(connectionId: string, userIds: string[]): Promise<MemberLeaveRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from('connection_members')
+    .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
+    .eq('connection_id', connectionId)
+    .in('user_id', userIds)
+  if (error) throw error
+  return (data ?? []) as MemberLeaveRow[]
+}
+
 // Termination deletes the whole conversation — the data belongs to the
 // participants (they can export first). connection_members + messages cascade
 // off the connection FK (on delete cascade), so one delete clears everything.
@@ -247,7 +275,13 @@ interface LeaveResult {
 export async function advanceLeave(connectionId: string, userId: string): Promise<LeaveResult> {
   const connection = await getConnectionForMember(connectionId, userId, { requireLive: true })
 
-  const mine = await getMemberLeave(connectionId, userId)
+  // Both member rows up front — the other member's step (read after the RPC for
+  // `bothLeaving`) can't change during my own advance, so no second fetch.
+  const otherUserId = otherMemberId(connection, userId)
+  const memberRows = await getMemberLeaveRows(connectionId, [userId, otherUserId])
+  const mine = memberRows.find((r) => r.user_id === userId)
+  if (!mine) throw new ConnectionError(404, 'connection membership not found')
+  const otherLeaveStep = memberRows.find((r) => r.user_id === otherUserId)?.leave_step ?? 0
   if (!canAdvance(mine.leave_last_step_at)) {
     throw new ConnectionError(429, 'you can advance the countdown once every 24 hours')
   }
@@ -279,12 +313,11 @@ export async function advanceLeave(connectionId: string, userId: string): Promis
     if (statusError) throw statusError
   }
 
-  const other = await getMemberLeave(connectionId, otherMemberId(connection, userId))
   return {
     status: 'leave_pending',
     myLeaveStep: newStep,
     daysRemaining: LEAVE_STEPS_TOTAL - newStep,
-    bothLeaving: newStep > 0 && other.leave_step > 0,
+    bothLeaving: newStep > 0 && otherLeaveStep > 0,
     terminated: false,
   }
 }
@@ -321,10 +354,11 @@ export async function confirmEndLeave(connectionId: string, userId: string): Pro
   const connection = await getConnectionForMember(connectionId, userId)
   if (connection.status !== 'leave_pending') throw new ConnectionError(409, 'no leave in progress')
 
-  const [mine, other] = await Promise.all([
-    getMemberLeave(connectionId, userId),
-    getMemberLeave(connectionId, otherMemberId(connection, userId)),
-  ])
+  const otherUserId = otherMemberId(connection, userId)
+  const memberRows = await getMemberLeaveRows(connectionId, [userId, otherUserId])
+  const mine = memberRows.find((r) => r.user_id === userId)
+  const other = memberRows.find((r) => r.user_id === otherUserId)
+  if (!mine || !other) throw new ConnectionError(404, 'connection membership not found')
   if (mine.leave_step === 0 || other.leave_step === 0) {
     throw new ConnectionError(409, 'both members must be leaving to end immediately')
   }
