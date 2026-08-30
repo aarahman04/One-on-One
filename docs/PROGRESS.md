@@ -11,6 +11,21 @@ Notes/deviations:
 
 ---
 
+## [UX smoothness pass, Batch 4 fix] Long-press menu race on Android — 2026-08-30
+Status: done, folded into the still-open Batch 4 PR (#26). Client builds clean.
+What shipped: the long-press message menu (emoji/Copy/Report) would flash
+open big, then instantly shrink, on Android — Android fires a native
+`contextmenu` event around the same ~450ms threshold as our own JS long-press
+timer, racing to build a second popover (the `contextmenu` handler always
+included Reply, since that path didn't know it was actually a touch gesture)
+on top of the first, cutting off the batch-4 pop-in animation mid-flight.
+Fixed by having the `contextmenu` handler bail immediately on a coarse
+pointer — long-press already owns this gesture on touch; right-click only
+exists on desktop. The existing `suppressClickUntil`/`lastMenuFor` guard
+stays for the hybrid-device edge case (a touchscreen laptop whose primary
+pointer is a mouse).
+Notes/deviations: none.
+
 ## [UX smoothness pass, Batch 4] Toasts — 2026-08-30
 Status: done. Client builds clean; device verification pending. Plan:
 `~/.claude/plans/new-track-separate-from-async-stardust.md`.

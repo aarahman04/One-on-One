@@ -1093,6 +1093,15 @@ export const ChatPage: Page = (root, go) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
       if (!row?.dataset.id) return
       e.preventDefault()
+      // Long-press (touchstart/touchmove/touchend) already owns this gesture
+      // on touch — Android can fire a native contextmenu around the same
+      // ~450ms threshold as our own long-press timer, racing to open a
+      // second, differently-sized menu (this path always includes Reply,
+      // since it doesn't know it's actually a touch gesture) right on top of
+      // the first — reads as the popover flashing big then shrinking, and
+      // cuts its pop-in animation off mid-flight. Right-click only exists on
+      // desktop, so just don't build a menu here at all on a coarse pointer.
+      if (isCoarsePointer) return
       const id = row.dataset.id
       // The long-press timer already opened this menu on touch — don't rebuild.
       if (Date.now() < suppressClickUntil && lastMenuFor === id) return
