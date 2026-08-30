@@ -1,15 +1,11 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
-import { isLiveStatus, otherMemberId } from '../utils/connections.js'
+import { otherMemberId } from '../utils/connections.js'
 import { RAISE_EXCEPTION } from '../utils/pgErrors.js'
+import { getConnectionForMember } from './connectionAccess.js'
+import { ConnectionError } from '../utils/connectionError.js'
 
-export class ConnectionError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message)
-  }
-}
+// Re-exported for the many call sites that import it from here.
+export { ConnectionError }
 
 type ConnectionStatus = 'pending' | 'active' | 'leave_pending' | 'terminated' | 'declined'
 
@@ -92,26 +88,6 @@ export async function requestConnection(requesterUserId: string, targetCode: str
   }
 
   return data
-}
-
-async function getConnectionForMember(connectionId: string, userId: string): Promise<ConnectionRow> {
-  const { data, error } = await supabaseAdmin.from('connections').select().eq('id', connectionId).maybeSingle()
-  if (error) throw error
-  if (!data) throw new ConnectionError(404, 'connection not found')
-  if (data.user_a_id !== userId && data.user_b_id !== userId) {
-    throw new ConnectionError(403, 'not a member of this connection')
-  }
-  return data
-}
-
-// A member-scoped read that also requires the connection to be live — for
-// writes that make no sense on a pending/declined/terminated connection.
-async function getLiveConnectionForMember(connectionId: string, userId: string): Promise<ConnectionRow> {
-  const connection = await getConnectionForMember(connectionId, userId)
-  if (!isLiveStatus(connection.status)) {
-    throw new ConnectionError(409, 'connection is not active')
-  }
-  return connection
 }
 
 // Conditional status transition: the UPDATE itself carries the from-state, so
@@ -239,7 +215,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
 // Mark the conversation read up to now for this member (drives the other
 // member's "Seen" indicator). Connection state, not a message — kept off Transport.
 export async function markRead(connectionId: string, userId: string): Promise<void> {
-  await getLiveConnectionForMember(connectionId, userId)
+  await getConnectionForMember(connectionId, userId, { requireLive: true })
   const { error } = await supabaseAdmin
     .from('connection_members')
     .update({ last_read_at: new Date().toISOString() })
@@ -279,10 +255,7 @@ interface LeaveResult {
 // Advance MY leave countdown by one step (gated to once per 24h). Reaching the
 // final step terminates the connection solo — no agreement from the other member.
 export async function advanceLeave(connectionId: string, userId: string): Promise<LeaveResult> {
-  const connection = await getConnectionForMember(connectionId, userId)
-  if (!isLiveStatus(connection.status)) {
-    throw new ConnectionError(409, 'connection is not active')
-  }
+  const connection = await getConnectionForMember(connectionId, userId, { requireLive: true })
 
   const mine = await getMemberLeave(connectionId, userId)
   if (!canAdvance(mine.leave_last_step_at)) {
@@ -375,7 +348,7 @@ const ALLOWED_WALLPAPERS = ['off', '1', 'love', 'samurai']
 // Wallpaper is shared per-connection (unlike message style/theme, which stay
 // per-device localStorage preferences) — either member's choice applies to both.
 export async function setWallpaper(connectionId: string, userId: string, wallpaper: string): Promise<void> {
-  await getLiveConnectionForMember(connectionId, userId)
+  await getConnectionForMember(connectionId, userId, { requireLive: true })
   if (!ALLOWED_WALLPAPERS.includes(wallpaper)) throw new ConnectionError(400, 'invalid wallpaper')
 
   const { error } = await supabaseAdmin
@@ -386,7 +359,7 @@ export async function setWallpaper(connectionId: string, userId: string, wallpap
 }
 
 export async function setNickname(connectionId: string, userId: string, nickname: string): Promise<void> {
-  const connection = await getLiveConnectionForMember(connectionId, userId)
+  const connection = await getConnectionForMember(connectionId, userId, { requireLive: true })
 
   const trimmed = nickname.trim()
   if (trimmed.length < 1 || trimmed.length > 40) {

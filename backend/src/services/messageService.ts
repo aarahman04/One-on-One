@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
+import { getConnectionForMember } from './connectionAccess.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
-import { isLiveStatus } from '../utils/connections.js'
 
 type MessageType = 'text' | 'letter'
 
@@ -54,24 +54,6 @@ function validateLetterPayload(payload: unknown): { appearance: string; from: st
   return { appearance, from, to }
 }
 
-// Never trust the client for connection/sender/state (spec §20). Every
-// message write re-verifies membership and that the connection is live.
-async function assertMemberOfLiveConnection(connectionId: string, userId: string): Promise<void> {
-  const { data, error } = await supabaseAdmin
-    .from('connections')
-    .select('status, user_a_id, user_b_id')
-    .eq('id', connectionId)
-    .maybeSingle()
-  if (error) throw error
-  if (!data) throw new ConnectionError(404, 'connection not found')
-  if (data.user_a_id !== userId && data.user_b_id !== userId) {
-    throw new ConnectionError(403, 'not a member of this connection')
-  }
-  if (!isLiveStatus(data.status)) {
-    throw new ConnectionError(409, 'connection is not active')
-  }
-}
-
 const HISTORY_PAGE_SIZE = 50
 
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
@@ -82,7 +64,7 @@ export async function getHistory(
   userId: string,
   before?: string,
 ): Promise<Message[]> {
-  await assertMemberOfLiveConnection(connectionId, userId)
+  await getConnectionForMember(connectionId, userId, { requireLive: true })
 
   let query = supabaseAdmin
     .from('messages')
@@ -128,7 +110,7 @@ export async function saveMessage(
   if (type !== 'text' && type !== 'letter') throw new ConnectionError(400, 'invalid message type')
   const storedPayload = type === 'letter' ? validateLetterPayload(payload) : null
 
-  await assertMemberOfLiveConnection(connectionId, senderId)
+  await getConnectionForMember(connectionId, senderId, { requireLive: true })
   if (replyTo) await assertReplyTargetInConnection(connectionId, replyTo)
 
   const { data, error } = await supabaseAdmin

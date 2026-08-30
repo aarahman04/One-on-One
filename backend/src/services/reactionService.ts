@@ -1,40 +1,12 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
-import { isLiveStatus } from '../utils/connections.js'
+import { getConnectionByMessageId } from './connectionAccess.js'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
 export interface ReactionSummary {
   emoji: string
   userIds: string[]
-}
-
-// Reactions don't carry their own connection id, so resolve it via the
-// message and re-verify membership the same way messages do — never trust
-// the client for authorization (spec §20).
-async function assertMemberOfMessageConnection(messageId: string, userId: string): Promise<string> {
-  const { data: msg, error: msgErr } = await supabaseAdmin
-    .from('messages')
-    .select('connection_id')
-    .eq('id', messageId)
-    .maybeSingle()
-  if (msgErr) throw msgErr
-  if (!msg) throw new ConnectionError(404, 'message not found')
-
-  const { data: conn, error: connErr } = await supabaseAdmin
-    .from('connections')
-    .select('status, user_a_id, user_b_id')
-    .eq('id', msg.connection_id)
-    .maybeSingle()
-  if (connErr) throw connErr
-  if (!conn) throw new ConnectionError(404, 'connection not found')
-  if (conn.user_a_id !== userId && conn.user_b_id !== userId) {
-    throw new ConnectionError(403, 'not a member of this connection')
-  }
-  if (!isLiveStatus(conn.status)) {
-    throw new ConnectionError(409, 'connection is not active')
-  }
-  return msg.connection_id as string
 }
 
 function validateEmoji(emoji: unknown): string {
@@ -44,19 +16,22 @@ function validateEmoji(emoji: unknown): string {
   return emoji
 }
 
+// Reactions don't carry their own connection id — resolve it via the message
+// and re-verify membership + live state (spec §20). Returns the connection id
+// for the caller's socket broadcast.
 export async function addReaction(messageId: string, userId: string, emoji: unknown): Promise<string> {
   const validEmoji = validateEmoji(emoji)
-  const connectionId = await assertMemberOfMessageConnection(messageId, userId)
+  const { connection } = await getConnectionByMessageId(messageId, userId, { requireLive: true })
   const { error } = await supabaseAdmin
     .from('reactions')
     .upsert({ message_id: messageId, user_id: userId, emoji: validEmoji }, { onConflict: 'message_id,user_id,emoji' })
   if (error) throw error
-  return connectionId
+  return connection.id
 }
 
 export async function removeReaction(messageId: string, userId: string, emoji: unknown): Promise<string> {
   const validEmoji = validateEmoji(emoji)
-  const connectionId = await assertMemberOfMessageConnection(messageId, userId)
+  const { connection } = await getConnectionByMessageId(messageId, userId, { requireLive: true })
   const { error } = await supabaseAdmin
     .from('reactions')
     .delete()
@@ -64,7 +39,7 @@ export async function removeReaction(messageId: string, userId: string, emoji: u
     .eq('user_id', userId)
     .eq('emoji', validEmoji)
   if (error) throw error
-  return connectionId
+  return connection.id
 }
 
 export async function getReactionsForMessages(messageIds: string[]): Promise<Map<string, ReactionSummary[]>> {
