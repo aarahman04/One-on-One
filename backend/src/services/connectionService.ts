@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { otherMemberId } from '../utils/connections.js'
 import { RAISE_EXCEPTION } from '../utils/pgErrors.js'
-import { getConnectionForMember } from './connectionAccess.js'
+import { getConnectionForMember, memberOrFilter } from './connectionAccess.js'
 import { ConnectionError } from '../utils/connectionError.js'
 
 // Re-exported for the many call sites that import it from here.
@@ -15,16 +15,6 @@ interface ConnectionRow {
   user_b_id: string
   status: ConnectionStatus
   created_at: string
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-// PostgREST .or() takes a raw string; assert the id shape before interpolating
-// so a malformed id can't reach the filter grammar (defense in depth — ids are
-// DB-issued UUIDs today).
-function memberOrFilter(userId: string): string {
-  if (!UUID_RE.test(userId)) throw new ConnectionError(400, 'invalid user id')
-  return `user_a_id.eq.${userId},user_b_id.eq.${userId}`
 }
 
 async function findUserByConnectionCode(code: string): Promise<{ id: string } | null> {

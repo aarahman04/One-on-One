@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
-import { getConnectionForMember } from './connectionAccess.js'
+import { getConnectionForMember, type MemberConnection } from './connectionAccess.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
 
 type MessageType = 'text' | 'letter'
@@ -95,8 +95,10 @@ async function assertReplyTargetInConnection(connectionId: string, replyTo: stri
   if (!data) throw new ConnectionError(400, 'reply target not found in this connection')
 }
 
+// The connection is passed in already resolved + membership/live-checked by the
+// caller (socketServer's getLiveConnectionForUser), so this doesn't re-fetch it.
 export async function saveMessage(
-  connectionId: string,
+  connection: MemberConnection,
   senderId: string,
   content: string,
   type: MessageType = 'text',
@@ -110,13 +112,12 @@ export async function saveMessage(
   if (type !== 'text' && type !== 'letter') throw new ConnectionError(400, 'invalid message type')
   const storedPayload = type === 'letter' ? validateLetterPayload(payload) : null
 
-  await getConnectionForMember(connectionId, senderId, { requireLive: true })
-  if (replyTo) await assertReplyTargetInConnection(connectionId, replyTo)
+  if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 
   const { data, error } = await supabaseAdmin
     .from('messages')
     .insert({
-      connection_id: connectionId,
+      connection_id: connection.id,
       sender_id: senderId,
       content: trimmed,
       type,
@@ -133,7 +134,7 @@ export async function saveMessage(
   const { error: readError } = await supabaseAdmin
     .from('connection_members')
     .update({ last_read_at: data.created_at })
-    .eq('connection_id', connectionId)
+    .eq('connection_id', connection.id)
     .eq('user_id', senderId)
   if (readError) console.error('saveMessage: failed to bump sender last_read_at', readError)
 

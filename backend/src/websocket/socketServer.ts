@@ -1,12 +1,13 @@
 import type { Server as HttpServer } from 'node:http'
 import { Server, type Socket } from 'socket.io'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
-import { getOrCreateUser } from '../services/userService.js'
-import { ConnectionError, getCurrentConnection } from '../services/connectionService.js'
+import { resolveUserFromToken } from '../services/authToken.js'
+import { ConnectionError } from '../services/connectionService.js'
+import { getLiveConnectionForUser, type MemberConnection } from '../services/connectionAccess.js'
 import { saveMessage, type Message } from '../services/messageService.js'
 import { addReaction, removeReaction } from '../services/reactionService.js'
 import { sendToUser } from '../services/pushService.js'
-import { isLiveStatus, otherMemberId } from '../utils/connections.js'
+import { otherMemberId } from '../utils/connections.js'
 
 interface SocketData {
   userId: string
@@ -26,12 +27,8 @@ function clientError(err: unknown, fallback: string): string {
 }
 
 // The user's connection can change during one socket's lifetime (formed after
-// connect, or terminated + re-formed), so resolve it per event rather than
-// trusting the value pinned at handshake.
-async function currentLiveConnectionId(userId: string): Promise<string | null> {
-  const current = await getCurrentConnection(userId)
-  return current && isLiveStatus(current.status) ? current.id : null
-}
+// connect, or terminated + re-formed), so it is re-resolved per event via
+// getLiveConnectionForUser rather than trusting the value pinned at handshake.
 
 let ioRef: Server | null = null
 
@@ -45,26 +42,25 @@ export function emitConnectionEnded(connectionId: string): void {
 // exactly the two members of a 1:1 connection, so "any other socket present"
 // means the recipient is already here and will get the message over the
 // open connection instead.
-async function notifyIfOffline(io: Server, connId: string, senderId: string, message: Message): Promise<void> {
+async function notifyIfOffline(
+  io: Server,
+  connection: MemberConnection,
+  senderId: string,
+  message: Message,
+): Promise<void> {
   try {
-    const sockets = await io.in(room(connId)).fetchSockets()
+    const sockets = await io.in(room(connection.id)).fetchSockets()
     const recipientOnline = sockets.some((s) => (s.data as SocketData).userId !== senderId)
     if (recipientOnline) return
 
-    const { data: conn } = await supabaseAdmin
-      .from('connections')
-      .select('user_a_id, user_b_id')
-      .eq('id', connId)
-      .maybeSingle()
-    if (!conn) return
-    const recipientId = otherMemberId(conn, senderId)
+    const recipientId = otherMemberId(connection, senderId)
 
     // Nicknames are stored on the OTHER member's row (spec §11) — so "what
     // the recipient calls the sender" lives on the sender's own member row.
     const { data: senderMember } = await supabaseAdmin
       .from('connection_members')
       .select('nickname')
-      .eq('connection_id', connId)
+      .eq('connection_id', connection.id)
       .eq('user_id', senderId)
       .maybeSingle()
 
@@ -88,15 +84,12 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
       const token = socket.handshake.auth?.token as string | undefined
       if (!token) return next(new Error('missing token'))
 
-      const { data, error } = await supabaseAdmin.auth.getUser(token)
-      if (error || !data.user) return next(new Error('invalid token'))
-
-      const user = await getOrCreateUser(data.user.id)
-      const liveConnectionId = await currentLiveConnectionId(user.id)
+      const user = await resolveUserFromToken(token)
+      const connection = await getLiveConnectionForUser(user.id)
 
       const socketData = socket.data as SocketData
       socketData.userId = user.id
-      socketData.connectionId = liveConnectionId
+      socketData.connectionId = connection?.id ?? null
       next()
     } catch (err) {
       next(err as Error)
@@ -130,20 +123,20 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
           return
         }
         const { userId } = socket.data as SocketData
-        const connId = await currentLiveConnectionId(userId)
-        if (!connId) {
+        const connection = await getLiveConnectionForUser(userId)
+        if (!connection) {
           ack?.({ error: 'no active connection' })
           return
         }
-        socket.join(room(connId))
+        socket.join(room(connection.id))
         const content = typeof msg?.content === 'string' ? msg.content : ''
         const type = msg?.type === 'letter' ? 'letter' : 'text'
         const replyTo = typeof msg?.replyTo === 'string' ? msg.replyTo : null
         const tempId = typeof msg?.tempId === 'string' ? msg.tempId : undefined
-        const message = await saveMessage(connId, userId, content, type, msg?.payload ?? null, replyTo)
+        const message = await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo)
         // tempId echoed so the sender can reconcile its optimistic row exactly.
-        io.to(room(connId)).emit('message:new', { ...message, tempId })
-        void notifyIfOffline(io, connId, userId, message)
+        io.to(room(connection.id)).emit('message:new', { ...message, tempId })
+        void notifyIfOffline(io, connection, userId, message)
         ack?.({ ok: true })
       } catch (err) {
         ack?.({ error: clientError(err, 'failed to send message') })

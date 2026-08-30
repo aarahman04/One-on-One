@@ -35,6 +35,31 @@ function assertAccess(conn: MemberConnection, userId: string, opts: AccessOpts):
 
 const SELECT = 'id, user_a_id, user_b_id, status, created_at'
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// PostgREST .or() takes a raw string; assert the id shape before interpolating
+// so a malformed id can't reach the filter grammar (defense in depth — ids are
+// DB-issued UUIDs).
+export function memberOrFilter(userId: string): string {
+  if (!UUID_RE.test(userId)) throw new ConnectionError(400, 'invalid user id')
+  return `user_a_id.eq.${userId},user_b_id.eq.${userId}`
+}
+
+// The caller's single live connection as one lightweight query — for the socket
+// send path, which needs only id + members, not the full /connections/current
+// poll payload. Newest wins if a stray extra row exists (see migration 016).
+export async function getLiveConnectionForUser(userId: string): Promise<MemberConnection | null> {
+  const { data, error } = await supabaseAdmin
+    .from('connections')
+    .select(SELECT)
+    .in('status', ['active', 'leave_pending'])
+    .or(memberOrFilter(userId))
+    .order('updated_at', { ascending: false })
+    .limit(1)
+  if (error) throw error
+  return (data?.[0] as MemberConnection) ?? null
+}
+
 // Load a connection by id and assert the caller is a member (and, with
 // requireLive, that it is still live). 404 if the connection doesn't exist.
 export async function getConnectionForMember(
