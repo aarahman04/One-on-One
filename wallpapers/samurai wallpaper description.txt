@@ -1,0 +1,35 @@
+wallpaper in C:\Users\aarah\One-on-One\wallpapers
+
+This image has a dramatic, cinematic palette dominated by crimson reds, charcoal blacks, and muted gray-green tones, creating a mysterious samurai atmosphere. Here are the main theme colors and where they appear:
+
+| Image Element           | Approx. Color    | Hex Code    |
+| ----------------------- | ---------------- | ----------- |
+| Crimson tree leaves     | Deep crimson red | **#B0003A** |
+| Falling petals          | Bright crimson   | **#D10A4A** |
+| Katana glow             | Neon magenta-red | **#FF2D6F** |
+| Samurai robes           | Charcoal black   | **#232323** |
+| Hat & cloak shadows     | Dark graphite    | **#3A3A3A** |
+| Tree trunk              | Dark brown       | **#3B2B25** |
+| Storm clouds            | Cool gray        | **#73716A** |
+| Moon                    | Pale ivory       | **#D9D3BE** |
+| Mist & clouds           | Warm light gray  | **#C6C2B5** |
+| Rocky mountains         | Earthy brown     | **#6B4B3D** |
+| Moss & cliff highlights | Olive green      | **#6F7052** |
+| Ground glow             | Dark crimson     | **#7A0B2F** |
+
+
+Overall color palette
+🌺 Deep Crimson: #B0003A
+❤️ Bright Crimson: #D10A4A
+💖 Neon Magenta Red: #FF2D6F
+⚫ Charcoal Black: #232323
+🌑 Dark Graphite: #3A3A3A
+🌳 Dark Brown: #3B2B25
+☁️ Storm Gray: #73716A
+🌕 Pale Ivory: #D9D3BE
+🌫️ Warm Light Gray: #C6C2B5
+🪨 Earthy Brown: #6B4B3D
+🌿 Olive Green: #6F7052
+🌹 Dark Crimson Glow: #7A0B2F
+
+These colors capture the image's dark fantasy aesthetic and would work well for recreating its moody, cinematic samurai atmosphere in artwork, UI themes, or digital designs.

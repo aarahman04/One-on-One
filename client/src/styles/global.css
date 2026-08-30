@@ -42,6 +42,15 @@ body {
   flex-direction: column;
 }
 
+/* Older iOS Safari has no dvh: 100vh is taller than the visible area while the
+   URL bar shows, pushing the composer below the fold. -webkit-fill-available
+   tracks the visible height there. */
+@supports not (height: 100dvh) {
+  #app {
+    height: -webkit-fill-available;
+  }
+}
+
 button {
   font-family: inherit;
   font-size: inherit;
@@ -105,6 +114,8 @@ input:focus {
 .screen__title {
   font-size: 22px;
   font-weight: 700;
+  max-width: 340px;
+  text-wrap: balance;
 }
 
 .screen__subtitle {
@@ -114,6 +125,8 @@ input:focus {
 
 .screen__actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
   margin-top: 8px;
 }
@@ -149,19 +162,30 @@ input:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--border);
+}
+
+.chat__nav > div {
+  min-width: 0; /* let the title truncate instead of shoving the menu button off-screen */
 }
 
 .chat__nav-title {
   font-weight: 700;
   letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat__nav-status {
   color: var(--muted);
   font-size: 12px;
   margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat__nav-status::before {
@@ -175,6 +199,7 @@ input:focus {
   color: var(--text-dim);
   font-size: 18px;
   padding: 4px 8px;
+  flex-shrink: 0;
 }
 
 .chat__log {
@@ -239,6 +264,10 @@ input:focus {
   content: ' · not sent';
   color: var(--danger);
   font-size: 11px;
+}
+
+.chat__message--failed .chat__receipt {
+  display: none; /* the "· not sent" note already says it — a stray hollow dot after it reads as a glitch */
 }
 
 /* Read receipt (line/terminal mode): a small dot at the end of my messages —
@@ -317,8 +346,9 @@ input:focus {
   transition: transform 0.15s ease;
 }
 
-.chat__message--flash {
+.chat__message--flash .chat__message-body {
   animation: chat-flash 0.9s ease;
+  border-radius: 8px;
 }
 
 @keyframes chat-flash {
@@ -366,7 +396,7 @@ input:focus {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 280px;
+  max-width: 100%;
 }
 
 .chat--bubbles .chat__quote {
@@ -422,6 +452,7 @@ input:focus {
   right: auto;
   min-width: 0; /* drop the inherited .menu 200px so it can't overflow a narrow viewport */
   max-width: calc(100vw - 16px);
+  z-index: 40; /* above the slash-menu (20), below the modal overlay (50) */
 }
 
 .chat__emoji-picker {
@@ -577,6 +608,8 @@ input:focus {
   min-width: 200px;
   padding: 6px 0;
   z-index: 10;
+  max-height: calc(100dvh - 60px);
+  overflow-y: auto;
 }
 
 .menu__group-label {
@@ -658,6 +691,16 @@ input:focus {
     padding-left: 12px;
     padding-right: 12px;
   }
+
+  /* keep the popovers aligned with the 12px bar insets (not the desktop 20px) */
+  .menu {
+    right: 12px;
+  }
+
+  .slash-menu {
+    left: 12px;
+    right: 12px;
+  }
 }
 
 /* PREVIEW — temporary premium-feature preview (wallpaper + Instagram bubbles).
@@ -666,12 +709,14 @@ input:focus {
 
 .appearance__row {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 4px 12px 8px;
 }
 
 .appearance__opt {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0; /* let "Samurai" shrink instead of forcing the whole menu wider than 200px */
   background: var(--bg);
   color: var(--text-dim);
   border: 1px solid var(--border);
@@ -711,13 +756,23 @@ input:focus {
   --bubble-other-text: var(--text);
 }
 
-.chat--bubbles[data-theme='light'] {
+/* Light palette — applies in BOTH message styles (data-theme lives on .chat).
+   The base tokens flip here; bubble mode adds its own --bubble-other-bg below.
+   Accents are darkened so the YOU/other sender names and links stay legible on
+   white (the dark-mode #7ee787/#79c0ff wash out). */
+.chat[data-theme='light'] {
   --bg: #f5f5f7;
   --bg-raised: #ffffff;
   --border: #d9d9dd;
   --text: #1c1c1e;
   --text-dim: #5b5b60;
-  --muted: #9a9a9e;
+  --muted: #8a8a8e;
+  --accent-you: #1a7f37;
+  --accent-other: #0969da;
+  --danger: #cf222e;
+}
+
+.chat--bubbles[data-theme='light'] {
   --bubble-other-bg: #e9e9eb;
 }
 
@@ -850,6 +905,12 @@ input:focus {
   flex-shrink: 0;
 }
 
+.letter-card__text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere; /* a long to/from name must not overflow the card (or its bubble) */
+}
+
 .letter-card__hint {
   color: var(--muted);
   font-size: 12px;
@@ -869,7 +930,7 @@ input:focus {
   border-radius: 6px;
   padding: 4px 0;
   z-index: 20;
-  max-height: 220px;
+  max-height: min(220px, 40dvh); /* don't run off the top when the keyboard shrinks the viewport */
   overflow-y: auto;
 }
 
@@ -907,9 +968,10 @@ input:focus {
   inset: 0;
   background: rgba(0, 0, 0, 0.6);
   display: flex;
-  align-items: center;
+  align-items: flex-start; /* pin to top + scroll, so the soft keyboard can't hide the panel's action row */
   justify-content: center;
   padding: 20px;
+  overflow-y: auto;
   z-index: 50;
 }
 
@@ -921,8 +983,9 @@ input:focus {
   padding: 22px;
   width: 100%;
   max-width: 620px;
-  max-height: 90vh;
+  max-height: 90dvh;
   overflow-y: auto;
+  margin: auto; /* still centers vertically when the panel is short and there's room */
 }
 
 .modal-close {
