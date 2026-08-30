@@ -6,7 +6,6 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      authUserId?: string
       appUser?: AppUser
     }
   }
@@ -41,7 +40,6 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const now = Date.now()
   const cached = cache.get(token)
   if (cached && cached.expiresAt > now) {
-    req.authUserId = cached.user.authUserId
     req.appUser = cached.user
     next()
     return
@@ -69,7 +67,6 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     for (const [k, v] of cache) if (v.expiresAt <= now) cache.delete(k)
   }
 
-  req.authUserId = user.authUserId
   req.appUser = user
   next()
 }

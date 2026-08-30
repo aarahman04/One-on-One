@@ -30,7 +30,7 @@ const COMMANDS: SlashCommand[] = [
 // handler calls so a mobile soft keyboard's Send/Go key (which never fires a
 // catchable Enter keydown) still opens the command instead of sending the
 // literal "/letter" text.
-export function matchCommand(value: string): SlashCommand | undefined {
+function matchCommand(value: string): SlashCommand | undefined {
   const v = value.trim()
   if (!v.startsWith('/')) return undefined
   const name = v.slice(1).toLowerCase()

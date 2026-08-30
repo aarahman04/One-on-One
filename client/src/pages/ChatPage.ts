@@ -16,8 +16,13 @@ import {
   type CurrentConnection,
   type ReactionSummary,
 } from '../services/connectionsApi'
-import { connectMessaging, type IncomingMessage, type MessageType } from '../services/messageService'
-import type { ReactionUpdate, Transport } from '../services/transport/Transport'
+import {
+  connectMessaging,
+  type IncomingMessage,
+  type MessageType,
+  type ReactionUpdate,
+  type Transport,
+} from '../services/messageService'
 import { linkifyInto } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
 
@@ -901,40 +906,6 @@ export const ChatPage: Page = (root, go) => {
       return btn
     }
 
-    // The message menu: emoji row + Copy + Report everywhere; Reply only on
-    // desktop (phone replies via the right-swipe gesture).
-    const buildMessageMenu = (menu: HTMLElement, messageId: string, isDesktop: boolean): void => {
-      buildEmojiRow(menu, messageId)
-      const message = messagesById.get(messageId)
-      if (isDesktop) {
-        menu.append(
-          menuItem('Reply', false, () => {
-            startReply(messageId)
-            closeCtxMenu()
-          }),
-        )
-      }
-      if (message?.type === 'text') {
-        menu.append(
-          menuItem('Copy', false, () => {
-            closeCtxMenu()
-            const text = message.content
-            if (navigator.clipboard?.writeText) {
-              void navigator.clipboard.writeText(text).catch(() => showNotice('Could not copy.'))
-            } else {
-              showNotice('Copy is not available in this browser.')
-            }
-          }),
-        )
-      }
-      menu.append(
-        menuItem('Report', true, () => {
-          closeCtxMenu()
-          openReportModal(messageId)
-        }),
-      )
-    }
-
     const openReportModal = (messageId: string): void => {
       const box = document.createElement('div')
       box.className = 'notice-popup'
@@ -981,6 +952,40 @@ export const ChatPage: Page = (root, go) => {
             showNotice('Could not send the report — try again.')
           })
       })
+    }
+
+    // The message menu: emoji row + Copy + Report everywhere; Reply only on
+    // desktop (phone replies via the right-swipe gesture).
+    const buildMessageMenu = (menu: HTMLElement, messageId: string, isDesktop: boolean): void => {
+      buildEmojiRow(menu, messageId)
+      const message = messagesById.get(messageId)
+      if (isDesktop) {
+        menu.append(
+          menuItem('Reply', false, () => {
+            startReply(messageId)
+            closeCtxMenu()
+          }),
+        )
+      }
+      if (message?.type === 'text') {
+        menu.append(
+          menuItem('Copy', false, () => {
+            closeCtxMenu()
+            const text = message.content
+            if (navigator.clipboard?.writeText) {
+              void navigator.clipboard.writeText(text).catch(() => showNotice('Could not copy.'))
+            } else {
+              showNotice('Copy is not available in this browser.')
+            }
+          }),
+        )
+      }
+      menu.append(
+        menuItem('Report', true, () => {
+          closeCtxMenu()
+          openReportModal(messageId)
+        }),
+      )
     }
 
     // --- Reply / react gestures: right-swipe = reply, long-press = react on

@@ -2,7 +2,7 @@ import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
 
-export type MessageType = 'text' | 'letter'
+type MessageType = 'text' | 'letter'
 
 const LETTER_APPEARANCES = ['dawn', 'botanical']
 
@@ -71,7 +71,7 @@ async function assertMemberOfLiveConnection(connectionId: string, userId: string
   }
 }
 
-export const HISTORY_PAGE_SIZE = 50
+const HISTORY_PAGE_SIZE = 50
 
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
 // row cap silently returned the OLDEST 1000 messages once a chat grew past that,

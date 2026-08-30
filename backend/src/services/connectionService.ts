@@ -16,8 +16,6 @@ interface ConnectionRow {
   user_a_id: string
   user_b_id: string
   status: ConnectionStatus
-  leave_requested_by: string | null
-  leave_requested_at: string | null
   created_at: string
 }
 
@@ -173,7 +171,7 @@ function canAdvance(lastStepAt: string | null): boolean {
   return Date.now() - new Date(lastStepAt).getTime() >= LEAVE_STEP_INTERVAL_MS
 }
 
-export interface CurrentConnection {
+interface CurrentConnection {
   id: string
   status: ConnectionStatus
   myUserId: string
@@ -268,7 +266,7 @@ async function terminate(connectionId: string): Promise<void> {
   if (error) throw error
 }
 
-export interface LeaveResult {
+interface LeaveResult {
   status: ConnectionStatus
   myLeaveStep: number
   daysRemaining: number | null

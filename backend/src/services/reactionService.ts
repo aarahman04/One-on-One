@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
 
-export const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
+const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
 export interface ReactionSummary {
   emoji: string
@@ -11,7 +11,7 @@ export interface ReactionSummary {
 // Reactions don't carry their own connection id, so resolve it via the
 // message and re-verify membership the same way messages do — never trust
 // the client for authorization (spec §20).
-export async function assertMemberOfMessageConnection(messageId: string, userId: string): Promise<string> {
+async function assertMemberOfMessageConnection(messageId: string, userId: string): Promise<string> {
   const { data: msg, error: msgErr } = await supabaseAdmin
     .from('messages')
     .select('connection_id')
