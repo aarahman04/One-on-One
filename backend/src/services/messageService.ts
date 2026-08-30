@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
+import { isLiveStatus } from '../utils/connections.js'
 
 type MessageType = 'text' | 'letter'
 
@@ -66,7 +67,7 @@ async function assertMemberOfLiveConnection(connectionId: string, userId: string
   if (data.user_a_id !== userId && data.user_b_id !== userId) {
     throw new ConnectionError(403, 'not a member of this connection')
   }
-  if (data.status !== 'active' && data.status !== 'leave_pending') {
+  if (!isLiveStatus(data.status)) {
     throw new ConnectionError(409, 'connection is not active')
   }
 }

@@ -6,6 +6,7 @@ import { ConnectionError, getCurrentConnection } from '../services/connectionSer
 import { saveMessage, type Message } from '../services/messageService.js'
 import { addReaction, removeReaction } from '../services/reactionService.js'
 import { sendToUser } from '../services/pushService.js'
+import { isLiveStatus, otherMemberId } from '../utils/connections.js'
 
 interface SocketData {
   userId: string
@@ -29,7 +30,7 @@ function clientError(err: unknown, fallback: string): string {
 // trusting the value pinned at handshake.
 async function currentLiveConnectionId(userId: string): Promise<string | null> {
   const current = await getCurrentConnection(userId)
-  return current && (current.status === 'active' || current.status === 'leave_pending') ? current.id : null
+  return current && isLiveStatus(current.status) ? current.id : null
 }
 
 let ioRef: Server | null = null
@@ -56,7 +57,7 @@ async function notifyIfOffline(io: Server, connId: string, senderId: string, mes
       .eq('id', connId)
       .maybeSingle()
     if (!conn) return
-    const recipientId = conn.user_a_id === senderId ? conn.user_b_id : conn.user_a_id
+    const recipientId = otherMemberId(conn, senderId)
 
     // Nicknames are stored on the OTHER member's row (spec §11) — so "what
     // the recipient calls the sender" lives on the sender's own member row.
@@ -91,9 +92,7 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
       if (error || !data.user) return next(new Error('invalid token'))
 
       const user = await getOrCreateUser(data.user.id)
-      const current = await getCurrentConnection(user.id)
-      const liveConnectionId =
-        current && (current.status === 'active' || current.status === 'leave_pending') ? current.id : null
+      const liveConnectionId = await currentLiveConnectionId(user.id)
 
       const socketData = socket.data as SocketData
       socketData.userId = user.id

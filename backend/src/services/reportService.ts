@@ -1,8 +1,8 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
+import { UNIQUE_VIOLATION } from '../utils/pgErrors.js'
 
 const MAX_REASON_LEN = 1000
-const UNIQUE_VIOLATION = '23505'
 
 // Reporting must keep working the moment a user most needs it — when they want
 // to report abuse and leave. So this verifies the reporter was *ever* a member

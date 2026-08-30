@@ -1,4 +1,6 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
+import { isLiveStatus, otherMemberId } from '../utils/connections.js'
+import { RAISE_EXCEPTION } from '../utils/pgErrors.js'
 
 export class ConnectionError extends Error {
   constructor(
@@ -74,7 +76,7 @@ export async function requestConnection(requesterUserId: string, targetCode: str
     .single()
 
   if (error) {
-    if (error.code === 'P0001') throw new ConnectionError(409, 'connection already exists')
+    if (error.code === RAISE_EXCEPTION) throw new ConnectionError(409, 'connection already exists')
     throw error
   }
 
@@ -106,7 +108,7 @@ async function getConnectionForMember(connectionId: string, userId: string): Pro
 // writes that make no sense on a pending/declined/terminated connection.
 async function getLiveConnectionForMember(connectionId: string, userId: string): Promise<ConnectionRow> {
   const connection = await getConnectionForMember(connectionId, userId)
-  if (connection.status !== 'active' && connection.status !== 'leave_pending') {
+  if (!isLiveStatus(connection.status)) {
     throw new ConnectionError(409, 'connection is not active')
   }
   return connection
@@ -202,7 +204,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
   const data = connRows?.[0]
   if (!data) return null
 
-  const otherUserId = data.user_a_id === userId ? data.user_b_id : data.user_a_id
+  const otherUserId = otherMemberId(data, userId)
   const [{ data: members }, { data: otherUser }] = await Promise.all([
     supabaseAdmin
       .from('connection_members')
@@ -278,7 +280,7 @@ interface LeaveResult {
 // final step terminates the connection solo — no agreement from the other member.
 export async function advanceLeave(connectionId: string, userId: string): Promise<LeaveResult> {
   const connection = await getConnectionForMember(connectionId, userId)
-  if (connection.status !== 'active' && connection.status !== 'leave_pending') {
+  if (!isLiveStatus(connection.status)) {
     throw new ConnectionError(409, 'connection is not active')
   }
 
@@ -314,7 +316,7 @@ export async function advanceLeave(connectionId: string, userId: string): Promis
     if (statusError) throw statusError
   }
 
-  const other = await getMemberLeave(connectionId, userId === connection.user_a_id ? connection.user_b_id : connection.user_a_id)
+  const other = await getMemberLeave(connectionId, otherMemberId(connection, userId))
   return {
     status: 'leave_pending',
     myLeaveStep: newStep,
@@ -336,8 +338,7 @@ export async function cancelLeave(connectionId: string, userId: string): Promise
     .eq('user_id', userId)
   if (error) throw error
 
-  const otherUserId = userId === connection.user_a_id ? connection.user_b_id : connection.user_a_id
-  const other = await getMemberLeave(connectionId, otherUserId)
+  const other = await getMemberLeave(connectionId, otherMemberId(connection, userId))
   let status: ConnectionStatus = 'leave_pending'
   if (other.leave_step === 0) {
     const { error: statusError } = await supabaseAdmin
@@ -357,10 +358,9 @@ export async function confirmEndLeave(connectionId: string, userId: string): Pro
   const connection = await getConnectionForMember(connectionId, userId)
   if (connection.status !== 'leave_pending') throw new ConnectionError(409, 'no leave in progress')
 
-  const otherUserId = userId === connection.user_a_id ? connection.user_b_id : connection.user_a_id
   const [mine, other] = await Promise.all([
     getMemberLeave(connectionId, userId),
-    getMemberLeave(connectionId, otherUserId),
+    getMemberLeave(connectionId, otherMemberId(connection, userId)),
   ])
   if (mine.leave_step === 0 || other.leave_step === 0) {
     throw new ConnectionError(409, 'both members must be leaving to end immediately')
@@ -395,7 +395,7 @@ export async function setNickname(connectionId: string, userId: string, nickname
 
   // Nicknames are local (spec §11): this sets what I call the OTHER person,
   // stored on their member row — not a name I give myself.
-  const otherUserId = connection.user_a_id === userId ? connection.user_b_id : connection.user_a_id
+  const otherUserId = otherMemberId(connection, userId)
 
   const { error } = await supabaseAdmin
     .from('connection_members')

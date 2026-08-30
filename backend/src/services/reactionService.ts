@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
+import { isLiveStatus } from '../utils/connections.js'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
@@ -30,7 +31,7 @@ async function assertMemberOfMessageConnection(messageId: string, userId: string
   if (conn.user_a_id !== userId && conn.user_b_id !== userId) {
     throw new ConnectionError(403, 'not a member of this connection')
   }
-  if (conn.status !== 'active' && conn.status !== 'leave_pending') {
+  if (!isLiveStatus(conn.status)) {
     throw new ConnectionError(409, 'connection is not active')
   }
   return msg.connection_id as string
