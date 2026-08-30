@@ -171,7 +171,8 @@ input:focus {
   align-items: center;
   justify-content: center;
   gap: 20px;
-  padding: 24px;
+  padding: calc(24px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right))
+    calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
   text-align: center;
 }
 
@@ -235,7 +236,8 @@ input:focus {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 20px;
+  padding: calc(14px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) 14px
+    calc(20px + env(safe-area-inset-left));
   border-bottom: 1px solid var(--border);
 }
 
@@ -751,8 +753,31 @@ input:focus {
   }
 }
 
+/* Exit animation — see utils/animateOut.ts. Reuses whichever transform-origin
+   is already active (top-right for the nav dropdown, center for the message
+   context menu), and "forwards" so it stays faded/scaled down for the brief
+   moment before removal instead of snapping back to full size. */
+.menu--closing {
+  animation: menu-pop-out 150ms var(--ease-standard) forwards;
+  pointer-events: none;
+}
+
+@keyframes menu-pop-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .menu {
+    animation: none;
+  }
+  .menu--closing {
     animation: none;
   }
 }
@@ -1144,7 +1169,8 @@ input:focus {
   display: flex;
   align-items: flex-start; /* pin to top + scroll, so the soft keyboard can't hide the panel's action row */
   justify-content: center;
-  padding: 20px;
+  padding: calc(20px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+    calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
   overflow-y: auto;
   z-index: 50;
 }
