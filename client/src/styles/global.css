@@ -99,9 +99,14 @@ body {
   height: 100dvh;
   /* Set by main.ts from visualViewport on load/resize — wins when JS has run,
      since dvh's first paint on iOS Safari can be taller than the toolbar-
-     expanded visible area, leaving a gap below the composer until some event
-     (e.g. the keyboard) forces a recompute. */
+     expanded visible area, and doesn't track the keyboard at all. Fixed +
+     offset-top-pinned so #app always exactly matches the true visible area,
+     never a gap of page background above the keyboard or below the toolbar. */
   height: var(--app-height, 100dvh);
+  position: fixed;
+  top: var(--app-offset-top, 0px);
+  left: 0;
+  right: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -414,16 +419,25 @@ input:focus {
   transition: transform 0.15s ease;
 }
 
-/* A message arriving live (sent or received) scales/fades in — never applied
-   to history/pagination, see appendMessage's `animate` param. */
+/* A message arriving live (sent or received) pops in — never applied to
+   history/pagination, see appendMessage's `animate` param. Grows from the
+   corner nearest where it "came from": bottom-right (near the composer) for
+   a message you just sent, default bottom-left for one you received. The
+   overshoot easing gives the small-to-big "pop" WhatsApp/iMessage have,
+   rather than a flat fade. */
 .chat__message--enter {
-  animation: message-enter var(--duration-slow) var(--ease-emphasized);
+  transform-origin: bottom left;
+  animation: message-enter 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.chat__message--enter[data-mine='1'] {
+  transform-origin: bottom right;
 }
 
 @keyframes message-enter {
   from {
     opacity: 0;
-    transform: scale(0.92) translateY(6px);
+    transform: scale(0.6) translateY(10px);
   }
   to {
     opacity: 1;

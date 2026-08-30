@@ -11,6 +11,40 @@ Notes/deviations:
 
 ---
 
+## [UX smoothness pass, Batch 3b] iOS keyboard gap, keyboard-stays-open, animation polish — 2026-08-30
+Status: in-progress (continues Batches 0-3, all merged). Client builds clean;
+device verification pending. Plan:
+`~/.claude/plans/new-track-separate-from-async-stardust.md`.
+What shipped, from live device retest of Batch 3:
+- **iOS black gap was only half-fixed.** Batch 3 synced `--app-height` from
+  `visualViewport` but not its position — iOS shifts the *visual* viewport
+  when the keyboard opens (via `offsetTop`) without reflowing the layout
+  viewport, so `#app` (sized but not repositioned) stayed anchored above a
+  now-scrolled-away area, leaving the gap between the composer and the
+  keyboard the user was actually typing into. Fixed by making `#app`
+  `position: fixed` and pinning `top` to `visualViewport.offsetTop` as well,
+  tracked via both its `resize` and `scroll` events (`main.ts` `syncViewport`).
+  This is the standard pattern other web chat apps use for this iOS quirk.
+- **Keyboard was dismissing on send** — tapping the send `<button>` moves
+  focus to it on most mobile browsers, closing the keyboard (unlike
+  WhatsApp/iMessage, which keep it open). Fixed with `pointerdown`
+  `preventDefault()` on the send button (stops the focus steal without
+  blocking the click) plus `input.focus()` after send as a safety net.
+- **Reply-bar animation felt janky on phones** — `startReply` opened the
+  keyboard (`input.focus()`) in the same tick as the reply-bar's slide-in
+  transition, so they competed for the main thread. Deferred the focus call
+  one frame so the transition gets a head start.
+- **Message entrance animation tuned toward WhatsApp's send "pop"**: bigger
+  scale drop (0.6 vs 0.92) with an overshoot easing
+  (`cubic-bezier(0.34, 1.56, 0.64, 1)`) instead of a flat fade, and
+  `transform-origin` anchored to the bottom-right for your own messages
+  (bottom-left for received) so it visually grows from the composer's side
+  rather than popping from its own center.
+Notes/deviations: iOS Safari's viewport/keyboard interaction is a well-known
+inconsistency across versions — implemented the established fix pattern but
+could not verify live; needs a real retest specifically for the gap and for
+whether the keyboard now stays open through a send.
+
 ## [UX smoothness pass, Batch 3] Message/reply animation, iOS viewport gap, swipe icon — 2026-08-30
 Status: in-progress (continues the Batches 0-2 PR, #23, now merged). Client
 builds clean; device verification pending. Plan:

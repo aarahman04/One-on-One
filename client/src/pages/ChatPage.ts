@@ -669,6 +669,13 @@ export const ChatPage: Page = (root, go) => {
 
     const input = root.querySelector<HTMLTextAreaElement>('#message-input')!
     const composer = root.querySelector<HTMLFormElement>('#composer')!
+    const sendBtn = root.querySelector<HTMLButtonElement>('#send-btn')!
+
+    // Tapping a <button> moves focus to it on most mobile browsers, which
+    // dismisses the soft keyboard — jarring versus WhatsApp/iMessage, where
+    // the keyboard stays open after send. preventDefault on pointerdown stops
+    // that focus steal without blocking the click/submit that follows it.
+    sendBtn.addEventListener('pointerdown', (e) => e.preventDefault())
 
     // Auto-grow the composer (a textarea, so blank-line paragraph gaps survive)
     // up to a few lines, then it scrolls internally.
@@ -719,7 +726,10 @@ export const ChatPage: Page = (root, go) => {
       if (!target) return
       replyTarget = target
       renderReplyBar()
-      input.focus()
+      // Deferred a frame so the reply-bar's own slide-in transition gets to
+      // start before focus() triggers the keyboard — opening both at once is
+      // what makes the combined animation feel janky on phones.
+      requestAnimationFrame(() => input.focus())
     }
 
     const cancelReply = (): void => {
@@ -737,6 +747,7 @@ export const ChatPage: Page = (root, go) => {
       const replyTo = replyTarget?.id ?? null
       cancelReply()
       sendMessage(content, 'text', null, replyTo)
+      input.focus() // keep the keyboard open for the next message, like WhatsApp
     }
 
     const slashCtx = {

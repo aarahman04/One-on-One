@@ -23,19 +23,23 @@ registerPage('chat', ChatPage)
 registerPage('export', ExportPage)
 registerPage('leave', LeavePage)
 
-// iOS Safari's `100dvh` can paint using the "toolbar collapsed" height on
-// first load even while the address bar/toolbar is still expanded, leaving a
-// gap of page background below the composer until something (e.g. the
-// keyboard opening) forces a recompute. Track the real visible height
-// ourselves via visualViewport and let --app-height override the CSS
-// fallback chain, so the gap never appears in the first place.
-function syncAppHeight(): void {
-  const h = window.visualViewport?.height ?? window.innerHeight
-  document.documentElement.style.setProperty('--app-height', `${h}px`)
+// iOS Safari doesn't reflow the layout viewport when the keyboard opens — it
+// shifts the *visual* viewport instead (resizing it, and offsetting it from
+// the top of the layout viewport). #app, sized by plain height (dvh/vh), has
+// no way to know about that offset, so it stays anchored to the top of the
+// now-scrolled-away layout viewport — leaving a gap of page background
+// between the composer and the keyboard until something forces a recompute.
+// Track both the size AND position of the true visible area ourselves via
+// visualViewport, and pin #app (position: fixed in CSS) to exactly that.
+function syncViewport(): void {
+  const vv = window.visualViewport
+  document.documentElement.style.setProperty('--app-height', `${vv?.height ?? window.innerHeight}px`)
+  document.documentElement.style.setProperty('--app-offset-top', `${vv?.offsetTop ?? 0}px`)
 }
-syncAppHeight()
-window.visualViewport?.addEventListener('resize', syncAppHeight)
-window.addEventListener('resize', syncAppHeight)
+syncViewport()
+window.visualViewport?.addEventListener('resize', syncViewport)
+window.visualViewport?.addEventListener('scroll', syncViewport)
+window.addEventListener('resize', syncViewport)
 
 // Last-resort visibility for otherwise-silent failures.
 window.addEventListener('unhandledrejection', (e) => console.error('unhandledrejection:', e.reason))
