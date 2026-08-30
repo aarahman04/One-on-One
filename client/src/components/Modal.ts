@@ -1,6 +1,6 @@
 // Minimal reusable overlay modal (dimmed backdrop + centered panel). Closes on
-// ✕, backdrop click, or Esc. Used by the letter composer/viewer; reusable for
-// future features.
+// ✕, backdrop click, or Esc. Used by the letter composer/viewer and the
+// report-message dialog.
 export interface Modal {
   close: () => void
   panel: HTMLElement

@@ -21,10 +21,12 @@ V1 Web App → V2 Android App → V3 Bluetooth → V4 BitChat-style mesh. Curren
 ```
 client/     Vite + TypeScript web frontend
 backend/    Node + Express + Socket.IO backend (Railway root dir)
-shared/     Types/constants shared across clients
-database/   Migrations + seed data
+database/   Migrations (raw SQL, applied via backend `npm run migrate` or by hand)
 docs/       Progress log + architecture diagrams
 ```
+
+`shared/` (spec §30, for types/constants reused across clients) is planned but
+not yet created — V1 hand-duplicates the wire contracts on each side.
 
 ## Development setup
 
