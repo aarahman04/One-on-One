@@ -1328,6 +1328,38 @@ input:focus {
   max-width: 320px;
 }
 
+/* Report-message dialog — its own classes (previously borrowed letter-compose__*). */
+.report-dialog__title {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.report-dialog__text {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.report-dialog__reason {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 16px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+.report-dialog__actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
 /* Transient toast — see components/Toast.ts. z-index above .modal-overlay
    (50) so status feedback is never hidden behind an open modal. */
 .toast-stack {

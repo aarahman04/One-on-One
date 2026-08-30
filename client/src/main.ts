@@ -12,6 +12,7 @@ import { LeavePage } from './pages/LeavePage'
 import { getSession, onSignedOut, signOut } from './services/authService'
 import { setUnauthorizedHandler } from './services/apiClient'
 import { getCurrentConnection } from './services/connectionsApi'
+import { nextScreenFor } from './state/nextScreen'
 
 registerPage('login', LoginPage)
 registerPage('connection-id', ConnectionIdPage)
@@ -84,9 +85,7 @@ async function resolveInitialScreen(): Promise<Screen> {
 
   const current = await getCurrentConnection()
   if (!current) return 'connection-id'
-
-  if (current.status === 'pending') return current.isRequester ? 'waiting' : 'request'
-  return current.otherNickname ? 'chat' : 'nickname'
+  return nextScreenFor(current)
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')!

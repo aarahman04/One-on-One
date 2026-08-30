@@ -911,20 +911,20 @@ export const ChatPage: Page = (root, go) => {
       box.className = 'notice-popup'
 
       const heading = document.createElement('div')
-      heading.className = 'letter-compose__title'
+      heading.className = 'report-dialog__title'
       heading.textContent = 'Report this message?'
 
       const explain = document.createElement('div')
-      explain.className = 'letter-compose__to'
+      explain.className = 'report-dialog__text'
       explain.textContent = "We'll review it. Add a note if you'd like (optional)."
 
       const reason = document.createElement('textarea')
-      reason.className = 'letter-compose__body'
+      reason.className = 'report-dialog__reason'
       reason.rows = 3
       reason.placeholder = 'What’s wrong with this message?'
 
       const actions = document.createElement('div')
-      actions.className = 'letter-view__actions'
+      actions.className = 'report-dialog__actions'
       const cancelBtn = document.createElement('button')
       cancelBtn.type = 'button'
       cancelBtn.textContent = 'Cancel'
