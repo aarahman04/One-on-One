@@ -2,6 +2,7 @@ import type { Page } from '../state/router'
 import { formatClock, formatDateSeparator, formatFullTimestamp, isSameDay } from '../utils/formatTime'
 import { mountMenuDropdown } from '../components/MenuDropdown'
 import { openModal } from '../components/Modal'
+import { showToast } from '../components/Toast'
 import { applyAppearance, closeAppearance, openAppearance } from '../features/appearancePreview'
 import { openLetter, openLetterComposer, type LetterPayload } from '../features/letters'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
@@ -237,19 +238,11 @@ export const ChatPage: Page = (root, go) => {
     // (unsolicited permission prompts get auto-denied by browsers/users alike).
     // Feedback is a popup, not the quiet in-chat system line — a subscribe
     // failure is easy to miss otherwise, and the user needs to actually see it.
-    // Track every body-level overlay so cleanup() can tear it (and its
-    // document listeners) down on navigation.
-    const openTrackedModal = (content: HTMLElement): void => {
-      const dispose = (): void => modal.close()
-      const modal = openModal(content, { onClose: () => overlays.delete(dispose) })
-      overlays.add(dispose)
-    }
-
+    // Transient status feedback (no decision required) — a toast, not a
+    // modal, so it doesn't block the chat or need a body-level overlay
+    // tracked for navigation cleanup.
     const showNotice = (message: string): void => {
-      const content = document.createElement('div')
-      content.className = 'notice-popup'
-      content.textContent = message
-      openTrackedModal(content)
+      showToast(message)
     }
 
     const toggleNotifications = async (): Promise<void> => {
@@ -1100,6 +1093,15 @@ export const ChatPage: Page = (root, go) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
       if (!row?.dataset.id) return
       e.preventDefault()
+      // Long-press (touchstart/touchmove/touchend) already owns this gesture
+      // on touch — Android can fire a native contextmenu around the same
+      // ~450ms threshold as our own long-press timer, racing to open a
+      // second, differently-sized menu (this path always includes Reply,
+      // since it doesn't know it's actually a touch gesture) right on top of
+      // the first — reads as the popover flashing big then shrinking, and
+      // cuts its pop-in animation off mid-flight. Right-click only exists on
+      // desktop, so just don't build a menu here at all on a coarse pointer.
+      if (isCoarsePointer) return
       const id = row.dataset.id
       // The long-press timer already opened this menu on touch — don't rebuild.
       if (Date.now() < suppressClickUntil && lastMenuFor === id) return
