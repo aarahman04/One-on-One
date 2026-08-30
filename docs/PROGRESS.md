@@ -11,6 +11,53 @@ Notes/deviations:
 
 ---
 
+## [UX smoothness pass, Batches 0-2] Context-menu bug, gesture fix, design tokens — 2026-08-30
+Status: in-progress (batches 0-2 of a 7-batch plan; client builds clean; device
+verification pending). Plan: `~/.claude/plans/new-track-separate-from-async-stardust.md`.
+What shipped: A deeper UX/UI audit beyond PR #22 found 2 of 4 user-reported
+issues didn't match current source (traced and corrected the report), 1 iOS
+menu item genuinely gated by a platform limit, and 1 new bug from live testing.
+- **Context-menu full-width bug (real, found live):** `.chat__ctx-menu` was
+  declared *before* `.menu` in `global.css` — equal specificity, so the later
+  `.menu` rule won the cascade, clobbering `position:fixed`/`right:auto`/
+  `z-index:40`. Combined with the JS's inline `left`, the menu ended up
+  constrained by both `left` (inline) and `right:20px` (from `.menu`) with
+  `width:auto`, so CSS stretched it to fill the gap — full viewport width.
+  Fixed by reordering the rule after `.menu`.
+- **Context-menu position also now anchors to the message bubble** (not
+  `e.clientX/Y`) — previously right-clicking near a bubble's left vs. right
+  edge shifted the menu, since it centered on the raw cursor point. Long-press
+  already anchored to the bubble; right-click now matches (`ChatPage.ts`
+  `contextmenu` handler).
+- **Swipe-to-reply had no real direction lock:** the axis check existed but
+  `touchmove` was `{ passive: true }`, so `preventDefault` was impossible and
+  native scroll could run alongside a horizontal swipe. Added
+  `touch-action: pan-y` on `.chat__log` and made `touchmove` non-passive,
+  calling `preventDefault()` once the gesture commits horizontal.
+- **Timestamp toggled on any click in a message row**, including empty space
+  beside short text — the click listener was on the whole row/body, and
+  `.chat__message-body` is `flex:1` (full row width) in line mode. Moved the
+  listener onto the actual text/letter-card element (which is `display:inline`
+  or its own bounded card), so only the visible content is clickable.
+- **Menu/iOS parity re-scoped:** code only ever gated Notifications (via
+  `isPushSupported()`/`PushManager`), confirmed live — Export/Search/Appearance
+  already show on iOS. Approved fix (not yet built): show Notifications
+  disabled + explanation on iOS instead of hidden.
+- **Design foundation (Batch 1):** token system added to `global.css` — spacing
+  scale, radii, elevation, type scale, motion vars; three type voices
+  (`--font-display` Fraunces serif for titles, `--font-body` Figtree sans for
+  reading, `--font-mono` JetBrains Mono — now actually loaded via Google Fonts,
+  previously named but never loaded, silently falling back to system mono) —
+  app-wide light theme via `prefers-color-scheme` (previously only the Chat
+  page had a light variant; added a `.chat[data-theme='dark']` re-pin so the
+  chat's own manual theme picker still overrides correctly under a light OS).
+Notes/deviations: Design direction is "Hybrid" (approved) — mono kept as the
+data voice for codes/timestamps/receipts, serif+sans for display/reading, not
+a full skin replacement. Remaining batches: micro-interactions/animations,
+toasts, iOS notification treatment + safe-area insets + menu IA fix, per-page
+redesign application. Real iOS/Android device confirmation still needed for
+the gesture fix specifically (user tested pure-axis swipes only, not diagonal).
+
 ## [UI/layout polish] Fix visibly-broken screens — 2026-08-30
 Status: done, client builds clean; branch `fix/ui-layout-polish` (PR #22); in-app
 visual pass across widths still pending (rides with live verification).

@@ -440,9 +440,11 @@ export const ChatPage: Page = (root, go) => {
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
 
+      const content = message.type === 'letter' ? letterCard(message) : text
+
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
-      body.append(message.type === 'letter' ? letterCard(message) : text)
+      body.append(content)
       if (isMine) {
         row.dataset.mine = '1' // keyed by the bubble-mode preview
         if (!pending) row.dataset.delivered = '1'
@@ -452,7 +454,10 @@ export const ChatPage: Page = (root, go) => {
       }
       body.append(fullTime)
       row.append(time, body)
-      row.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
+      // Scoped to the message content itself, not the row/body — .chat__message-body
+      // stretches to fill the row (flex: 1) in line mode, so listening on it would
+      // still toggle on clicks in the empty space beside a short message.
+      content.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
       return row
     }
 
@@ -1035,6 +1040,12 @@ export const ChatPage: Page = (root, go) => {
           }
           swiping = true
         }
+        // Axis committed horizontal — block native scroll for the rest of this
+        // gesture so a diagonal swipe can't scroll the page and reply at once.
+        // Needs { passive: false } on this listener to have any effect; the
+        // touch-action: pan-y on .chat__log keeps vertical scroll native/smooth
+        // for gestures that never reach here.
+        e.preventDefault()
         if (dx <= 0) {
           swipeRow.style.transform = ''
           return
@@ -1051,7 +1062,7 @@ export const ChatPage: Page = (root, go) => {
         icon.style.opacity = String(Math.min(clamped / SWIPE_TRIGGER, 1))
         icon.classList.toggle('chat__swipe-icon--ready', ready)
       },
-      { passive: true },
+      { passive: false },
     )
 
     log.addEventListener('touchend', () => {
@@ -1074,8 +1085,11 @@ export const ChatPage: Page = (root, go) => {
       const id = row.dataset.id
       // The long-press timer already opened this menu on touch — don't rebuild.
       if (Date.now() < suppressClickUntil && lastMenuFor === id) return
-      const at: Anchor = { left: e.clientX, top: e.clientY, width: 0, height: 0 }
-      openPopover(at, (menu) => buildMessageMenu(menu, id, true))
+      // Anchor to the bubble, not the cursor (e.clientX/Y), so the menu opens
+      // in the same place relative to the message every time — not shifted
+      // left/right depending on where inside it you happened to right-click.
+      const bubble = row.querySelector<HTMLElement>('.chat__message-body') ?? row
+      openPopover(bubble.getBoundingClientRect(), (menu) => buildMessageMenu(menu, id, true))
     })
 
     // --- Incoming ----------------------------------------------------------

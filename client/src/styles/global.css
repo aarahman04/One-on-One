@@ -1,4 +1,5 @@
 :root {
+  /* Color — dark-first; light values below flip these under prefers-color-scheme */
   --bg: #0d1117;
   --bg-raised: #12181f;
   --border: #1f2630;
@@ -9,7 +10,66 @@
   --accent-other: #79c0ff;
   --danger: #f85149;
 
+  /* Type: three voices — serif for display/titles, humanist sans for reading,
+     mono kept as the "data" voice (codes, timestamps, receipts). */
+  --font-display: 'Fraunces', Georgia, 'Iowan Old Style', serif;
+  --font-body: 'Figtree', -apple-system, 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 16px;
+  --text-lg: 20px;
+  --text-xl: 28px;
+  --text-display: 40px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* Elevation — soft shadows tuned for a dark ground */
+  --elevation-1: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --elevation-2: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --elevation-3: 0 8px 32px rgba(0, 0, 0, 0.5);
+
+  /* Motion — HIG/M3-style emphasized easing */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0.1, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+}
+
+/* App-wide light theme (system preference). Scoped separately from .chat's own
+   manual light/dark appearance toggle, which overrides these within .chat. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f5f7;
+    --bg-raised: #ffffff;
+    --border: #d9d9dd;
+    --text: #1c1c1e;
+    --text-dim: #5b5b60;
+    --muted: #8a8a8e;
+    --accent-you: #1a7f37;
+    --accent-other: #0969da;
+    --danger: #cf222e;
+
+    --elevation-1: 0 1px 3px rgba(0, 0, 0, 0.1);
+    --elevation-2: 0 4px 16px rgba(0, 0, 0, 0.12);
+    --elevation-3: 0 8px 32px rgba(0, 0, 0, 0.16);
+  }
 }
 
 * {
@@ -28,8 +88,8 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 15px;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -112,8 +172,9 @@ input:focus {
 }
 
 .screen__title {
-  font-size: 22px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
   max-width: 340px;
   text-wrap: balance;
 }
@@ -132,6 +193,7 @@ input:focus {
 }
 
 .connection-id {
+  font-family: var(--font-mono);
   font-size: 32px;
   letter-spacing: 0.12em;
   font-weight: 700;
@@ -210,6 +272,7 @@ input:focus {
   overflow-x: hidden; /* contains the reply-swipe translateX, never the document */
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-y; /* only vertical scroll is a native gesture here — JS owns horizontal (reply-swipe) so it can preventDefault without fighting the browser's own scroll recognizer */
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -446,15 +509,6 @@ input:focus {
   padding: 4px 8px;
 }
 
-.chat__ctx-menu {
-  position: fixed;
-  top: auto;
-  right: auto;
-  min-width: 0; /* drop the inherited .menu 200px so it can't overflow a narrow viewport */
-  max-width: calc(100vw - 16px);
-  z-index: 40; /* above the slash-menu (20), below the modal overlay (50) */
-}
-
 .chat__emoji-picker {
   display: flex;
   flex-wrap: wrap; /* 6 emoji wrap on a very narrow screen instead of forcing width */
@@ -507,6 +561,7 @@ input:focus {
 }
 
 .chat__message-time {
+  font-family: var(--font-mono);
   color: var(--muted);
   font-size: 12px;
   flex-shrink: 0;
@@ -610,6 +665,19 @@ input:focus {
   z-index: 10;
   max-height: calc(100dvh - 60px);
   overflow-y: auto;
+}
+
+/* Must come after .menu: cascade order, not just specificity, decides which
+   wins when both classes are on the same element (menu.chat__ctx-menu) — this
+   block overrides .menu's absolute/top/right/min-width/z-index for the
+   floating per-message context menu. */
+.chat__ctx-menu {
+  position: fixed;
+  top: auto;
+  right: auto;
+  min-width: 0; /* drop the inherited .menu 200px so it can't overflow a narrow viewport */
+  max-width: calc(100vw - 16px);
+  z-index: 40; /* above the slash-menu (20), below the modal overlay (50) */
 }
 
 .menu__group-label {
@@ -770,6 +838,21 @@ input:focus {
   --accent-you: #1a7f37;
   --accent-other: #0969da;
   --danger: #cf222e;
+}
+
+/* Re-pin dark explicitly: chat.dataset.theme is always 'light' or 'dark', so
+   when the OS is light but the user's chat appearance preference is dark,
+   this overrides the app-wide prefers-color-scheme flip for .chat only. */
+.chat[data-theme='dark'] {
+  --bg: #0d1117;
+  --bg-raised: #12181f;
+  --border: #1f2630;
+  --text: #e6edf3;
+  --text-dim: #9aa4af;
+  --muted: #6e7681;
+  --accent-you: #7ee787;
+  --accent-other: #79c0ff;
+  --danger: #f85149;
 }
 
 .chat--bubbles[data-theme='light'] {
