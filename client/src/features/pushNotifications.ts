@@ -16,13 +16,20 @@ export function isPushSupported(): boolean {
   return 'serviceWorker' in navigator && 'PushManager' in window && !!VAPID_PUBLIC_KEY
 }
 
-async function getRegistration(): Promise<ServiceWorkerRegistration> {
-  return navigator.serviceWorker.ready
+// navigator.serviceWorker.ready never resolves if registration failed (missing
+// /sw.js, bad MIME, http:) — race it with a timeout so the caller (and the
+// "Notifications" menu click) doesn't hang forever.
+async function getRegistration(): Promise<ServiceWorkerRegistration | null> {
+  return Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+  ])
 }
 
 export async function isPushSubscribed(): Promise<boolean> {
   if (!isPushSupported()) return false
   const reg = await getRegistration()
+  if (!reg) return false
   const sub = await reg.pushManager.getSubscription()
   return !!sub
 }
@@ -33,6 +40,7 @@ export async function subscribeToPush(): Promise<void> {
   if (permission !== 'granted') throw new Error('permission denied')
 
   const reg = await getRegistration()
+  if (!reg) throw new Error('notifications are not available right now')
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
@@ -43,11 +51,17 @@ export async function subscribeToPush(): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
   })
-  if (!res.ok) throw new Error('failed to save subscription')
+  if (!res.ok) {
+    // Don't leave a browser subscription with no server record — the UI would
+    // show "on" while nothing gets delivered.
+    await sub.unsubscribe().catch(() => {})
+    throw new Error('failed to save subscription')
+  }
 }
 
 export async function unsubscribeFromPush(): Promise<void> {
   const reg = await getRegistration()
+  if (!reg) return
   const sub = await reg.pushManager.getSubscription()
   if (!sub) return
   const endpoint = sub.endpoint
