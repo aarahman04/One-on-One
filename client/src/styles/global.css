@@ -427,7 +427,7 @@ input:focus {
    rather than a flat fade. */
 .chat__message--enter {
   transform-origin: bottom left;
-  animation: message-enter 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: message-enter 340ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .chat__message--enter[data-mine='1'] {
@@ -534,12 +534,14 @@ input:focus {
   opacity: 0;
   transform: translateY(8px);
   pointer-events: none;
+  /* Slower than --duration-base on purpose — a quick reply-bar reveal read as
+     a flicker rather than a visible confirmation that the swipe registered. */
   transition:
-    max-height var(--duration-base) var(--ease-standard),
-    padding var(--duration-base) var(--ease-standard),
-    opacity var(--duration-base) var(--ease-standard),
-    transform var(--duration-base) var(--ease-standard),
-    border-color var(--duration-base) var(--ease-standard);
+    max-height 360ms var(--ease-standard),
+    padding 360ms var(--ease-standard),
+    opacity 360ms var(--ease-standard),
+    transform 360ms var(--ease-standard),
+    border-color 360ms var(--ease-standard);
 }
 
 .chat__reply-bar--visible {
@@ -734,6 +736,25 @@ input:focus {
   z-index: 10;
   max-height: calc(100dvh - 60px);
   overflow-y: auto;
+  transform-origin: top right; /* nav dropdown anchors from its ••• button */
+  animation: menu-pop var(--duration-base) var(--ease-emphasized);
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu {
+    animation: none;
+  }
 }
 
 /* Must come after .menu: cascade order, not just specificity, decides which
@@ -747,6 +768,7 @@ input:focus {
   min-width: 0; /* drop the inherited .menu 200px so it can't overflow a narrow viewport */
   max-width: calc(100vw - 16px);
   z-index: 40; /* above the slash-menu (20), below the modal overlay (50) */
+  transform-origin: center; /* can appear above or below the message, unlike the nav dropdown */
 }
 
 .menu__group-label {
@@ -1214,4 +1236,49 @@ input:focus {
   font-size: 14px;
   line-height: 1.5;
   max-width: 320px;
+}
+
+/* Transient toast — see components/Toast.ts. z-index above .modal-overlay
+   (50) so status feedback is never hidden behind an open modal. */
+.toast-stack {
+  position: fixed;
+  top: calc(var(--space-3) + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  z-index: 60;
+  width: min(92vw, 420px);
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elevation-2);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  text-align: center;
+  opacity: 0;
+  transform: translateY(-12px);
+  transition:
+    opacity var(--duration-base) var(--ease-standard),
+    transform var(--duration-base) var(--ease-standard);
+}
+
+.toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    transition: none;
+  }
 }

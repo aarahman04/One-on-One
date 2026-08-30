@@ -11,6 +11,34 @@ Notes/deviations:
 
 ---
 
+## [UX smoothness pass, Batch 4] Toasts — 2026-08-30
+Status: done. Client builds clean; device verification pending. Plan:
+`~/.claude/plans/new-track-separate-from-async-stardust.md`.
+What shipped: New `components/Toast.ts` — a lightweight, auto-dismissing
+(3.2s), tap-to-dismiss toast, stacked top-of-screen with a fade+slide
+transition, `role="status"`/`aria-live="polite"`. `ChatPage.ts`'s `showNotice`
+(push on/off feedback) now calls it instead of opening a modal — a status
+message doesn't need a Tab-trapped decision dialog. `openTrackedModal`, which
+existed only for `showNotice`'s modal, is now orphaned by that change and was
+removed; the report-message and letter-composer modals track their own
+overlays directly and are unaffected.
+Notes/deviations: none.
+
+## [UX smoothness pass, Batch 4 prep] Animation timing tweaks + menu-open animation — 2026-08-30
+Status: done. Client builds clean. Small follow-ups from live-device feedback
+on the (merged) Batch 3b, ahead of Batch 4 (toasts). Plan:
+`~/.claude/plans/new-track-separate-from-async-stardust.md`.
+What shipped:
+- Reply-bar reveal slowed from `--duration-base` (200ms) to 360ms — a quick
+  reveal read as a flicker rather than a visible confirmation of the swipe.
+- Message send/receive pop slowed from 260ms to 340ms.
+- **Menu-open animation added** — `.menu` (shared by the nav dropdown and the
+  message context menu) previously appeared instantly with no transition at
+  all. Now fades + scales in (`menu-pop` keyframe), `transform-origin`
+  anchored per menu type (top-right for the nav dropdown, center for the
+  context menu, which can appear above or below a message).
+Notes/deviations: none.
+
 ## [UX smoothness pass, Batch 3b] iOS keyboard gap, keyboard-stays-open, animation polish — 2026-08-30
 Status: in-progress (continues Batches 0-3, all merged). Client builds clean;
 device verification pending. Plan:
