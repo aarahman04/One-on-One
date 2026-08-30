@@ -28,7 +28,7 @@ export const LeavePage: Page = (root, go) => {
             <div class="screen__subtitle">You both chose to leave. You can end it now instead of waiting out the countdown.</div>
             <div class="screen__actions">
               <button id="cancel-btn">Back to chat</button>
-              <button id="end-btn" style="border-color: var(--danger); color: var(--danger);">Leave now</button>
+              <button id="end-btn" class="danger">Leave now</button>
             </div>
             ${errorHtml}
           </div>

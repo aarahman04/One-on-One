@@ -130,10 +130,19 @@ button {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 10px 18px;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard),
+    filter var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
 }
 
 button:hover {
   border-color: var(--text-dim);
+}
+
+button:active {
+  transform: scale(0.97);
 }
 
 button.primary {
@@ -145,6 +154,20 @@ button.primary {
 
 button.primary:hover {
   filter: brightness(1.08);
+}
+
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+  button:active {
+    transform: none;
+  }
 }
 
 input {
@@ -162,6 +185,19 @@ input:focus {
   border-color: var(--accent-other);
 }
 
+/* Shared by every screen's single text input (Connect's ID field, Nickname's
+   name field) instead of each page inlining its own width/text-align. */
+.screen__input {
+  width: 100%;
+  max-width: 240px;
+  text-align: center;
+}
+
+.screen__input--code {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .screen {
   flex: 1;
   min-height: 0;
@@ -174,6 +210,26 @@ input:focus {
   padding: calc(24px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right))
     calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
   text-align: center;
+  animation: screen-enter 280ms var(--ease-standard);
+}
+
+/* Softens the router's hard innerHTML swap between screens (also applied to
+   .chat below) with a brief fade/rise instead of a jarring instant cut. */
+@keyframes screen-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen {
+    animation: none;
+  }
 }
 
 .screen__eyebrow {
@@ -210,8 +266,9 @@ input:focus {
   font-weight: 700;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 16px 28px;
+  box-shadow: var(--elevation-1); /* the signature element — the code you share to connect */
 }
 
 /* Chat screen */
@@ -228,6 +285,13 @@ input:focus {
   text-align: left;
   background: var(--bg);
   color: var(--text);
+  animation: screen-enter 280ms var(--ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat {
+    animation: none;
+  }
 }
 
 .chat__nav {

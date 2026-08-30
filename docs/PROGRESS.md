@@ -11,6 +11,37 @@ Notes/deviations:
 
 ---
 
+## [UX smoothness pass, Batch 6 — final] Per-page polish, button/page transitions — 2026-08-30
+Status: done. Client builds clean; device verification pending. This is the
+last planned batch — the UX/UI smoothness pass (started as a separate track
+from the security audit) is now feature-complete pending final device
+sign-off. Plan: `~/.claude/plans/new-track-separate-from-async-stardust.md`.
+What shipped:
+- **Button transitions app-wide** — hover/press were instant everywhere
+  (a B1 audit finding). Added a transition on border/background/filter/
+  transform plus a small `:active` press-scale, reduced-motion guarded.
+- **Page-entrance animation** — the router's `innerHTML` swap between screens
+  was a hard instant cut (a B4 audit finding). `.screen` and `.chat` now
+  fade+rise in on mount (`screen-enter`, reused across both), softening
+  every navigation without touching the router itself.
+- **Shared `.screen__input` class** — replaced two different inline
+  width/text-align style blobs (Connect's 200px ID field, Nickname's 220px
+  name field) with one token-driven class (`width:100%; max-width:240px`)
+  plus a `--code` modifier for the uppercase/letter-spaced connection-ID
+  variant. Removes the last two hardcoded pixel widths (B7).
+- **`.connection-id` elevation** — added `box-shadow: var(--elevation-1)`,
+  the intended "signature element" treatment from the Batch 1 design plan
+  (the code you share to connect — the thing this app is actually about).
+- **New `button.danger` class** — replaced `LeavePage.ts`'s inline
+  `style="border-color: var(--danger); color: var(--danger)"` on the
+  "Leave now" button with a real reusable class.
+Notes/deviations: did not add a dedicated 481-720px breakpoint — the
+`.screen`-based pages are already fluid/centered with per-element max-widths
+and no concrete breakage was found at that range (unlike the ≤480px case
+PR #22 fixed); adding one would have been speculative. The Export page's
+downloadable HTML template has its own embedded inline styles by design
+(a static export artifact, not live app UI) and was left untouched.
+
 ## [UX smoothness pass, Batch 5] Menu exit animation, safe-area insets, menu IA fix — 2026-08-30
 Status: done. Client builds clean; device verification pending. Plan:
 `~/.claude/plans/new-track-separate-from-async-stardust.md`.
