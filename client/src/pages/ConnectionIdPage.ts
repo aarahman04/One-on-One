@@ -40,8 +40,34 @@ export const ConnectionIdPage: Page = (root, go) => {
       subtitleEl.textContent = err instanceof Error ? err.message : 'Failed to load connection ID.'
     })
 
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+    } catch {
+      /* clipboard API present but blocked (http:, permissions) — fall through */
+    }
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.append(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      ta.remove()
+      return ok
+    } catch {
+      return false
+    }
+  }
+
   copyBtn.addEventListener('click', async () => {
-    if (code) await navigator.clipboard.writeText(code)
+    if (!code) return
+    const ok = await copyToClipboard(code)
+    subtitleEl.textContent = ok ? 'Copied to clipboard.' : `Copy manually: ${code}`
   })
 
   // Rotate the ID (e.g. it got shared too widely). The old ID stops working.

@@ -1,5 +1,6 @@
 import type { Page } from '../state/router'
 import { acceptConnection, declineConnection, getCurrentConnection } from '../services/connectionsApi'
+import { escapeHtml } from '../utils/download'
 
 export const ConnectionRequestPage: Page = (root, go) => {
   root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
@@ -14,7 +15,7 @@ export const ConnectionRequestPage: Page = (root, go) => {
       root.innerHTML = `
         <div class="screen">
           <div class="screen__eyebrow">CONNECTION REQUEST</div>
-          <div class="connection-id" style="font-size:24px;">${current.otherConnectionCode}</div>
+          <div class="connection-id" style="font-size:24px;">${escapeHtml(current.otherConnectionCode)}</div>
           <div class="screen__subtitle">wants to connect with you.</div>
           <div class="screen__actions">
             <button class="primary" id="accept-btn">Accept</button>
@@ -25,24 +26,36 @@ export const ConnectionRequestPage: Page = (root, go) => {
       `
 
       const errorEl = root.querySelector<HTMLDivElement>('#error')!
+      const acceptBtn = root.querySelector<HTMLButtonElement>('#accept-btn')!
+      const declineBtn = root.querySelector<HTMLButtonElement>('#decline-btn')!
 
-      root.querySelector<HTMLButtonElement>('#accept-btn')!.addEventListener('click', async () => {
+      acceptBtn.addEventListener('click', async () => {
+        errorEl.style.display = 'none'
+        acceptBtn.disabled = true
+        declineBtn.disabled = true
         try {
           await acceptConnection(current.id)
           go('nickname')
         } catch (err) {
           errorEl.textContent = err instanceof Error ? err.message : 'Failed to accept.'
           errorEl.style.display = 'block'
+          acceptBtn.disabled = false
+          declineBtn.disabled = false
         }
       })
 
-      root.querySelector<HTMLButtonElement>('#decline-btn')!.addEventListener('click', async () => {
+      declineBtn.addEventListener('click', async () => {
+        errorEl.style.display = 'none'
+        acceptBtn.disabled = true
+        declineBtn.disabled = true
         try {
           await declineConnection(current.id)
           go('connection-id')
         } catch (err) {
           errorEl.textContent = err instanceof Error ? err.message : 'Failed to decline.'
           errorEl.style.display = 'block'
+          acceptBtn.disabled = false
+          declineBtn.disabled = false
         }
       })
     })

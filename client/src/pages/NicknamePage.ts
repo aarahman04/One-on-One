@@ -25,14 +25,20 @@ export const NicknamePage: Page = (root, go) => {
 
       const input = root.querySelector<HTMLInputElement>('#nickname-input')!
       const errorEl = root.querySelector<HTMLDivElement>('#error')!
+      const saveBtn = root.querySelector<HTMLButtonElement>('#save-btn')!
 
-      root.querySelector<HTMLButtonElement>('#save-btn')!.addEventListener('click', async () => {
+      saveBtn.addEventListener('click', async () => {
+        const value = input.value.trim()
+        if (!value) return
+        errorEl.style.display = 'none'
+        saveBtn.disabled = true
         try {
-          await setNickname(current.id, input.value)
+          await setNickname(current.id, value)
           go('chat')
         } catch (err) {
           errorEl.textContent = err instanceof Error ? err.message : 'Failed to save nickname.'
           errorEl.style.display = 'block'
+          saveBtn.disabled = false
         }
       })
     })
