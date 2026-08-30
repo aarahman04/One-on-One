@@ -15,7 +15,7 @@ export const NicknamePage: Page = (root, go) => {
         <div class="screen">
           <div class="screen__eyebrow">CONNECTION ACCEPTED</div>
           <div class="screen__title">What would you like to call this person?</div>
-          <input id="nickname-input" placeholder="Type a nickname" style="text-align:center; width:220px;" />
+          <input id="nickname-input" class="screen__input" placeholder="Type a nickname" />
           <div class="screen__actions">
             <button class="primary" id="save-btn">Save</button>
           </div>
