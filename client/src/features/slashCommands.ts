@@ -13,7 +13,10 @@ interface SlashCommand {
 }
 
 const insert = (ctx: SlashContext, text: string): void => {
-  ctx.input.value = text
+  // Replace only the leading "/token", keep anything else already typed, and
+  // fire an input event so the composer's autoGrow (and the slash menu) update.
+  ctx.input.value = ctx.input.value.replace(/^\/\S*/, text)
+  ctx.input.dispatchEvent(new Event('input', { bubbles: true }))
   ctx.input.focus()
 }
 

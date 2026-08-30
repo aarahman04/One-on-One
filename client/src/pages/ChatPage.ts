@@ -21,6 +21,11 @@ import { linkifyInto } from '../utils/linkify'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
+// CSS.escape is absent on older Safari; message ids are UUIDs, so a minimal
+// attribute-value escape is enough for the `[data-id="…"]` selectors below.
+const cssEsc = (s: string): string =>
+  typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&')
+
 interface ChatMessage {
   id?: string
   senderId: string
@@ -57,6 +62,7 @@ export const ChatPage: Page = (root, go) => {
   let unsubscribeReactions: (() => void) | null = null
   let unsubscribeEnded: (() => void) | null = null
   let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null
   let focusHandler: (() => void) | null = null
   let disposed = false
 
@@ -85,6 +91,8 @@ export const ChatPage: Page = (root, go) => {
     transport = null
     if (pollTimer) clearTimeout(pollTimer)
     pollTimer = null
+    if (searchDebounce) clearTimeout(searchDebounce)
+    searchDebounce = null
     if (focusHandler) window.removeEventListener('focus', focusHandler)
     focusHandler = null
   }
@@ -115,9 +123,43 @@ export const ChatPage: Page = (root, go) => {
 
     const clearHighlights = (): void => {
       for (const el of log.querySelectorAll<HTMLElement>('.chat__message-text')) {
-        if (el.querySelector('mark')) linkifyInto(el, el.textContent ?? '') // drop <mark>s, restore links
+        const marks = el.querySelectorAll('mark')
+        if (!marks.length) continue
+        for (const m of marks) m.replaceWith(document.createTextNode(m.textContent ?? ''))
+        el.normalize() // merge the split text nodes back; linkified <a> children are untouched
       }
       for (const row of log.querySelectorAll('.chat__message--current')) row.classList.remove('chat__message--current')
+    }
+
+    // Wrap every occurrence of `q` in <mark>, splitting only text nodes so any
+    // linkified <a> children survive the highlight (was: el.textContent = '' + rebuild).
+    const highlightMatches = (el: HTMLElement, q: string): boolean => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      const textNodes: Text[] = []
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) textNodes.push(n as Text)
+      let found = false
+      for (const node of textNodes) {
+        const content = node.nodeValue ?? ''
+        const lower = content.toLowerCase()
+        if (!lower.includes(q)) continue
+        found = true
+        const frag = document.createDocumentFragment()
+        let i = 0
+        while (i < content.length) {
+          const idx = lower.indexOf(q, i)
+          if (idx === -1) {
+            frag.appendChild(document.createTextNode(content.slice(i)))
+            break
+          }
+          if (idx > i) frag.appendChild(document.createTextNode(content.slice(i, idx)))
+          const mark = document.createElement('mark')
+          mark.textContent = content.slice(idx, idx + q.length)
+          frag.appendChild(mark)
+          i = idx + q.length
+        }
+        node.replaceWith(frag)
+      }
+      return found
     }
 
     const focusCurrent = (): void => {
@@ -133,23 +175,7 @@ export const ChatPage: Page = (root, go) => {
       const q = raw.trim().toLowerCase()
       if (q) {
         for (const el of log.querySelectorAll<HTMLElement>('.chat__message-text')) {
-          const content = el.textContent ?? ''
-          const lower = content.toLowerCase()
-          if (!lower.includes(q)) continue
-          el.textContent = ''
-          let i = 0
-          while (i < content.length) {
-            const idx = lower.indexOf(q, i)
-            if (idx === -1) {
-              el.appendChild(document.createTextNode(content.slice(i)))
-              break
-            }
-            if (idx > i) el.appendChild(document.createTextNode(content.slice(i, idx)))
-            const mark = document.createElement('mark')
-            mark.textContent = content.slice(idx, idx + q.length)
-            el.appendChild(mark)
-            i = idx + q.length
-          }
+          if (!highlightMatches(el, q)) continue
           const row = el.closest<HTMLElement>('.chat__message')
           if (row) matches.push(row)
         }
@@ -165,16 +191,26 @@ export const ChatPage: Page = (root, go) => {
       focusCurrent()
     }
 
-    searchInput.addEventListener('input', () => runSearch(searchInput.value))
+    searchInput.addEventListener('input', () => {
+      if (searchDebounce) clearTimeout(searchDebounce)
+      searchDebounce = setTimeout(() => runSearch(searchInput.value), 120)
+    })
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault()
+        if (searchDebounce) {
+          clearTimeout(searchDebounce)
+          searchDebounce = null
+          runSearch(searchInput.value) // flush a pending debounce before stepping
+        }
         stepMatch(e.shiftKey ? 1 : -1)
       }
     })
     root.querySelector<HTMLButtonElement>('#search-prev')!.addEventListener('click', () => stepMatch(-1))
     root.querySelector<HTMLButtonElement>('#search-next')!.addEventListener('click', () => stepMatch(1))
     root.querySelector<HTMLButtonElement>('#search-close')!.addEventListener('click', () => {
+      if (searchDebounce) clearTimeout(searchDebounce)
+      searchDebounce = null
       searchInput.value = ''
       runSearch('')
       searchBar.style.display = 'none'
@@ -263,7 +299,7 @@ export const ChatPage: Page = (root, go) => {
     const reactionsByMessage = new Map<string, ReactionSummary[]>()
 
     const renderReactionChips = (messageId: string): void => {
-      const row = log.querySelector<HTMLElement>(`[data-id="${CSS.escape(messageId)}"]`)
+      const row = log.querySelector<HTMLElement>(`[data-id="${cssEsc(messageId)}"]`)
       const body = row?.querySelector<HTMLElement>('.chat__message-body')
       if (!body) return
       const list = reactionsByMessage.get(messageId) ?? []
@@ -335,7 +371,7 @@ export const ChatPage: Page = (root, go) => {
       q.append(name, snippet)
       q.addEventListener('click', (e) => {
         e.stopPropagation()
-        const target = log.querySelector<HTMLElement>(`[data-id="${CSS.escape(replyTo)}"]`)
+        const target = log.querySelector<HTMLElement>(`[data-id="${cssEsc(replyTo)}"]`)
         if (!target) return
         target.scrollIntoView({ block: 'center' })
         target.classList.add('chat__message--flash')
@@ -435,13 +471,15 @@ export const ChatPage: Page = (root, go) => {
 
     const appendMessage = (message: ChatMessage, pending = false): HTMLElement => {
       const at = new Date(message.createdAt)
-      if (!lastDate || !isSameDay(lastDate, at)) {
+      const isMine = message.senderId === myUserId
+      const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80
+      if (!Number.isNaN(at.getTime()) && (!lastDate || !isSameDay(lastDate, at))) {
         log.appendChild(dateSeparator(at))
         lastDate = at
       }
       const row = buildMessageRow(message, pending)
       log.appendChild(row)
-      log.scrollTop = log.scrollHeight
+      if (atBottom || isMine) log.scrollTop = log.scrollHeight
       registerMessageRow(message, row)
       return row
     }
@@ -469,11 +507,12 @@ export const ChatPage: Page = (root, go) => {
 
     // --- System lines (leave events) --------------------------------------
     const appendSystemLine = (line: string): void => {
+      const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80
       const el = document.createElement('div')
       el.className = 'chat__system-line'
       el.textContent = line
       log.appendChild(el)
-      log.scrollTop = log.scrollHeight
+      if (atBottom) log.scrollTop = log.scrollHeight
     }
     const dayWord = (n: number): string => `${n} ${n === 1 ? 'day' : 'days'} remaining`
 
@@ -542,7 +581,9 @@ export const ChatPage: Page = (root, go) => {
       loadOlderBtn.disabled = true
       let older: Awaited<ReturnType<typeof getMessages>> = []
       try {
-        older = await getMessages(connectionId, oldestLoadedAt)
+        older = (await getMessages(connectionId, oldestLoadedAt))
+          .slice()
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       } catch {
         loadingOlder = false
         loadOlderBtn.disabled = false
@@ -559,7 +600,7 @@ export const ChatPage: Page = (root, go) => {
       let batchDate: Date | null = null
       for (const m of older) {
         const at = new Date(m.createdAt)
-        if (!batchDate || !isSameDay(batchDate, at)) {
+        if (!Number.isNaN(at.getTime()) && (!batchDate || !isSameDay(batchDate, at))) {
           log.insertBefore(dateSeparator(at), firstSep)
           batchDate = at
         }
@@ -586,7 +627,9 @@ export const ChatPage: Page = (root, go) => {
     }
     loadOlderBtn.addEventListener('click', () => void loadOlder())
 
-    const history = await getMessages(connectionId)
+    const history = (await getMessages(connectionId))
+      .slice()
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     if (disposed) return
     for (const message of history) appendMessage(message)
     oldestLoadedAt = history[0]?.createdAt ?? null

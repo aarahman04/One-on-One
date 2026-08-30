@@ -40,7 +40,27 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
 }
 
+// An OAuth redirect can return an error in the query (?error=…) or the hash
+// (#error=…&error_description=…). Stash it for LoginPage and clean the URL.
+function captureOAuthError(): boolean {
+  const q = new URLSearchParams(location.search)
+  const h = new URLSearchParams(location.hash.replace(/^#/, ''))
+  const err = q.get('error') ?? h.get('error')
+  if (!err) return false
+  const desc = q.get('error_description') ?? h.get('error_description')
+  try {
+    sessionStorage.setItem('oauthError', (desc ?? err).replace(/\+/g, ' '))
+  } catch {
+    /* private mode — login just won't show the reason */
+  }
+  history.replaceState(null, '', location.pathname)
+  return true
+}
+
+const hadOAuthError = captureOAuthError()
+
 async function resolveInitialScreen(): Promise<Screen> {
+  if (hadOAuthError) return 'login'
   const session = await getSession()
   if (!session) return 'login'
 

@@ -63,12 +63,11 @@ export async function saveSubscription(
   if (error) throw error
 }
 
-export async function removeSubscription(userId: string, endpoint: string): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from('push_subscriptions')
-    .delete()
-    .eq('user_id', userId)
-    .eq('endpoint', endpoint)
+// Delete by endpoint alone: onConflict:'endpoint' in saveSubscription can move
+// an endpoint to another user's row, and the endpoint is an unguessable
+// capability URL, so the browser that owns it may unsubscribe it regardless.
+export async function removeSubscription(endpoint: string): Promise<void> {
+  const { error } = await supabaseAdmin.from('push_subscriptions').delete().eq('endpoint', endpoint)
   if (error) throw error
 }
 

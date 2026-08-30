@@ -34,12 +34,15 @@ export const LeavePage: Page = (root, go) => {
           </div>
         `
         root.querySelector<HTMLButtonElement>('#cancel-btn')!.addEventListener('click', () => go('chat'))
-        root.querySelector<HTMLButtonElement>('#end-btn')!.addEventListener('click', async () => {
+        const endBtn = root.querySelector<HTMLButtonElement>('#end-btn')!
+        endBtn.addEventListener('click', async () => {
+          endBtn.disabled = true
           try {
             await confirmEndLeave(id)
             go('connection-id')
           } catch (err) {
             showError(err instanceof Error ? err.message : 'Failed to end connection.')
+            endBtn.disabled = false
           }
         })
         return
@@ -71,7 +74,12 @@ export const LeavePage: Page = (root, go) => {
         </div>
       `
 
-      root.querySelector<HTMLButtonElement>('#cancel-btn')!.addEventListener('click', async () => {
+      const cancelBtn = root.querySelector<HTMLButtonElement>('#cancel-btn')!
+      const okBtn = root.querySelector<HTMLButtonElement>('#ok-btn')!
+
+      cancelBtn.addEventListener('click', async () => {
+        cancelBtn.disabled = true
+        okBtn.disabled = true
         if (inProgress) {
           try {
             await cancelLeave(id)
@@ -82,17 +90,21 @@ export const LeavePage: Page = (root, go) => {
         go('chat')
       })
 
-      root.querySelector<HTMLButtonElement>('#ok-btn')!.addEventListener('click', async () => {
+      okBtn.addEventListener('click', async () => {
         // In the 24h cooldown, OK just returns; otherwise it advances the countdown.
         if (cooling) {
           go('chat')
           return
         }
+        cancelBtn.disabled = true
+        okBtn.disabled = true
         try {
           const result = await advanceLeave(id)
           go(result.terminated ? 'connection-id' : 'chat')
         } catch (err) {
           showError(err instanceof Error ? err.message : 'Failed to update leave.')
+          cancelBtn.disabled = false
+          okBtn.disabled = false
         }
       })
     })

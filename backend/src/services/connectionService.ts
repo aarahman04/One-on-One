@@ -21,6 +21,16 @@ interface ConnectionRow {
   created_at: string
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// PostgREST .or() takes a raw string; assert the id shape before interpolating
+// so a malformed id can't reach the filter grammar (defense in depth — ids are
+// DB-issued UUIDs today).
+function memberOrFilter(userId: string): string {
+  if (!UUID_RE.test(userId)) throw new ConnectionError(400, 'invalid user id')
+  return `user_a_id.eq.${userId},user_b_id.eq.${userId}`
+}
+
 async function findUserByConnectionCode(code: string): Promise<{ id: string } | null> {
   const { data, error } = await supabaseAdmin.from('users').select('id').eq('connection_code', code).maybeSingle()
   if (error) throw error
@@ -32,7 +42,7 @@ async function hasActiveOrPendingConnection(userId: string): Promise<boolean> {
     .from('connections')
     .select('id')
     .in('status', ['pending', 'active', 'leave_pending'])
-    .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
+    .or(memberOrFilter(userId))
     .limit(1)
   if (error) throw error
   return (data?.length ?? 0) > 0
@@ -187,7 +197,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     .from('connections')
     .select()
     .in('status', ['pending', 'active', 'leave_pending'])
-    .or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`)
+    .or(memberOrFilter(userId))
     .order('updated_at', { ascending: false })
     .limit(1)
   if (error) throw error
@@ -279,21 +289,18 @@ export async function advanceLeave(connectionId: string, userId: string): Promis
     throw new ConnectionError(429, 'you can advance the countdown once every 24 hours')
   }
 
-  // Conditional update: pin the from-step and re-assert the 24h gate in the
-  // WHERE clause so two parallel requests can't both advance / both bypass the
-  // cooldown from stale reads. 0 rows = another request got there first.
+  // Conditional advance done entirely in SQL (migration 019): pins the from-step
+  // and re-checks the 24h cooldown against the DB clock, so two parallel
+  // requests can't both advance and a server clock change can't shift the gate.
+  // No row back = another request got there first, or the cooldown isn't up.
   const newStep = mine.leave_step + 1
-  const cutoff = new Date(Date.now() - LEAVE_STEP_INTERVAL_MS).toISOString()
-  const { data: updated, error } = await supabaseAdmin
-    .from('connection_members')
-    .update({ leave_step: newStep, leave_last_step_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('connection_id', connectionId)
-    .eq('user_id', userId)
-    .eq('leave_step', mine.leave_step)
-    .or(`leave_last_step_at.is.null,leave_last_step_at.lt.${cutoff}`)
-    .select('user_id')
-    .maybeSingle()
+  const { data: updatedRows, error } = await supabaseAdmin.rpc('advance_leave_step', {
+    p_connection_id: connectionId,
+    p_user_id: userId,
+    p_from_step: mine.leave_step,
+  })
   if (error) throw error
+  const updated = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows
   if (!updated) throw new ConnectionError(429, 'the countdown was already advanced')
 
   if (newStep >= LEAVE_STEPS_TOTAL) {
