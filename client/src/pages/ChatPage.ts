@@ -19,6 +19,7 @@ import {
 import { connectMessaging, type IncomingMessage, type MessageType } from '../services/messageService'
 import type { ReactionUpdate, Transport } from '../services/transport/Transport'
 import { linkifyInto } from '../utils/linkify'
+import { animateOutAndRemove } from '../utils/animateOut'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
@@ -798,7 +799,7 @@ export const ChatPage: Page = (root, go) => {
     const closeCtxMenu = (): void => {
       menuCleanup?.()
       menuCleanup = null
-      ctxMenu?.remove()
+      if (ctxMenu) animateOutAndRemove(ctxMenu, 'menu--closing')
       ctxMenu = null
     }
 

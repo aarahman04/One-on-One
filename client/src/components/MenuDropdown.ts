@@ -1,4 +1,5 @@
 import type { Screen } from '../state/router'
+import { animateOutAndRemove } from '../utils/animateOut'
 
 export function mountMenuDropdown(
   nav: HTMLElement,
@@ -11,7 +12,8 @@ export function mountMenuDropdown(
   let panel: HTMLDivElement | null = null
 
   const close = (): void => {
-    panel?.remove()
+    if (!panel) return
+    animateOutAndRemove(panel, 'menu--closing')
     panel = null
     document.removeEventListener('click', onOutsideClick)
   }
@@ -39,7 +41,6 @@ export function mountMenuDropdown(
       ${onAppearance ? '<button class="menu__item" data-action="appearance">Appearance</button>' : ''}
       ${onNotifications ? '<button class="menu__item" data-action="notifications">Notifications</button>' : ''}
       <div class="menu__divider"></div>
-      <div class="menu__group-label">CONNECTION</div>
       <button class="menu__item menu__item--danger" data-action="leave">Leave connection</button>
     `
     nav.appendChild(panel)

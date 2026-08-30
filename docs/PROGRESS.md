@@ -11,6 +11,31 @@ Notes/deviations:
 
 ---
 
+## [UX smoothness pass, Batch 5] Menu exit animation, safe-area insets, menu IA fix — 2026-08-30
+Status: done. Client builds clean; device verification pending. Plan:
+`~/.claude/plans/new-track-separate-from-async-stardust.md`.
+What shipped:
+- **Menu exit animation** — the nav dropdown and message context menu (both
+  share `.menu`) got a pop-IN animation in Batch 4 but closed instantly
+  (`panel.remove()`/`ctxMenu.remove()`), which read as abrupt right after a
+  smooth open. New shared `utils/animateOut.ts` (`animateOutAndRemove`) adds
+  a `.menu--closing` class, waits for `animationend` (with a safety timeout
+  fallback, and an immediate-remove path under `prefers-reduced-motion`),
+  then removes the element. Wired into `MenuDropdown.ts`'s `close()` and
+  `ChatPage.ts`'s `closeCtxMenu()`.
+- **Safe-area insets** — `.chat__nav`, `.modal-overlay`, and `.screen` now
+  add `env(safe-area-inset-*)` on top of their existing padding (composer
+  already had this on its bottom edge). Matters most in installed-PWA mode
+  (no browser chrome to reserve the notch/home-indicator area) and landscape.
+- **Menu duplicate-label fix** — `MenuDropdown.ts` had two identical
+  "CONNECTION" group headers (one for Rename, a second for the unrelated
+  Leave action), read as a mistake. Removed the redundant second label; the
+  existing divider + danger-red styling already separate Leave visually.
+- **iOS notification parity (#2) — confirmed descoped by user decision**,
+  no further work; left hidden on iOS Safari tabs (installed-PWA-only
+  platform limit).
+Notes/deviations: none.
+
 ## [UX smoothness pass, Batch 4 fix] Long-press menu race on Android — 2026-08-30
 Status: done, folded into the still-open Batch 4 PR (#26). Client builds clean.
 What shipped: the long-press message menu (emoji/Copy/Report) would flash
