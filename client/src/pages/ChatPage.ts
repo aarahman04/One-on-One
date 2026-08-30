@@ -473,7 +473,7 @@ export const ChatPage: Page = (root, go) => {
       const at = new Date(message.createdAt)
       const isMine = message.senderId === myUserId
       const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80
-      if (!lastDate || !isSameDay(lastDate, at)) {
+      if (!Number.isNaN(at.getTime()) && (!lastDate || !isSameDay(lastDate, at))) {
         log.appendChild(dateSeparator(at))
         lastDate = at
       }
@@ -600,7 +600,7 @@ export const ChatPage: Page = (root, go) => {
       let batchDate: Date | null = null
       for (const m of older) {
         const at = new Date(m.createdAt)
-        if (!batchDate || !isSameDay(batchDate, at)) {
+        if (!Number.isNaN(at.getTime()) && (!batchDate || !isSameDay(batchDate, at))) {
           log.insertBefore(dateSeparator(at), firstSep)
           batchDate = at
         }

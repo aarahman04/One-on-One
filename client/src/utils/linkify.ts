@@ -2,7 +2,10 @@
 // Builds text + <a> nodes directly (never innerHTML) so user content stays
 // XSS-safe — mirrors the text-node splitting ChatPage's search highlighter uses.
 
-const PATTERN = /(https?:\/\/\S+)|(www\.\S+\.[a-z]{2,}\S*)|(\+?\d[\d\s().-]{6,}\d)/gi
+// Runs are length-bounded so a pathological token can't force a long linear
+// scan. The phone branch requires a leading "+" (was: any 8+ digit run, which
+// swallowed dates and IDs as tel: links).
+const PATTERN = /(https?:\/\/\S{1,2000})|(www\.\S{1,256}\.[a-z]{2,}\S{0,256})|(\+\d[\d\s().-]{5,16}\d)/gi
 
 export function linkifyInto(el: HTMLElement, text: string): void {
   el.textContent = ''
