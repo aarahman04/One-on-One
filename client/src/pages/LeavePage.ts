@@ -24,7 +24,7 @@ export const LeavePage: Page = (root, go) => {
         root.innerHTML = `
           <div class="screen">
             <div class="screen__eyebrow">END CONNECTION</div>
-            <div class="screen__title">This conversation<br />is going to end.</div>
+            <div class="screen__title">This conversation is going to end.</div>
             <div class="screen__subtitle">You both chose to leave. You can end it now instead of waiting out the countdown.</div>
             <div class="screen__actions">
               <button id="cancel-btn">Back to chat</button>

@@ -13,7 +13,7 @@ export const LoginPage: Page = (root) => {
   root.innerHTML = `
     <div class="screen">
       <div class="screen__eyebrow">ONE</div>
-      <div class="screen__title">one connection.<br />nothing else.</div>
+      <div class="screen__title">one connection. nothing else.</div>
       <div class="screen__actions">
         <button class="primary" id="login-btn">Continue with Google</button>
       </div>

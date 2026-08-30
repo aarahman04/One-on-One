@@ -632,6 +632,7 @@ export const ChatPage: Page = (root, go) => {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     if (disposed) return
     for (const message of history) appendMessage(message)
+    if (!history.length) appendSystemLine('Say hello — this is the start of your one-on-one.')
     oldestLoadedAt = history[0]?.createdAt ?? null
     if (history.length >= HISTORY_PAGE) log.prepend(loadOlderBtn)
     refreshReceipts()

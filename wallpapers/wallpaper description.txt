@@ -1,0 +1,30 @@
+wallpaper in C:\Users\aarah\One-on-One\wallpapers
+
+This image has a calm, romantic dusk palette with deep blues, warm golden light, and black silhouettes. Here are the main theme colors and where they appear:
+
+| Image Element     | Approx. Color      | Hex Code    |
+| ----------------- | ------------------ | ----------- |
+| Upper night sky   | Charcoal blue      | **#26323B** |
+| Dark clouds       | Deep slate gray    | **#37424A** |
+| Mid sky           | Steel blue         | **#6F8FA3** |
+| Lower sky         | Misty blue         | **#AFC4D0** |
+| Sunset glow       | Warm cream         | **#F5E6B5** |
+| Horizon light     | Soft golden yellow | **#EFD08A** |
+| Cloud highlights  | Light gray         | **#B7BDC2** |
+| Grass silhouette  | Black              | **#090909** |
+| Couple silhouette | Near black         | **#0D0D10** |
+| White shirts      | Soft gray-white    | **#D9DCE2** |
+
+Overall color palette
+🌌 Charcoal Blue: #26323B
+☁️ Slate Gray: #37424A
+🌊 Steel Blue: #6F8FA3
+🩵 Misty Blue: #AFC4D0
+🌅 Warm Cream: #F5E6B5
+✨ Soft Gold: #EFD08A
+🌫️ Light Gray: #B7BDC2
+⚫ Black: #090909
+🖤 Near Black: #0D0D10
+🤍 Soft Gray White: #D9DCE2
+
+These colors capture the image's peaceful evening aesthetic and would work well for recreating its serene, romantic atmosphere in a design or illustration.
