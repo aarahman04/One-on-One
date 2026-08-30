@@ -11,6 +11,48 @@ Notes/deviations:
 
 ---
 
+## [UI/layout polish] Fix visibly-broken screens — 2026-08-30
+Status: done, client builds clean; branch `fix/ui-layout-polish` (PR #22); in-app
+visual pass across widths still pending (rides with live verification).
+What shipped: A CSS/layout audit found 17 on-screen defects unrelated to the
+security audit; this fixes them. Almost all in `client/src/styles/global.css`.
+- **Chat header:** a long nickname pushed the ⋯ menu button off-screen (clipped,
+  unreachable) — `.chat__nav > div { min-width:0 }`, title/status ellipsis,
+  `flex-shrink:0` on the button.
+- **`.screen__actions`** now wraps (was a rigid row) — ExportPage's 3-button row
+  and wide single buttons no longer overflow phones. `.screen__title` gets
+  `max-width` + `text-wrap:balance`; hard `<br />` removed from Login / Nickname /
+  Leave titles.
+- **Line style + Light theme** was a dead toggle (light palette only existed for
+  bubble mode). Added `.chat[data-theme='light']` with the full token set +
+  darkened YOU/other/danger accents for legibility on white.
+- **Modals vs. mobile keyboard:** pin-to-top + scroll (`align-items:flex-start`,
+  `overflow-y:auto`, `margin:auto`, `max-height:90dvh`) so the action row stays
+  reachable. `#app` gets `-webkit-fill-available` where `dvh` is unsupported.
+- `.menu` / `.slash-menu` height clamps (clipped `Leave connection` on short
+  viewports); `.chat__quote-snippet` `280px`→`100%`; new `.letter-card__text`
+  wrap rule; appearance wallpaper row wraps; empty chat shows a start-of-convo
+  line; flash animates the bubble not the row; ctx-menu z-index above the slash
+  menu; mobile popover insets match the 12px bars; failed messages hide the
+  stray receipt dot.
+Notes/deviations: pure CSS + 4 trivial DOM edits, no behaviour/logic change.
+Wallpaper + Light-theme interaction (dark scrim under a light UI) left as a
+pre-existing edge case.
+
+## [Ops] Secret rotation — 2026-08-30
+Status: done (dashboard + Railway + Vercel by user; local `.env` + verification by
+Claude). Not a code change — recorded for history.
+What happened: Rotated per the Aug-29 audit (CR-1). Git history was verified
+clean — no secret was ever committed; exposure was `backend/.env` on disk + a
+brief working-tree paste. Supabase moved to the **new API-key model**: legacy
+anon + service_role JWTs **disabled**, new `sb_secret_…` / `sb_publishable_…`
+keys issued (old `sb_secret` also revoked). Postgres password reset. VAPID
+keypair regenerated — and this fixed a latent bug: `backend/.env` and
+`client/.env` had held **mismatched** VAPID pairs, so push had been silently
+100% broken. `push_subscriptions` table emptied. All old keys verified dead
+(HTTP 401 on Supabase REST); new keys verified live (200). `backend/.env`
+cleaned (had a duplicate service-key line).
+
 ## [Security & correctness audit] Batches 4–9 (Medium + Low tier) — 2026-08-30
 Status: done, builds clean; **apply migration 019**; branch `fix/audit-medium-low`
 What shipped: The deferred remainder of the Aug-29 audit — the frontend Mediums and
