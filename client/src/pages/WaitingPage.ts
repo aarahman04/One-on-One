@@ -1,5 +1,6 @@
 import type { Page } from '../state/router'
 import { cancelRequest, getCurrentConnection } from '../services/connectionsApi'
+import { nextScreenFor } from '../state/nextScreen'
 
 const POLL_INTERVAL_MS = 2500
 
@@ -40,9 +41,8 @@ export const WaitingPage: Page = (root, go) => {
     }
     connectionId = current.id
 
-    if (current.status === 'active') {
-      go(current.otherNickname ? 'chat' : 'nickname')
-    }
+    const next = nextScreenFor(current)
+    if (next !== 'waiting') go(next)
   }
 
   void poll()

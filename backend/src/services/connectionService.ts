@@ -1,13 +1,11 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
+import { otherMemberId } from '../utils/connections.js'
+import { RAISE_EXCEPTION } from '../utils/pgErrors.js'
+import { getConnectionForMember, memberOrFilter } from './connectionAccess.js'
+import { ConnectionError } from '../utils/connectionError.js'
 
-export class ConnectionError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message)
-  }
-}
+// Re-exported for the many call sites that import it from here.
+export { ConnectionError }
 
 type ConnectionStatus = 'pending' | 'active' | 'leave_pending' | 'terminated' | 'declined'
 
@@ -16,19 +14,7 @@ interface ConnectionRow {
   user_a_id: string
   user_b_id: string
   status: ConnectionStatus
-  leave_requested_by: string | null
-  leave_requested_at: string | null
   created_at: string
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-// PostgREST .or() takes a raw string; assert the id shape before interpolating
-// so a malformed id can't reach the filter grammar (defense in depth — ids are
-// DB-issued UUIDs today).
-function memberOrFilter(userId: string): string {
-  if (!UUID_RE.test(userId)) throw new ConnectionError(400, 'invalid user id')
-  return `user_a_id.eq.${userId},user_b_id.eq.${userId}`
 }
 
 async function findUserByConnectionCode(code: string): Promise<{ id: string } | null> {
@@ -76,7 +62,7 @@ export async function requestConnection(requesterUserId: string, targetCode: str
     .single()
 
   if (error) {
-    if (error.code === 'P0001') throw new ConnectionError(409, 'connection already exists')
+    if (error.code === RAISE_EXCEPTION) throw new ConnectionError(409, 'connection already exists')
     throw error
   }
 
@@ -92,26 +78,6 @@ export async function requestConnection(requesterUserId: string, targetCode: str
   }
 
   return data
-}
-
-async function getConnectionForMember(connectionId: string, userId: string): Promise<ConnectionRow> {
-  const { data, error } = await supabaseAdmin.from('connections').select().eq('id', connectionId).maybeSingle()
-  if (error) throw error
-  if (!data) throw new ConnectionError(404, 'connection not found')
-  if (data.user_a_id !== userId && data.user_b_id !== userId) {
-    throw new ConnectionError(403, 'not a member of this connection')
-  }
-  return data
-}
-
-// A member-scoped read that also requires the connection to be live — for
-// writes that make no sense on a pending/declined/terminated connection.
-async function getLiveConnectionForMember(connectionId: string, userId: string): Promise<ConnectionRow> {
-  const connection = await getConnectionForMember(connectionId, userId)
-  if (connection.status !== 'active' && connection.status !== 'leave_pending') {
-    throw new ConnectionError(409, 'connection is not active')
-  }
-  return connection
 }
 
 // Conditional status transition: the UPDATE itself carries the from-state, so
@@ -173,7 +139,7 @@ function canAdvance(lastStepAt: string | null): boolean {
   return Date.now() - new Date(lastStepAt).getTime() >= LEAVE_STEP_INTERVAL_MS
 }
 
-export interface CurrentConnection {
+interface CurrentConnection {
   id: string
   status: ConnectionStatus
   myUserId: string
@@ -189,35 +155,52 @@ export interface CurrentConnection {
   wallpaper: string
 }
 
+interface CurrentConnectionRow {
+  id: string
+  status: ConnectionStatus
+  user_a_id: string
+  user_b_id: string
+  wallpaper: string | null
+  connection_members: MemberLeaveRow[]
+}
+
 export async function getCurrentConnection(userId: string): Promise<CurrentConnection | null> {
-  // Tolerate >1 row defensively: a race past the single-active guard (see
-  // migration 016) must not turn every request into a PGRST116 500 and lock
-  // the user out. Newest wins.
+  // One query: the connection plus its two member rows (embedded). Tolerate >1
+  // connection row defensively — a race past the single-active guard (migration
+  // 016) must not 500 every request and lock the user out. Newest wins.
   const { data: connRows, error } = await supabaseAdmin
     .from('connections')
-    .select()
+    .select(
+      'id, status, user_a_id, user_b_id, wallpaper, ' +
+        'connection_members(user_id, nickname, leave_step, leave_last_step_at, last_read_at)',
+    )
     .in('status', ['pending', 'active', 'leave_pending'])
     .or(memberOrFilter(userId))
     .order('updated_at', { ascending: false })
     .limit(1)
   if (error) throw error
-  const data = connRows?.[0]
+  const data = (connRows?.[0] as unknown as CurrentConnectionRow | undefined) ?? null
   if (!data) return null
 
-  const otherUserId = data.user_a_id === userId ? data.user_b_id : data.user_a_id
-  const [{ data: members }, { data: otherUser }] = await Promise.all([
-    supabaseAdmin
-      .from('connection_members')
-      .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
-      .eq('connection_id', data.id),
-    supabaseAdmin.from('users').select('connection_code').eq('id', otherUserId).maybeSingle(),
-  ])
-
-  const rows = (members ?? []) as MemberLeaveRow[]
+  const otherUserId = otherMemberId(data, userId)
+  const rows = data.connection_members ?? []
   const mine = rows.find((m) => m.user_id === userId)
   const other = rows.find((m) => m.user_id === otherUserId)
   const myLeaveStep = mine?.leave_step ?? 0
   const otherLeaveStep = other?.leave_step ?? 0
+
+  // The other member's connection code is only rendered on the pending-request
+  // screen — the active-chat poll (every ~4s) never reads it, so skip the users
+  // lookup unless we're actually pending.
+  let otherConnectionCode = ''
+  if (data.status === 'pending') {
+    const { data: otherUser } = await supabaseAdmin
+      .from('users')
+      .select('connection_code')
+      .eq('id', otherUserId)
+      .maybeSingle()
+    otherConnectionCode = otherUser?.connection_code ?? ''
+  }
 
   return {
     id: data.id,
@@ -225,7 +208,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     myUserId: userId,
     isRequester: data.user_a_id === userId,
     otherNickname: other?.nickname ?? null,
-    otherConnectionCode: otherUser?.connection_code ?? '',
+    otherConnectionCode,
     myLeaveStep,
     otherLeaveStep,
     daysRemaining: myLeaveStep > 0 ? LEAVE_STEPS_TOTAL - myLeaveStep : null,
@@ -239,7 +222,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
 // Mark the conversation read up to now for this member (drives the other
 // member's "Seen" indicator). Connection state, not a message — kept off Transport.
 export async function markRead(connectionId: string, userId: string): Promise<void> {
-  await getLiveConnectionForMember(connectionId, userId)
+  await getConnectionForMember(connectionId, userId, { requireLive: true })
   const { error } = await supabaseAdmin
     .from('connection_members')
     .update({ last_read_at: new Date().toISOString() })
@@ -260,6 +243,17 @@ async function getMemberLeave(connectionId: string, userId: string): Promise<Mem
   return data as MemberLeaveRow
 }
 
+// Both member rows in one query (leave paths that need to look at both members).
+async function getMemberLeaveRows(connectionId: string, userIds: string[]): Promise<MemberLeaveRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from('connection_members')
+    .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
+    .eq('connection_id', connectionId)
+    .in('user_id', userIds)
+  if (error) throw error
+  return (data ?? []) as MemberLeaveRow[]
+}
+
 // Termination deletes the whole conversation — the data belongs to the
 // participants (they can export first). connection_members + messages cascade
 // off the connection FK (on delete cascade), so one delete clears everything.
@@ -268,7 +262,7 @@ async function terminate(connectionId: string): Promise<void> {
   if (error) throw error
 }
 
-export interface LeaveResult {
+interface LeaveResult {
   status: ConnectionStatus
   myLeaveStep: number
   daysRemaining: number | null
@@ -279,12 +273,15 @@ export interface LeaveResult {
 // Advance MY leave countdown by one step (gated to once per 24h). Reaching the
 // final step terminates the connection solo — no agreement from the other member.
 export async function advanceLeave(connectionId: string, userId: string): Promise<LeaveResult> {
-  const connection = await getConnectionForMember(connectionId, userId)
-  if (connection.status !== 'active' && connection.status !== 'leave_pending') {
-    throw new ConnectionError(409, 'connection is not active')
-  }
+  const connection = await getConnectionForMember(connectionId, userId, { requireLive: true })
 
-  const mine = await getMemberLeave(connectionId, userId)
+  // Both member rows up front — the other member's step (read after the RPC for
+  // `bothLeaving`) can't change during my own advance, so no second fetch.
+  const otherUserId = otherMemberId(connection, userId)
+  const memberRows = await getMemberLeaveRows(connectionId, [userId, otherUserId])
+  const mine = memberRows.find((r) => r.user_id === userId)
+  if (!mine) throw new ConnectionError(404, 'connection membership not found')
+  const otherLeaveStep = memberRows.find((r) => r.user_id === otherUserId)?.leave_step ?? 0
   if (!canAdvance(mine.leave_last_step_at)) {
     throw new ConnectionError(429, 'you can advance the countdown once every 24 hours')
   }
@@ -316,12 +313,11 @@ export async function advanceLeave(connectionId: string, userId: string): Promis
     if (statusError) throw statusError
   }
 
-  const other = await getMemberLeave(connectionId, userId === connection.user_a_id ? connection.user_b_id : connection.user_a_id)
   return {
     status: 'leave_pending',
     myLeaveStep: newStep,
     daysRemaining: LEAVE_STEPS_TOTAL - newStep,
-    bothLeaving: newStep > 0 && other.leave_step > 0,
+    bothLeaving: newStep > 0 && otherLeaveStep > 0,
     terminated: false,
   }
 }
@@ -338,8 +334,7 @@ export async function cancelLeave(connectionId: string, userId: string): Promise
     .eq('user_id', userId)
   if (error) throw error
 
-  const otherUserId = userId === connection.user_a_id ? connection.user_b_id : connection.user_a_id
-  const other = await getMemberLeave(connectionId, otherUserId)
+  const other = await getMemberLeave(connectionId, otherMemberId(connection, userId))
   let status: ConnectionStatus = 'leave_pending'
   if (other.leave_step === 0) {
     const { error: statusError } = await supabaseAdmin
@@ -359,11 +354,11 @@ export async function confirmEndLeave(connectionId: string, userId: string): Pro
   const connection = await getConnectionForMember(connectionId, userId)
   if (connection.status !== 'leave_pending') throw new ConnectionError(409, 'no leave in progress')
 
-  const otherUserId = userId === connection.user_a_id ? connection.user_b_id : connection.user_a_id
-  const [mine, other] = await Promise.all([
-    getMemberLeave(connectionId, userId),
-    getMemberLeave(connectionId, otherUserId),
-  ])
+  const otherUserId = otherMemberId(connection, userId)
+  const memberRows = await getMemberLeaveRows(connectionId, [userId, otherUserId])
+  const mine = memberRows.find((r) => r.user_id === userId)
+  const other = memberRows.find((r) => r.user_id === otherUserId)
+  if (!mine || !other) throw new ConnectionError(404, 'connection membership not found')
   if (mine.leave_step === 0 || other.leave_step === 0) {
     throw new ConnectionError(409, 'both members must be leaving to end immediately')
   }
@@ -377,7 +372,7 @@ const ALLOWED_WALLPAPERS = ['off', '1', 'love', 'samurai']
 // Wallpaper is shared per-connection (unlike message style/theme, which stay
 // per-device localStorage preferences) — either member's choice applies to both.
 export async function setWallpaper(connectionId: string, userId: string, wallpaper: string): Promise<void> {
-  await getLiveConnectionForMember(connectionId, userId)
+  await getConnectionForMember(connectionId, userId, { requireLive: true })
   if (!ALLOWED_WALLPAPERS.includes(wallpaper)) throw new ConnectionError(400, 'invalid wallpaper')
 
   const { error } = await supabaseAdmin
@@ -388,7 +383,7 @@ export async function setWallpaper(connectionId: string, userId: string, wallpap
 }
 
 export async function setNickname(connectionId: string, userId: string, nickname: string): Promise<void> {
-  const connection = await getLiveConnectionForMember(connectionId, userId)
+  const connection = await getConnectionForMember(connectionId, userId, { requireLive: true })
 
   const trimmed = nickname.trim()
   if (trimmed.length < 1 || trimmed.length > 40) {
@@ -397,7 +392,7 @@ export async function setNickname(connectionId: string, userId: string, nickname
 
   // Nicknames are local (spec §11): this sets what I call the OTHER person,
   // stored on their member row — not a name I give myself.
-  const otherUserId = connection.user_a_id === userId ? connection.user_b_id : connection.user_a_id
+  const otherUserId = otherMemberId(connection, userId)
 
   const { error } = await supabaseAdmin
     .from('connection_members')

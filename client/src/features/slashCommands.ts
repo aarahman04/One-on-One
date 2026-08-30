@@ -26,10 +26,11 @@ const COMMANDS: SlashCommand[] = [
   { name: 'flip', description: '(╯°□°)╯︵ ┻━┻', run: (ctx) => insert(ctx, '(╯°□°)╯︵ ┻━┻') },
 ]
 
-// Exact "/command" match — used by ChatPage's form-submit handler so a mobile
-// soft keyboard's Send/Go key (which never fires a catchable Enter keydown)
-// still opens the command instead of sending the literal "/letter" text.
-export function matchCommand(value: string): SlashCommand | undefined {
+// Exact "/command" match. Backs `runIfCommand`, which ChatPage's form-submit
+// handler calls so a mobile soft keyboard's Send/Go key (which never fires a
+// catchable Enter keydown) still opens the command instead of sending the
+// literal "/letter" text.
+function matchCommand(value: string): SlashCommand | undefined {
   const v = value.trim()
   if (!v.startsWith('/')) return undefined
   const name = v.slice(1).toLowerCase()

@@ -74,7 +74,7 @@ Private 1:1 messaging app. One account, one active connection, one conversation.
 - One-active-connection is a **database/backend constraint**, not a UI hint. Never rely on the client to hide the "connect" UI as the only enforcement.
 - Never trust client-sent state for authorization ("I am connected to user X"). Backend/DB decides membership, connection status, and message validity on every request.
 - All message send/receive goes through `MessageService` → `Transport` → `InternetTransport`. Never call Socket.IO directly from components — this abstraction is what lets V3 add `BluetoothTransport` without a rewrite.
-- V1 non-goals (spec §29): no groups, media, calls, stories, public profiles, AI, reactions, Bluetooth. Don't add them even if convenient.
+- V1 non-goals (spec §29): no groups, media, calls, stories, public profiles, AI, Bluetooth. Don't add them even if convenient. **Exception:** emoji reactions and `/letter` shipped as deliberate, user-confirmed overrides of §29 — see `docs/PROGRESS.md` (Phase C, Phase A) and `docs/ARCHITECTURE.md`. Don't re-flag them as scope creep; don't extend the exception to other §29 items without the same explicit sign-off.
 
 **Tracking files — update every completed part:**
 - `docs/PROGRESS.md` — append an entry per part (phase.stage.part, status, what shipped).

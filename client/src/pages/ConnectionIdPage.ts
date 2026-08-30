@@ -1,6 +1,7 @@
 import type { Page } from '../state/router'
 import { fetchMe } from '../services/apiClient'
 import { getCurrentConnection, regenerateConnectionCode } from '../services/connectionsApi'
+import { nextScreenFor } from '../state/nextScreen'
 
 const POLL_INTERVAL_MS = 3000
 
@@ -90,11 +91,8 @@ export const ConnectionIdPage: Page = (root, go) => {
   const poll = async (): Promise<void> => {
     const current = await getCurrentConnection()
     if (!current) return
-    if (current.status === 'pending') {
-      go(current.isRequester ? 'waiting' : 'request')
-    } else if (current.status === 'active' || current.status === 'leave_pending') {
-      go(current.otherNickname ? 'chat' : 'nickname')
-    }
+    const next = nextScreenFor(current)
+    if (next !== 'connection-id') go(next)
   }
 
   const interval = setInterval(() => {

@@ -11,6 +11,59 @@ Notes/deviations:
 
 ---
 
+## [Code-quality cleanup] Dead code, dedup, query reduction — 2026-08-30
+Status: done. Both projects build clean; two-account walkthrough passed on the
+dev stack (send/receive text+letter+reply, reactions, report at every
+connection state incl. post-termination, rename during active + leave_pending,
+mutual leave, solo termination, token-refresh reconnect). Migration 020 applied
+to the live DB and verified. Branch `chore/codebase-cleanup`, 9 commits.
+Audit report: `~/.claude/plans/lucky-drifting-engelbart.md`.
+What shipped (batches ordered lowest→highest risk):
+- **0** — removed committed cruft (`Love.webp`, `perv session.md`, `prompt.md`,
+  `graphify-out/` cache, duplicate `wallpapers/*.jpg`); `.gitignore` hygiene
+  (`graphify-out/`, `!*.env.example` negation); doc fixes (CLAUDE.md notes
+  reactions/`/letter` as ratified §29 overrides; README drops the
+  never-created `shared/` dir; stale `Modal.ts` / `slashCommands.ts` comments).
+- **1** — dead code: `req.authUserId` (write-only), `ConnectionRow.leave_requested_*`
+  interface fields; tightened ~11 over-broad `export`s to internal; `openReportModal`
+  defined before use; `messageService` re-exports `Transport`/`ReactionUpdate`
+  so `ChatPage` stops reaching into `transport/`.
+- **2** — shared backend helpers: `utils/pgErrors.ts`, `utils/connections.ts`
+  (`isLiveStatus`, `otherMemberId`), `withUniqueConnectionCode` (folds the
+  duplicated code-gen retry loop), socket handshake reuses `currentLiveConnectionId`.
+- **3** — `state/nextScreen.ts` `nextScreenFor()` replaces the routing logic
+  inlined+drifted across `main.ts` / `ConnectionIdPage` / `WaitingPage`
+  (WaitingPage now also routes on `leave_pending`); **G1 fix** — rename no
+  longer bounces the user out during a pending leave; report dialog gets its
+  own `report-dialog__*` CSS instead of borrowing `letter-compose__*`.
+- **4** — `services/connectionAccess.ts`: one `getConnectionForMember` /
+  `getConnectionByMessageId` replacing the membership+live check hand-written
+  5× across connectionService/messageService/reactionService/reportService
+  (error codes preserved exactly; `everMember` keeps the report-after-leave
+  path). `ConnectionError` moved to `utils/connectionError.ts` (re-exported from
+  connectionService — no other imports changed).
+- **5** — `services/authToken.ts` `resolveUserFromToken()` shares the 15s
+  token→user cache between the HTTP middleware and the socket handshake
+  (reconnects skip the GoTrue round-trip). `message:send` resolves the
+  connection once (`getLiveConnectionForUser`, 1 query) and threads the row
+  into `saveMessage` + `notifyIfOffline` — **query count 6→3 online, 8→4
+  offline**. `saveMessage` trusts the just-resolved row (no insert-time
+  re-fetch; the ~ms TOCTOU window is self-cleaning via cascade-delete).
+- **6** — `getCurrentConnection` embeds `connection_members` (PostgREST reverse
+  embed, verified against live Supabase) and only fetches `users.connection_code`
+  when `status === 'pending'` — **the 4s active poll drops 3 queries → 1**
+  (`otherConnectionCode` is `''` for non-pending, read only by
+  `ConnectionRequestPage`). `advanceLeave` / `confirmEndLeave` fetch both
+  member rows in one query (`getMemberLeaveRows`).
+- **020** — DB migration dropping `connections.leave_requested_by` /
+  `leave_requested_at` (A2).
+Notes/deviations: **B9** (shared error-banner helper across 7 form pages) —
+deferred, non-uniform pattern, cosmetic. **F1** (`pg` prod→dev dependency) —
+not done, gated on confirming how Railway runs migrations. Everything in the
+audit's "leave alone" list untouched (ChatPage.ts decomposition, overlay/
+dismiss unification, linkify/highlighter merge, transport abstraction,
+`syncViewport`, applied-migration squashing, CI migration step).
+
 ## [UX smoothness pass, Batch 6 — final] Per-page polish, button/page transitions — 2026-08-30
 Status: done. Client builds clean; device verification pending. This is the
 last planned batch — the UX/UI smoothness pass (started as a separate track

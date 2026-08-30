@@ -1,8 +1,9 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
+import { getConnectionForMember, type MemberConnection } from './connectionAccess.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
 
-export type MessageType = 'text' | 'letter'
+type MessageType = 'text' | 'letter'
 
 const LETTER_APPEARANCES = ['dawn', 'botanical']
 
@@ -53,25 +54,7 @@ function validateLetterPayload(payload: unknown): { appearance: string; from: st
   return { appearance, from, to }
 }
 
-// Never trust the client for connection/sender/state (spec §20). Every
-// message write re-verifies membership and that the connection is live.
-async function assertMemberOfLiveConnection(connectionId: string, userId: string): Promise<void> {
-  const { data, error } = await supabaseAdmin
-    .from('connections')
-    .select('status, user_a_id, user_b_id')
-    .eq('id', connectionId)
-    .maybeSingle()
-  if (error) throw error
-  if (!data) throw new ConnectionError(404, 'connection not found')
-  if (data.user_a_id !== userId && data.user_b_id !== userId) {
-    throw new ConnectionError(403, 'not a member of this connection')
-  }
-  if (data.status !== 'active' && data.status !== 'leave_pending') {
-    throw new ConnectionError(409, 'connection is not active')
-  }
-}
-
-export const HISTORY_PAGE_SIZE = 50
+const HISTORY_PAGE_SIZE = 50
 
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
 // row cap silently returned the OLDEST 1000 messages once a chat grew past that,
@@ -81,7 +64,7 @@ export async function getHistory(
   userId: string,
   before?: string,
 ): Promise<Message[]> {
-  await assertMemberOfLiveConnection(connectionId, userId)
+  await getConnectionForMember(connectionId, userId, { requireLive: true })
 
   let query = supabaseAdmin
     .from('messages')
@@ -112,8 +95,10 @@ async function assertReplyTargetInConnection(connectionId: string, replyTo: stri
   if (!data) throw new ConnectionError(400, 'reply target not found in this connection')
 }
 
+// The connection is passed in already resolved + membership/live-checked by the
+// caller (socketServer's getLiveConnectionForUser), so this doesn't re-fetch it.
 export async function saveMessage(
-  connectionId: string,
+  connection: MemberConnection,
   senderId: string,
   content: string,
   type: MessageType = 'text',
@@ -127,13 +112,12 @@ export async function saveMessage(
   if (type !== 'text' && type !== 'letter') throw new ConnectionError(400, 'invalid message type')
   const storedPayload = type === 'letter' ? validateLetterPayload(payload) : null
 
-  await assertMemberOfLiveConnection(connectionId, senderId)
-  if (replyTo) await assertReplyTargetInConnection(connectionId, replyTo)
+  if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 
   const { data, error } = await supabaseAdmin
     .from('messages')
     .insert({
-      connection_id: connectionId,
+      connection_id: connection.id,
       sender_id: senderId,
       content: trimmed,
       type,
@@ -150,7 +134,7 @@ export async function saveMessage(
   const { error: readError } = await supabaseAdmin
     .from('connection_members')
     .update({ last_read_at: data.created_at })
-    .eq('connection_id', connectionId)
+    .eq('connection_id', connection.id)
     .eq('user_id', senderId)
   if (readError) console.error('saveMessage: failed to bump sender last_read_at', readError)
 

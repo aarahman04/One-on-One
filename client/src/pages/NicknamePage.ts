@@ -6,7 +6,9 @@ export const NicknamePage: Page = (root, go) => {
 
   getCurrentConnection()
     .then((current) => {
-      if (!current || current.status !== 'active') {
+      // Rename is reachable from chat during a pending leave too (the backend
+      // allows setNickname while leave_pending) — don't bounce the user out.
+      if (!current || (current.status !== 'active' && current.status !== 'leave_pending')) {
         go('connection-id')
         return
       }

@@ -1,7 +1,7 @@
 import { openModal } from '../components/Modal'
 import { escapeHtml, downloadFile } from '../utils/download'
 
-export type LetterAppearance = 'dawn' | 'botanical'
+type LetterAppearance = 'dawn' | 'botanical'
 
 export interface LetterPayload {
   appearance: LetterAppearance
@@ -9,7 +9,7 @@ export interface LetterPayload {
   to: string
 }
 
-export const LETTER_APPEARANCES: { id: LetterAppearance; label: string }[] = [
+const LETTER_APPEARANCES: { id: LetterAppearance; label: string }[] = [
   { id: 'dawn', label: 'Dawn' },
   { id: 'botanical', label: 'Botanical' },
 ]
@@ -38,7 +38,7 @@ function letterSheetHtml(body: string, p: LetterPayload): string {
 </div>`
 }
 
-export function buildLetterHtml(body: string, payload: Partial<LetterPayload> | null): string {
+function buildLetterHtml(body: string, payload: Partial<LetterPayload> | null): string {
   const p = normalize(payload)
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" />

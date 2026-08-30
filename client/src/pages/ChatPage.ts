@@ -16,8 +16,13 @@ import {
   type CurrentConnection,
   type ReactionSummary,
 } from '../services/connectionsApi'
-import { connectMessaging, type IncomingMessage, type MessageType } from '../services/messageService'
-import type { ReactionUpdate, Transport } from '../services/transport/Transport'
+import {
+  connectMessaging,
+  type IncomingMessage,
+  type MessageType,
+  type ReactionUpdate,
+  type Transport,
+} from '../services/messageService'
 import { linkifyInto } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
 
@@ -901,6 +906,54 @@ export const ChatPage: Page = (root, go) => {
       return btn
     }
 
+    const openReportModal = (messageId: string): void => {
+      const box = document.createElement('div')
+      box.className = 'notice-popup'
+
+      const heading = document.createElement('div')
+      heading.className = 'report-dialog__title'
+      heading.textContent = 'Report this message?'
+
+      const explain = document.createElement('div')
+      explain.className = 'report-dialog__text'
+      explain.textContent = "We'll review it. Add a note if you'd like (optional)."
+
+      const reason = document.createElement('textarea')
+      reason.className = 'report-dialog__reason'
+      reason.rows = 3
+      reason.placeholder = 'What’s wrong with this message?'
+
+      const actions = document.createElement('div')
+      actions.className = 'report-dialog__actions'
+      const cancelBtn = document.createElement('button')
+      cancelBtn.type = 'button'
+      cancelBtn.textContent = 'Cancel'
+      const reportBtn = document.createElement('button')
+      reportBtn.type = 'button'
+      reportBtn.className = 'primary'
+      reportBtn.textContent = 'Report'
+      actions.append(cancelBtn, reportBtn)
+
+      box.append(heading, explain, reason, actions)
+      const dispose = (): void => modal.close()
+      const modal = openModal(box, { onClose: () => overlays.delete(dispose) })
+      overlays.add(dispose)
+
+      cancelBtn.addEventListener('click', () => modal.close())
+      reportBtn.addEventListener('click', () => {
+        reportBtn.disabled = true
+        void reportMessage(messageId, reason.value.trim())
+          .then(() => {
+            modal.close()
+            showNotice('Thanks — this message has been reported.')
+          })
+          .catch(() => {
+            reportBtn.disabled = false
+            showNotice('Could not send the report — try again.')
+          })
+      })
+    }
+
     // The message menu: emoji row + Copy + Report everywhere; Reply only on
     // desktop (phone replies via the right-swipe gesture).
     const buildMessageMenu = (menu: HTMLElement, messageId: string, isDesktop: boolean): void => {
@@ -933,54 +986,6 @@ export const ChatPage: Page = (root, go) => {
           openReportModal(messageId)
         }),
       )
-    }
-
-    const openReportModal = (messageId: string): void => {
-      const box = document.createElement('div')
-      box.className = 'notice-popup'
-
-      const heading = document.createElement('div')
-      heading.className = 'letter-compose__title'
-      heading.textContent = 'Report this message?'
-
-      const explain = document.createElement('div')
-      explain.className = 'letter-compose__to'
-      explain.textContent = "We'll review it. Add a note if you'd like (optional)."
-
-      const reason = document.createElement('textarea')
-      reason.className = 'letter-compose__body'
-      reason.rows = 3
-      reason.placeholder = 'What’s wrong with this message?'
-
-      const actions = document.createElement('div')
-      actions.className = 'letter-view__actions'
-      const cancelBtn = document.createElement('button')
-      cancelBtn.type = 'button'
-      cancelBtn.textContent = 'Cancel'
-      const reportBtn = document.createElement('button')
-      reportBtn.type = 'button'
-      reportBtn.className = 'primary'
-      reportBtn.textContent = 'Report'
-      actions.append(cancelBtn, reportBtn)
-
-      box.append(heading, explain, reason, actions)
-      const dispose = (): void => modal.close()
-      const modal = openModal(box, { onClose: () => overlays.delete(dispose) })
-      overlays.add(dispose)
-
-      cancelBtn.addEventListener('click', () => modal.close())
-      reportBtn.addEventListener('click', () => {
-        reportBtn.disabled = true
-        void reportMessage(messageId, reason.value.trim())
-          .then(() => {
-            modal.close()
-            showNotice('Thanks — this message has been reported.')
-          })
-          .catch(() => {
-            reportBtn.disabled = false
-            showNotice('Could not send the report — try again.')
-          })
-      })
     }
 
     // --- Reply / react gestures: right-swipe = reply, long-press = react on

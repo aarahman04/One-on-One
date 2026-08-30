@@ -1,7 +1,7 @@
 import { InternetTransport } from './transport/InternetTransport'
-import type { IncomingMessage, MessageType, Transport } from './transport/Transport'
+import type { IncomingMessage, MessageType, ReactionUpdate, Transport } from './transport/Transport'
 
-export type { IncomingMessage, MessageType }
+export type { IncomingMessage, MessageType, ReactionUpdate, Transport }
 
 // The chat talks to this, not to any transport directly. Swapping in a
 // BluetoothTransport later (spec §22) means changing only this factory.

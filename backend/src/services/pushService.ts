@@ -13,7 +13,7 @@ const ALLOWED_PUSH_HOSTS = [
   /(^|\.)push\.apple\.com$/,
 ]
 
-export function assertValidPushEndpoint(raw: string): void {
+function assertValidPushEndpoint(raw: string): void {
   let url: URL
   try {
     url = new URL(raw)
@@ -39,7 +39,7 @@ if (configured) {
   console.warn('VAPID keys not set — push notifications disabled')
 }
 
-export interface PushPayload {
+interface PushPayload {
   title: string
   body: string
 }
