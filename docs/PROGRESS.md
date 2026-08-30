@@ -11,6 +11,53 @@ Notes/deviations:
 
 ---
 
+## [Security & correctness audit] Batches 4–9 (Medium + Low tier) — 2026-08-30
+Status: done, builds clean; **apply migration 019**; branch `fix/audit-medium-low`
+What shipped: The deferred remainder of the Aug-29 audit — the frontend Mediums and
+the Low tier (all 10 backend Mediums + L-B3 already landed in Batches 0–3). Six
+stacked commits on `fix/audit-medium-low` (branched off `fix/audit-critical-high`,
+which reached `main` via PR #20 after the original PR #18 merged into the wrong
+base). No behaviour changed beyond the fixes; no style churn.
+- **Batch 4 — overlays & downloads:** `Modal.ts` is now a modal stack — one shared
+  keydown listener, only the top modal takes Escape and traps Tab; focus is saved
+  and restored; backdrop dismiss only fires when the mousedown started on the
+  backdrop (M-F4). `download.ts` appends the anchor before click and defers
+  `revokeObjectURL` 10s (M-F5).
+- **Batch 5 — chat page:** auto-scroll only when already near the bottom / the
+  message is mine (M-F2); search input debounced ~120ms (M-F9); highlight splits
+  text nodes only so linkified `<a>` survive a search (M-F10); `CSS.escape`
+  guarded (L-F1); history sorted by `createdAt` before render (L-F5).
+- **Batch 6 — form pages:** NicknamePage trims + disables Save (M-F13);
+  LeavePage / ConnectionRequestPage disable their action buttons during the
+  request (M-F14); `otherConnectionCode` escaped (M-F15); ConnectionIdPage Copy
+  feature-detects clipboard with an execCommand fallback + feedback (M-F18).
+- **Batch 7 — push / service worker:** `getRegistration` races
+  `serviceWorker.ready` with a 3s timeout (the Notifications click no longer hangs
+  when `/sw.js` is missing) (M-F6); `subscribeToPush` unsubscribes the browser
+  sub if the server save fails (M-F7).
+- **Batch 8 — util polish:** `formatTime` invalid-Date guards + ChatPage skips a
+  separator for a bad timestamp (L-F2); `linkify` runs length-bounded and the
+  phone branch needs a leading `+` (L-F3); `/shrug` `/flip` replace only the
+  leading token and fire an input event (L-F4); an OAuth `?error=` / `#error=`
+  redirect is surfaced on the login screen (L-F6).
+- **Batch 9 — backend lows:** `requireAuth` resolves + caches the app user per
+  access token (15s, never past exp) and exposes `req.appUser`; routes stop
+  re-calling `getOrCreateUser` — the 4s poll drops from ~4–5 external round-trips
+  to ~1 (L-B1). UUID-shape assert before the PostgREST `.or()` interpolation
+  (L-B2). `removeSubscription` deletes by endpoint alone (L-B4). Migration 019:
+  `advance_leave_step()` RPC does the leave advance entirely in SQL — from-step
+  pin + 24h cooldown vs `now()` — instead of a JS `Date.now()` cutoff (L-B5).
+Notes/deviations: **L-B1** kept Supabase GoTrue as the token-verification
+authority (short-TTL cache) rather than local HS256 signature verification — the
+latter needs a `SUPABASE_JWT_SECRET` the deploy doesn't currently set, and the
+cache delivers the same round-trip saving at far lower lockout/bypass risk.
+**L-B6** (soft-delete on terminate) skipped — contradicts the deliberate spec §25
+"export first, nothing retained" decision. **L-F7** (`supabaseClient` throws at
+import) left as the audit's own "acceptable fail-fast". Compile/build verified
+only; the DB-dependent items (migration 019, the leave gate, the 2-account race,
+browser leak/reconnect checks) still need a running stack + scratch Supabase
+branch.
+
 ## [Security & correctness audit] Batches 0–3 (Critical + all High) — 2026-08-29
 Status: done, builds clean; **apply migrations 016, 017, 018**; rotate secrets (see below)
 What shipped: Remediation of the ruthless full-repo audit (3 Critical, 13 High, plus folded-in
