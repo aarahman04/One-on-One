@@ -11,6 +11,38 @@ Notes/deviations:
 
 ---
 
+## [UX smoothness pass, Batch 3] Message/reply animation, iOS viewport gap, swipe icon — 2026-08-30
+Status: in-progress (continues the Batches 0-2 PR, #23, now merged). Client
+builds clean; device verification pending. Plan:
+`~/.claude/plans/new-track-separate-from-async-stardust.md`.
+What shipped, from live device testing of the merged Batch 0-2 work:
+- **Message send/receive had no entrance animation** ("appears out of thin
+  air") — `appendMessage` now takes an `animate` flag, scale+fade via
+  `@keyframes message-enter`, applied ONLY to a message arriving live this
+  session (the optimistic send, and incoming `onIncoming`) — never to initial
+  history load or `loadOlder` pagination, which would otherwise cascade-
+  animate every past message on open. Respects `prefers-reduced-motion`.
+- **Reply-bar had no animation** — was a hard `display:none`/`flex` toggle.
+  Now a class-toggled `max-height`/`opacity`/`transform` transition, so it
+  slides in above the composer instead of snapping.
+- **iOS Safari black gap below the composer on cold load**, disappearing only
+  after the keyboard opens once: `100dvh`'s first paint on iOS can use the
+  toolbar-collapsed height while the toolbar is still expanded, leaving a gap
+  of page background until some event forces a recompute. Added a
+  `visualViewport`-driven `--app-height` custom property (`main.ts`,
+  `syncAppHeight`) that `#app` now prefers over the dvh fallback chain.
+- **Swipe-to-reply icon** was a `↩` text glyph (looked like an emoji/informal).
+  Replaced with a plain inline SVG reply-arrow using `currentColor`.
+- **iOS notification parity (#2) — descoped by user decision.** Web Push
+  requires an installed PWA on iOS Safari; user decided not to invest in a
+  disabled+explanation treatment for now — left as-is (hidden on iOS tabs).
+Notes/deviations: the Grammarly-style icons visible in the composer on one
+screenshot are a browser extension overlay, not app UI — nothing to fix.
+Remaining batches: toasts, safe-area insets + menu IA dup-label fix, per-page
+redesign application. Still needs iOS/Android device confirmation for this
+batch specifically (send/reply animation feel, and whether the viewport gap
+is actually gone on cold load).
+
 ## [UX smoothness pass, Batches 0-2] Context-menu bug, gesture fix, design tokens — 2026-08-30
 Status: in-progress (batches 0-2 of a 7-batch plan; client builds clean; device
 verification pending). Plan: `~/.claude/plans/new-track-separate-from-async-stardust.md`.

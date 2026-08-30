@@ -23,6 +23,20 @@ registerPage('chat', ChatPage)
 registerPage('export', ExportPage)
 registerPage('leave', LeavePage)
 
+// iOS Safari's `100dvh` can paint using the "toolbar collapsed" height on
+// first load even while the address bar/toolbar is still expanded, leaving a
+// gap of page background below the composer until something (e.g. the
+// keyboard opening) forces a recompute. Track the real visible height
+// ourselves via visualViewport and let --app-height override the CSS
+// fallback chain, so the gap never appears in the first place.
+function syncAppHeight(): void {
+  const h = window.visualViewport?.height ?? window.innerHeight
+  document.documentElement.style.setProperty('--app-height', `${h}px`)
+}
+syncAppHeight()
+window.visualViewport?.addEventListener('resize', syncAppHeight)
+window.addEventListener('resize', syncAppHeight)
+
 // Last-resort visibility for otherwise-silent failures.
 window.addEventListener('unhandledrejection', (e) => console.error('unhandledrejection:', e.reason))
 window.addEventListener('error', (e) => console.error('window error:', e.error ?? e.message))

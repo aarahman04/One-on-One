@@ -97,6 +97,11 @@ body {
 #app {
   height: 100vh;
   height: 100dvh;
+  /* Set by main.ts from visualViewport on load/resize — wins when JS has run,
+     since dvh's first paint on iOS Safari can be taller than the toolbar-
+     expanded visible area, leaving a gap below the composer until some event
+     (e.g. the keyboard) forces a recompute. */
+  height: var(--app-height, 100dvh);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -409,6 +414,35 @@ input:focus {
   transition: transform 0.15s ease;
 }
 
+/* A message arriving live (sent or received) scales/fades in — never applied
+   to history/pagination, see appendMessage's `animate` param. */
+.chat__message--enter {
+  animation: message-enter var(--duration-slow) var(--ease-emphasized);
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat__message {
+    transition: none;
+  }
+  .chat__message--enter {
+    animation: none;
+  }
+  .chat__reply-bar {
+    transition: none;
+  }
+}
+
 .chat__message--flash .chat__message-body {
   animation: chat-flash 0.9s ease;
   border-radius: 8px;
@@ -427,9 +461,10 @@ input:focus {
   position: absolute;
   left: 4px;
   width: 24px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--muted);
-  font-size: 16px;
   opacity: 0;
   pointer-events: none;
 }
@@ -477,9 +512,29 @@ input:focus {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 20px;
-  border-top: 1px solid var(--border);
+  padding: 0 20px;
+  max-height: 0;
+  overflow: hidden;
+  border-top: 1px solid transparent;
   background: var(--bg-raised);
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition:
+    max-height var(--duration-base) var(--ease-standard),
+    padding var(--duration-base) var(--ease-standard),
+    opacity var(--duration-base) var(--ease-standard),
+    transform var(--duration-base) var(--ease-standard),
+    border-color var(--duration-base) var(--ease-standard);
+}
+
+.chat__reply-bar--visible {
+  max-height: 64px;
+  padding: 8px 20px;
+  border-top-color: var(--border);
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .chat__reply-bar-info {

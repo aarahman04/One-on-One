@@ -474,7 +474,10 @@ export const ChatPage: Page = (root, go) => {
       }
     }
 
-    const appendMessage = (message: ChatMessage, pending = false): HTMLElement => {
+    // animate: true only for a message arriving live (sent or received) this
+    // session — never for history/pagination, or every past message would
+    // cascade-animate in on load.
+    const appendMessage = (message: ChatMessage, pending = false, animate = false): HTMLElement => {
       const at = new Date(message.createdAt)
       const isMine = message.senderId === myUserId
       const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80
@@ -483,6 +486,7 @@ export const ChatPage: Page = (root, go) => {
         lastDate = at
       }
       const row = buildMessageRow(message, pending)
+      if (animate) row.classList.add('chat__message--enter')
       log.appendChild(row)
       if (atBottom || isMine) log.scrollTop = log.scrollHeight
       registerMessageRow(message, row)
@@ -686,6 +690,7 @@ export const ChatPage: Page = (root, go) => {
       const row = appendMessage(
         { senderId: myUserId, content, createdAt: new Date().toISOString(), type, payload, replyTo },
         true,
+        true,
       )
       const entry: Pending = { tempId, content, row, sent: false, type, payload, replyTo }
       pending.push(entry)
@@ -701,12 +706,12 @@ export const ChatPage: Page = (root, go) => {
 
     const renderReplyBar = (): void => {
       if (!replyTarget) {
-        replyBar.style.display = 'none'
+        replyBar.classList.remove('chat__reply-bar--visible')
         return
       }
-      replyBar.style.display = 'flex'
       replyBarName.textContent = replyTarget.senderId === myUserId ? 'You' : otherName
       replyBarSnippet.textContent = replyTarget.type === 'letter' ? 'A letter' : replyTarget.content
+      replyBar.classList.add('chat__reply-bar--visible')
     }
 
     const startReply = (id: string): void => {
@@ -997,7 +1002,9 @@ export const ChatPage: Page = (root, go) => {
       if (!swipeIcon) {
         swipeIcon = document.createElement('div')
         swipeIcon.className = 'chat__swipe-icon'
-        swipeIcon.textContent = '↩'
+        // A plain reply-arrow glyph, not an emoji-style character.
+        swipeIcon.innerHTML =
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>'
         log.appendChild(swipeIcon)
       }
       return swipeIcon
@@ -1112,7 +1119,7 @@ export const ChatPage: Page = (root, go) => {
       // Dedup: a reconnect can re-deliver recent message:new events.
       if (message.id && messagesById.has(message.id)) return
 
-      appendMessage(message)
+      appendMessage(message, false, true)
       if (message.senderId !== myUserId) {
         void markRead(connectionId).catch(() => {})
       }
@@ -1215,7 +1222,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
       </div>
       <div class="chat__leave-banner" id="leave-banner" style="display: none;"></div>
       <div class="chat__log" id="chat-log"></div>
-      <div class="chat__reply-bar" id="reply-bar" style="display: none;">
+      <div class="chat__reply-bar" id="reply-bar">
         <div class="chat__reply-bar-info">
           <div class="chat__reply-bar-name" id="reply-bar-name"></div>
           <div class="chat__reply-bar-snippet" id="reply-bar-snippet"></div>
