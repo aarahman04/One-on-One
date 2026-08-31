@@ -132,6 +132,7 @@ interface MemberLeaveRow {
   leave_step: number
   leave_last_step_at: string | null
   last_read_at: string | null
+  last_delivered_at?: string | null
 }
 
 function canAdvance(lastStepAt: string | null): boolean {
@@ -152,6 +153,7 @@ interface CurrentConnection {
   bothLeaving: boolean
   canAdvanceLeave: boolean
   otherLastReadAt: string | null
+  otherLastDeliveredAt: string | null
   wallpaper: string
 }
 
@@ -172,7 +174,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     .from('connections')
     .select(
       'id, status, user_a_id, user_b_id, wallpaper, ' +
-        'connection_members(user_id, nickname, leave_step, leave_last_step_at, last_read_at)',
+        'connection_members(user_id, nickname, leave_step, leave_last_step_at, last_read_at, last_delivered_at)',
     )
     .in('status', ['pending', 'active', 'leave_pending'])
     .or(memberOrFilter(userId))
@@ -215,6 +217,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     bothLeaving: myLeaveStep > 0 && otherLeaveStep > 0,
     canAdvanceLeave: canAdvance(mine?.leave_last_step_at ?? null),
     otherLastReadAt: other?.last_read_at ?? null,
+    otherLastDeliveredAt: other?.last_delivered_at ?? null,
     wallpaper: data.wallpaper ?? 'off',
   }
 }
@@ -226,6 +229,19 @@ export async function markRead(connectionId: string, userId: string): Promise<vo
   const { error } = await supabaseAdmin
     .from('connection_members')
     .update({ last_read_at: new Date().toISOString() })
+    .eq('connection_id', connectionId)
+    .eq('user_id', userId)
+  if (error) throw error
+}
+
+// Mark messages as delivered to this member as of now (drives the other
+// member's "delivered" tick). Bumped when a socket connects/joins a
+// connection room and, inline, when a message is sent to an already-live
+// recipient — see socketServer.ts. Kept off Transport, same as markRead.
+export async function markDelivered(connectionId: string, userId: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from('connection_members')
+    .update({ last_delivered_at: new Date().toISOString() })
     .eq('connection_id', connectionId)
     .eq('user_id', userId)
   if (error) throw error
@@ -367,7 +383,7 @@ export async function confirmEndLeave(connectionId: string, userId: string): Pro
   return { status: 'terminated', myLeaveStep: mine.leave_step, daysRemaining: 0, bothLeaving: true, terminated: true }
 }
 
-const ALLOWED_WALLPAPERS = ['off', '1', 'love', 'samurai']
+const ALLOWED_WALLPAPERS = ['off', 'love', 'samurai']
 
 // Wallpaper is shared per-connection (unlike message style/theme, which stay
 // per-device localStorage preferences) — either member's choice applies to both.

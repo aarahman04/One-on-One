@@ -1,5 +1,5 @@
 import type { Page } from '../state/router'
-import { formatClock, formatDateSeparator, formatFullTimestamp, isSameDay } from '../utils/formatTime'
+import { formatClock, formatDateSeparator, formatFullTimestamp, formatMessageTime, isSameDay } from '../utils/formatTime'
 import { mountMenuDropdown } from '../components/MenuDropdown'
 import { openModal } from '../components/Modal'
 import { showToast } from '../components/Toast'
@@ -25,6 +25,7 @@ import {
 } from '../services/messageService'
 import { linkifyInto } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
+import { signOut } from '../services/authService'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
@@ -276,6 +277,7 @@ export const ChatPage: Page = (root, go) => {
       },
       () => openAppearance(nav, chatEl, currentWallpaper, onWallpaperChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
+      () => void signOut().then(() => location.assign('/')),
     )
 
     // --- Presence: the other side marks read every ~4s while the chat is on
@@ -297,46 +299,55 @@ export const ChatPage: Page = (root, go) => {
     // after `transport` is populated by connectMessaging().
     const reactionsByMessage = new Map<string, ReactionSummary[]>()
 
+    // Instagram-DM style: a small badge overlapping the bubble's bottom
+    // corner (not inline with the message content). One reaction per user
+    // per message, so a 1:1 chat needs at most two emoji here (me + other).
     const renderReactionChips = (messageId: string): void => {
       const row = log.querySelector<HTMLElement>(`[data-id="${cssEsc(messageId)}"]`)
       const body = row?.querySelector<HTMLElement>('.chat__message-body')
       if (!body) return
       const list = reactionsByMessage.get(messageId) ?? []
-      let container = body.querySelector<HTMLElement>('.chat__reactions')
+      let badge = body.querySelector<HTMLElement>('.chat__reaction-badge')
       if (!list.length) {
-        container?.remove()
+        badge?.remove()
         return
       }
-      if (!container) {
-        container = document.createElement('div')
-        container.className = 'chat__reactions'
-        body.append(container)
+      if (!badge) {
+        badge = document.createElement('div')
+        badge.className = 'chat__reaction-badge'
+        body.append(badge)
       }
-      container.innerHTML = ''
+      badge.innerHTML = ''
       for (const r of list) {
         const chip = document.createElement('button')
         chip.type = 'button'
         chip.className = 'chat__reaction-chip' + (r.userIds.includes(myUserId) ? ' chat__reaction-chip--mine' : '')
-        chip.textContent = r.userIds.length > 1 ? `${r.emoji} ${r.userIds.length}` : r.emoji
+        chip.textContent = r.emoji
         chip.addEventListener('click', (e) => {
           e.stopPropagation()
-          toggleReaction(messageId, r.emoji)
+          if (r.userIds.includes(myUserId)) toggleReaction(messageId, r.emoji)
         })
-        container.append(chip)
+        badge.append(chip)
       }
     }
 
+    // One reaction per user per message: adding an emoji replaces whatever
+    // this user had on the message before (across all emoji), locally and
+    // for every client — the server enforces the same via a unique
+    // (message_id, user_id) upsert, so a single 'add' broadcast is enough.
     const applyReactionUpdate = (update: ReactionUpdate): void => {
       const list = reactionsByMessage.get(update.messageId) ?? []
-      let entry = list.find((r) => r.emoji === update.emoji)
       if (update.op === 'add') {
+        for (const r of list) r.userIds = r.userIds.filter((id) => id !== update.userId)
+        let entry = list.find((r) => r.emoji === update.emoji)
         if (!entry) {
           entry = { emoji: update.emoji, userIds: [] }
           list.push(entry)
         }
-        if (!entry.userIds.includes(update.userId)) entry.userIds.push(update.userId)
-      } else if (entry) {
-        entry.userIds = entry.userIds.filter((id) => id !== update.userId)
+        entry.userIds.push(update.userId)
+      } else {
+        const entry = list.find((r) => r.emoji === update.emoji)
+        if (entry) entry.userIds = entry.userIds.filter((id) => id !== update.userId)
       }
       reactionsByMessage.set(
         update.messageId,
@@ -346,12 +357,18 @@ export const ChatPage: Page = (root, go) => {
     }
 
     const toggleReaction = (messageId: string, emoji: string): void => {
-      const entry = (reactionsByMessage.get(messageId) ?? []).find((r) => r.emoji === emoji)
-      const alreadyReacted = entry?.userIds.includes(myUserId) ?? false
+      const list = reactionsByMessage.get(messageId) ?? []
+      const mine = list.find((r) => r.userIds.includes(myUserId))
+      const prevEmoji = mine?.emoji ?? null // one-per-user: at most one entry can include me
+      const alreadyReacted = prevEmoji === emoji
       const op = alreadyReacted ? 'remove' : 'add'
       applyReactionUpdate({ messageId, emoji, userId: myUserId, op }) // optimistic; server echo reconciles
       transport?.sendReaction(messageId, emoji, op).catch(() => {
-        applyReactionUpdate({ messageId, emoji, userId: myUserId, op: alreadyReacted ? 'add' : 'remove' }) // revert
+        // Revert to exactly what I had before — a plain inverse toggle isn't
+        // enough for 'add', since applying it may have replaced a *different*
+        // prior emoji of mine (one-per-user), not just added a fresh one.
+        applyReactionUpdate({ messageId, emoji, userId: myUserId, op: 'remove' })
+        if (prevEmoji) applyReactionUpdate({ messageId, emoji: prevEmoji, userId: myUserId, op: 'add' })
       })
     }
 
@@ -439,11 +456,16 @@ export const ChatPage: Page = (root, go) => {
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
 
+      const bubbleTime = document.createElement('div')
+      bubbleTime.className = 'chat__bubble-time'
+      bubbleTime.textContent = formatMessageTime(at)
+
       const content = message.type === 'letter' ? letterCard(message) : text
 
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
       body.append(content)
+      body.append(bubbleTime)
       if (isMine) {
         row.dataset.mine = '1' // keyed by the bubble-mode preview
         if (!pending) row.dataset.delivered = '1'
@@ -493,19 +515,24 @@ export const ChatPage: Page = (root, go) => {
     }
 
     // --- Read receipts: a small per-message indicator on my own messages, at
-    // the end of the message. Line mode renders it as a dot (green = seen,
-    // hollow = unseen); bubble mode renders WhatsApp ticks (✓ sent, blue ✓✓
-    // read) — both driven by these classes, styled in global.css.
+    // the end of the message. Line mode renders it as a dot; bubble mode
+    // renders WhatsApp ticks — both driven by these classes, styled in
+    // global.css. Three states: pending (not yet acked by the server),
+    // delivered (reached the other member's device — gray double tick), seen
+    // (they've had the chat open since — blue double tick).
     const myRows: HTMLElement[] = []
     let otherLastRead: string | null = current.otherLastReadAt
+    let otherLastDelivered: string | null = current.otherLastDeliveredAt
 
     const applyReceipt = (row: HTMLElement): void => {
       const receipt = row.querySelector<HTMLElement>('.chat__receipt')
       if (!receipt) return
       const at = row.dataset.at
-      const delivered = row.dataset.delivered === '1'
-      const seen = delivered && !!otherLastRead && !!at && new Date(at) <= new Date(otherLastRead)
-      receipt.classList.toggle('chat__receipt--pending', !delivered)
+      const acked = row.dataset.delivered === '1' // server has persisted the send — "sent"
+      const delivered = acked && !!otherLastDelivered && !!at && new Date(at) <= new Date(otherLastDelivered)
+      const seen = acked && !!otherLastRead && !!at && new Date(at) <= new Date(otherLastRead)
+      receipt.classList.toggle('chat__receipt--pending', !acked)
+      receipt.classList.toggle('chat__receipt--delivered', delivered)
       receipt.classList.toggle('chat__receipt--seen', seen)
     }
 
@@ -1196,6 +1223,7 @@ export const ChatPage: Page = (root, go) => {
       reconcileLeave(next)
       renderBanner(next)
       otherLastRead = next.otherLastReadAt
+      otherLastDelivered = next.otherLastDeliveredAt
       refreshReceipts()
       updatePresence(next.otherLastReadAt)
       if (next.wallpaper !== currentWallpaper) {

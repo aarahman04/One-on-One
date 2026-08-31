@@ -1,6 +1,7 @@
 import type { Page } from '../state/router'
 import { fetchMe } from '../services/apiClient'
 import { getCurrentConnection, regenerateConnectionCode } from '../services/connectionsApi'
+import { signOut } from '../services/authService'
 import { nextScreenFor } from '../state/nextScreen'
 
 const POLL_INTERVAL_MS = 3000
@@ -17,6 +18,9 @@ export const ConnectionIdPage: Page = (root, go) => {
       <div class="screen__subtitle" id="subtitle">Loading...</div>
       <div class="screen__actions">
         <button class="primary" id="continue-btn">I have an ID to connect with</button>
+      </div>
+      <div class="screen__actions">
+        <button id="logout-btn">Log out</button>
       </div>
     </div>
   `
@@ -101,6 +105,10 @@ export const ConnectionIdPage: Page = (root, go) => {
 
   root.querySelector<HTMLButtonElement>('#continue-btn')!.addEventListener('click', () => {
     go('connect')
+  })
+
+  root.querySelector<HTMLButtonElement>('#logout-btn')!.addEventListener('click', () => {
+    void signOut().then(() => location.assign('/'))
   })
 
   return () => clearInterval(interval)

@@ -2,7 +2,7 @@ import type { Server as HttpServer } from 'node:http'
 import { Server, type Socket } from 'socket.io'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { resolveUserFromToken } from '../services/authToken.js'
-import { ConnectionError } from '../services/connectionService.js'
+import { ConnectionError, markDelivered } from '../services/connectionService.js'
 import { getLiveConnectionForUser, type MemberConnection } from '../services/connectionAccess.js'
 import { saveMessage, type Message } from '../services/messageService.js'
 import { addReaction, removeReaction } from '../services/reactionService.js'
@@ -38,22 +38,21 @@ export function emitConnectionEnded(connectionId: string): void {
   ioRef?.to(room(connectionId)).emit('connection:ended')
 }
 
-// Push only when the recipient has no live socket in the room — a room is
-// exactly the two members of a 1:1 connection, so "any other socket present"
-// means the recipient is already here and will get the message over the
-// open connection instead.
-async function notifyIfOffline(
-  io: Server,
-  connection: MemberConnection,
-  senderId: string,
-  message: Message,
-): Promise<void> {
+// One fetchSockets() decides both delivery paths for a just-sent message: if
+// the recipient has a live socket in the room, the message reached them over
+// the open connection right now — mark it delivered immediately rather than
+// waiting for their next socket (re)connect. Otherwise fall back to push. A
+// room is exactly the two members of a 1:1 connection, so "any other socket
+// present" means the recipient is already here.
+async function syncDelivery(io: Server, connection: MemberConnection, senderId: string, message: Message): Promise<void> {
+  const recipientId = otherMemberId(connection, senderId)
   try {
     const sockets = await io.in(room(connection.id)).fetchSockets()
     const recipientOnline = sockets.some((s) => (s.data as SocketData).userId !== senderId)
-    if (recipientOnline) return
-
-    const recipientId = otherMemberId(connection, senderId)
+    if (recipientOnline) {
+      await markDelivered(connection.id, recipientId)
+      return
+    }
 
     // Nicknames are stored on the OTHER member's row (spec §11) — so "what
     // the recipient calls the sender" lives on the sender's own member row.
@@ -68,7 +67,7 @@ async function notifyIfOffline(
     const body = message.type === 'letter' ? 'sent you a letter' : message.content.slice(0, 120)
     await sendToUser(recipientId, { title, body })
   } catch {
-    /* best-effort — never fail the send because push failed */
+    /* best-effort — never fail the send because delivery-sync/push failed */
   }
 }
 
@@ -97,8 +96,14 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
   })
 
   io.on('connection', (socket: Socket) => {
-    const { connectionId } = socket.data as SocketData
-    if (connectionId) socket.join(room(connectionId))
+    const { userId, connectionId } = socket.data as SocketData
+    if (connectionId) {
+      socket.join(room(connectionId))
+      // This socket coming online means everything sent so far has now
+      // reached this member's device — flips the sender's tick(s) to
+      // delivered without waiting for a message:send round-trip.
+      void markDelivered(connectionId, userId)
+    }
 
     // Per-socket flood guard: a legit client sends a handful of events a
     // minute. Anything past this is abuse.
@@ -136,7 +141,7 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         const message = await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo)
         // tempId echoed so the sender can reconcile its optimistic row exactly.
         io.to(room(connection.id)).emit('message:new', { ...message, tempId })
-        void notifyIfOffline(io, connection, userId, message)
+        void syncDelivery(io, connection, userId, message)
         ack?.({ ok: true })
       } catch (err) {
         ack?.({ error: clientError(err, 'failed to send message') })
