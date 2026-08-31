@@ -410,7 +410,8 @@ input:focus {
 }
 
 /* Read receipt (line/terminal mode): a small dot at the end of my messages —
-   green filled = seen, hollow = not yet. Bubble-mode ticks are in the PREVIEW block. */
+   hollow = pending, muted filled = delivered, green filled = seen. Bubble-mode
+   ticks are further down (WHATSAPP-STYLE TICKS block). */
 .chat__receipt {
   display: inline-block;
   width: 7px;
@@ -424,6 +425,10 @@ input:focus {
 
 .chat__receipt--pending {
   opacity: 0.4;
+}
+
+.chat__receipt--delivered {
+  background: var(--muted);
 }
 
 .chat__receipt--seen {
@@ -666,35 +671,46 @@ input:focus {
   background: var(--bg);
 }
 
-.chat__reactions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
+/* Reaction badge: a small pill overlapping the bubble's bottom corner
+   (Instagram-DM style) instead of rendering inline with the message content.
+   One reaction per user per message caps a 1:1 chat at two chips (me +
+   other), so no wrapping/counting is needed. .chat__message-body is the
+   positioning parent — see its position: relative below. */
+.chat__message-body {
+  position: relative;
 }
 
-.chat__reaction-chip {
+.chat__reaction-badge {
+  position: absolute;
+  bottom: -8px;
+  display: flex;
+  gap: 2px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 1px 7px;
-  font-size: 12px;
+  padding: 1px 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.chat__message[data-mine='1'] .chat__reaction-badge {
+  right: 6px;
+}
+
+.chat__message:not([data-mine='1']) .chat__reaction-badge {
+  left: 6px;
+}
+
+.chat__reaction-chip {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0 1px;
+  font-size: 13px;
   line-height: 1.6;
-  color: var(--text);
 }
 
 .chat__reaction-chip--mine {
-  border-color: var(--accent-other);
-}
-
-.chat--bubbles .chat__reaction-chip {
-  background: rgba(0, 0, 0, 0.16);
-  border-color: transparent;
-  color: inherit;
-}
-
-.chat--bubbles .chat__reaction-chip--mine {
-  border-color: rgba(255, 255, 255, 0.6);
+  border-bottom-color: var(--accent-other); /* marks "this one's mine" — tappable to remove */
 }
 
 .chat__message-time {
@@ -755,6 +771,12 @@ input:focus {
   display: block;
 }
 
+/* Small per-bubble clock (WhatsApp-style). Line mode already has its own
+   left-column clock (.chat__message-time), so this stays hidden there. */
+.chat__bubble-time {
+  display: none;
+}
+
 .chat__input-bar {
   position: relative; /* anchors .slash-menu so it stays on-screen on phones */
   display: flex;
@@ -781,6 +803,11 @@ input:focus {
   padding: 10px 12px;
   resize: none;
   overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+}
+
+.chat__input-bar textarea::-webkit-scrollbar {
+  display: none; /* Chrome/Android — grows to MAX_INPUT_HEIGHT then scrolls invisibly */
 }
 
 .chat__input-bar textarea:focus {
@@ -978,15 +1005,6 @@ input:focus {
   color: var(--text);
 }
 
-/* Wallpapers — the leading solid-ish gradient is a scrim so text stays legible. */
-.chat--wallpaper-1 .chat__log {
-  background:
-    linear-gradient(rgba(13, 17, 23, 0.82), rgba(13, 17, 23, 0.82)),
-    radial-gradient(circle at 18% 15%, #1b2a4a, transparent 42%),
-    radial-gradient(circle at 82% 78%, #3a1b4a, transparent 46%),
-    var(--bg);
-}
-
 /* Instagram-style bubbles: mine right + accent, theirs left + raised. */
 .chat--bubbles .chat__message-time,
 .chat--bubbles .chat__message-sender {
@@ -1052,6 +1070,19 @@ input:focus {
   display: inline;
 }
 
+/* Small gray timestamp under each bubble, WhatsApp-style. */
+.chat--bubbles .chat__bubble-time {
+  display: block;
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-top: 2px;
+  text-align: right;
+}
+
+.chat--bubbles .chat__message:not([data-mine='1']) .chat__bubble-time {
+  text-align: left;
+}
+
 .chat--bubbles .chat__message-text::before {
   content: '';
 }
@@ -1066,9 +1097,18 @@ input:focus {
   color: var(--bubble-mine-text);
 }
 
-/* Bubble mode read receipt = WhatsApp-style ticks (✓ sent, ✓✓ read) instead of
-   the line-mode dot. Rendered in white against the always-saturated "mine"
-   bubble background so they stay visible instead of blending into it. */
+/* --text-dim reads fine on the "other" bubble's raised background, but is
+   too dark on the saturated blue "mine" bubble — match the receipt ticks'
+   translucent-white treatment there instead. */
+.chat--bubbles .chat__message[data-mine='1'] .chat__bubble-time {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Bubble mode read receipt = WhatsApp-style ticks: ✓ sent, ✓✓ delivered
+   (gray), ✓✓ read (WhatsApp's actual blue, #53bdeb) — instead of the
+   line-mode dot. Rendered translucent-white by default against the
+   always-saturated "mine" bubble background so they stay visible instead of
+   blending into it. */
 .chat--bubbles .chat__receipt {
   width: auto;
   height: auto;
@@ -1089,8 +1129,13 @@ input:focus {
   content: '✓';
 }
 
+.chat--bubbles .chat__receipt--delivered::after,
+.chat--bubbles .chat__receipt--seen::after {
+  content: '✓✓';
+}
+
 .chat--bubbles .chat__receipt--seen {
-  color: #ffffff;
+  color: #53bdeb; /* WhatsApp blue */
 }
 
 .chat--bubbles .chat__receipt--seen::after {
@@ -1123,6 +1168,12 @@ input:focus {
 
 .chat--wallpaper-love.chat--bubbles .chat__receipt--seen {
   color: #26323b;
+}
+
+/* Same reasoning as the receipt ticks above — dark timestamp on Love's light
+   gold "mine" bubble instead of the default translucent white. */
+.chat--wallpaper-love.chat--bubbles .chat__message[data-mine='1'] .chat__bubble-time {
+  color: rgba(38, 50, 59, 0.6);
 }
 
 /* "Samurai" wallpaper: a crimson/charcoal cinematic photo background, with

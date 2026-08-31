@@ -23,6 +23,7 @@ export interface CurrentConnection {
   bothLeaving: boolean
   canAdvanceLeave: boolean
   otherLastReadAt: string | null
+  otherLastDeliveredAt: string | null
   wallpaper: string
 }
 

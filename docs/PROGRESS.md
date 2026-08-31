@@ -11,6 +11,52 @@ Notes/deviations:
 
 ---
 
+## [Chat UX batch] Receipts, reactions, logout, timestamps, wallpaper-1 — 2026-08-31
+Status: code complete, both projects build clean (`tsc`/`vite build`); pending
+migrations 021–023 applied to the live DB and a two-account manual walkthrough.
+What shipped:
+- **Read receipts → WhatsApp 3-state.** New `connection_members.last_delivered_at`
+  (migration 021), server-maintained: bumped on socket connect/join
+  (`socketServer.ts`) and, inline on `message:send`, when the recipient already
+  has a live socket in the room (`syncDelivery`, replaces the old
+  `notifyIfOffline` — same fetchSockets() call now also drives delivery, not
+  just the offline-push decision). `connectionService.markDelivered` mirrors
+  `markRead`; surfaced as `otherLastDeliveredAt` on `/connections/current`
+  (no new Transport method — stays off-Transport like `markRead`/read receipts
+  always have). Client `applyReceipt` now derives pending/delivered/seen;
+  bubble-mode ticks: ✓ sent, ✓✓ gray delivered, ✓✓ **#53bdeb** (WhatsApp blue) seen.
+- **Reactions → one per user per message.** Migration 022 drops the old
+  `unique(message_id,user_id,emoji)` for `unique(message_id,user_id)`
+  (dedup'd first); `reactionService.addReaction`'s upsert conflicts on
+  `message_id,user_id` so picking a new emoji replaces the old row server-side
+  too. Client `applyReactionUpdate` strips a user's other emoji on `add`; a
+  `toggleReaction` revert bug this introduced (reverting a "switch emoji" op
+  only undid the new emoji, not the replaced one) was caught and fixed before
+  building. Reaction UI moved out of the bubble into a `.chat__reaction-badge`
+  — a small pill absolutely positioned overlapping the bubble's bottom corner,
+  Instagram-DM style (bottom-right for mine, bottom-left for the other's).
+- **Logout.** `authService.signOut()` already existed but had no user-facing
+  entry point — added a "Log out" button on `ConnectionIdPage` (home) and a
+  "Log out" item in the chat `•••` menu (`MenuDropdown`), both following the
+  existing `signOut()` → `location.assign('/')` reload pattern.
+- **Per-message timestamp.** New `formatMessageTime()` (12-hour, e.g. "3:59 AM")
+  in `utils/formatTime.ts`; renders in the *viewer's* local timezone for free
+  (no `timeZone` option, same as the file's other formatters) since `createdAt`
+  is stored as an ISO/UTC string. Shown as `.chat__bubble-time` under every
+  bubble (was previously only visible via tap-to-expand full timestamp).
+- **Wallpaper option "1" removed** (the picker's other three options —
+  off/love/samurai — and the whole wallpaper system stay). Removed the option
+  button, its `chat--wallpaper-1` CSS, and `'1'` from the backend
+  `ALLOWED_WALLPAPERS`. Migration 023 resets any connection still on `'1'`
+  back to `'off'`.
+- **Android composer scrollbar removed** — `scrollbar-width: none` +
+  `::-webkit-scrollbar { display: none }` on the message textarea; auto-grow
+  to `MAX_INPUT_HEIGHT` and scroll-past-cap behavior unchanged.
+Notes/deviations: "Delivered" fidelity depends on the recipient having a live
+socket — a fully-closed PWA won't flip to delivered until its next socket
+(re)connect (push alone doesn't bump it). Accepted for V1 per plan sign-off.
+Planned in `~/.claude/plans/planning-phase-only-squishy-fog.md`.
+
 ## [Code-quality cleanup] Dead code, dedup, query reduction — 2026-08-30
 Status: done. Both projects build clean; two-account walkthrough passed on the
 dev stack (send/receive text+letter+reply, reactions, report at every

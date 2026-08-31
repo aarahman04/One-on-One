@@ -3,6 +3,14 @@ export function formatClock(date: Date): string {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+// Small per-bubble timestamp, WhatsApp-style — e.g. "3:59 AM". Renders in
+// the viewer's own local timezone since toLocaleTimeString has no explicit
+// timeZone option here (same as the other formatters in this file).
+export function formatMessageTime(date: Date): string {
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+}
+
 export function formatDateSeparator(date: Date): string {
   if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()

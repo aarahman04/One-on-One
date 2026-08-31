@@ -19,12 +19,16 @@ function validateEmoji(emoji: unknown): string {
 // Reactions don't carry their own connection id — resolve it via the message
 // and re-verify membership + live state (spec §20). Returns the connection id
 // for the caller's socket broadcast.
+//
+// One reaction per user per message: the upsert conflicts on (message_id,
+// user_id) alone, so picking a new emoji overwrites the user's previous row
+// instead of adding a second one.
 export async function addReaction(messageId: string, userId: string, emoji: unknown): Promise<string> {
   const validEmoji = validateEmoji(emoji)
   const { connection } = await getConnectionByMessageId(messageId, userId, { requireLive: true })
   const { error } = await supabaseAdmin
     .from('reactions')
-    .upsert({ message_id: messageId, user_id: userId, emoji: validEmoji }, { onConflict: 'message_id,user_id,emoji' })
+    .upsert({ message_id: messageId, user_id: userId, emoji: validEmoji }, { onConflict: 'message_id,user_id' })
   if (error) throw error
   return connection.id
 }
