@@ -1104,7 +1104,9 @@ input:focus {
      silently stay at the (too-small, zoom-triggering) inherited 15px. */
   input,
   textarea,
-  .chat__input-bar textarea {
+  .chat__input-bar textarea,
+  .msg-compose__field.checkin-compose__note,
+  .msg-compose__field.ask-compose__answer {
     font-size: 16px;
   }
 
