@@ -1230,9 +1230,21 @@ export const ChatPage: Page = (root, go) => {
 
     root.querySelector<HTMLButtonElement>('#reply-bar-cancel')!.addEventListener('click', cancelReply)
 
+    // "Launch" animation on the send button icon: the class is re-added
+    // (with a forced reflow so rapid sends restart it) and removed after
+    // the animation's own duration, rather than an instant icon swap.
+    const SEND_ANIMATION_MS = 380
+    const triggerSendAnimation = (): void => {
+      sendBtn.classList.remove('chat__send-btn--launch')
+      void sendBtn.offsetWidth
+      sendBtn.classList.add('chat__send-btn--launch')
+      window.setTimeout(() => sendBtn.classList.remove('chat__send-btn--launch'), SEND_ANIMATION_MS)
+    }
+
     const send = (): void => {
       const content = input.value.trim()
       if (!content) return
+      triggerSendAnimation()
       input.value = ''
       syncComposer()
       const replyTo = replyTarget?.id ?? null
@@ -1983,7 +1995,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
           <button type="button" class="chat__recording-cancel" id="recording-cancel">Cancel</button>
         </div>
         <button type="button" class="chat__icon-btn" id="mic-btn"></button>
-        <button class="primary chat__send-btn" id="send-btn" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19c3.5-5 7-8.5 10.5-10.5"/><circle cx="17.5" cy="7" r="1.8" fill="currentColor" stroke="none"/></svg></button>
+        <button class="primary chat__send-btn" id="send-btn" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg></button>
         <input type="file" id="attach-image-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
         <input type="file" id="attach-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden />
       </form>

@@ -854,9 +854,13 @@ input:focus {
   line-height: 1;
 }
 
-/* Send button — round to match the attach/mic icon buttons it sits beside,
-   with a small "launch" press animation (spark glyph itself lives in the
-   template markup, ChatPage.ts renderChat). */
+/* Send button — round to match the attach/mic icon buttons it sits beside
+   (paper-plane glyph itself lives in the template markup, ChatPage.ts
+   renderChat). :active is an instant press-feedback nudge; --launch is a
+   separate, longer "sent" animation toggled by JS in sync with the
+   message actually leaving the composer (see triggerSendAnimation in
+   ChatPage.ts) — the icon flies out and fades, then a fresh one drops
+   back in, instead of an instant icon swap. */
 .chat__send-btn {
   flex-shrink: 0;
   width: 40px;
@@ -872,9 +876,36 @@ input:focus {
   transform: scale(0.94) translate(1px, -1px);
 }
 
+@keyframes send-launch {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  45% {
+    transform: translate(10px, -10px) scale(0.7);
+    opacity: 0;
+  }
+  46% {
+    transform: translate(-10px, 10px) scale(0.7);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+}
+
+.chat__send-btn--launch svg {
+  animation: send-launch 380ms ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat__send-btn:active {
     transform: none;
+  }
+
+  .chat__send-btn--launch svg {
+    animation: none;
   }
 }
 
