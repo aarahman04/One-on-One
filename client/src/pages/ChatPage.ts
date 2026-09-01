@@ -38,7 +38,6 @@ import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
 import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
 import { linkifyInto } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
-import { signOut } from '../services/authService'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
@@ -339,7 +338,6 @@ export const ChatPage: Page = (root, go) => {
       },
       () => openAppearance(nav, chatEl, currentWallpaper, onWallpaperChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
-      () => void signOut().then(() => location.assign('/')),
     )
 
     // --- Presence: the other side marks read every ~4s while the chat is on

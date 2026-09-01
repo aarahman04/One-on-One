@@ -8,7 +8,6 @@ export function mountMenuDropdown(
   onSearch?: () => void,
   onAppearance?: () => void,
   onNotifications?: () => void,
-  onLogout?: () => void,
 ): () => void {
   let panel: HTMLDivElement | null = null
 
@@ -43,7 +42,6 @@ export function mountMenuDropdown(
       ${onNotifications ? '<button class="menu__item" data-action="notifications">Notifications</button>' : ''}
       <div class="menu__divider"></div>
       <button class="menu__item menu__item--danger" data-action="leave">Leave connection</button>
-      <button class="menu__item" data-action="logout">Log out</button>
     `
     nav.appendChild(panel)
 
@@ -77,11 +75,6 @@ export function mountMenuDropdown(
       close()
       go('leave')
     })
-    panel.querySelector('[data-action="logout"]')!.addEventListener('click', () => {
-      close()
-      onLogout?.()
-    })
-
     document.addEventListener('click', onOutsideClick)
   }
 
