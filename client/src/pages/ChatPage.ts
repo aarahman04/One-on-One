@@ -1095,17 +1095,22 @@ export const ChatPage: Page = (root, go) => {
     const MAX_IMAGE_BYTES = 10 * 1024 * 1024
     const MAX_FILE_BYTES = 25 * 1024 * 1024
 
+    const CAMERA_ICON =
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>'
+    const ATTACH_FILE_ICON =
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'
+
     const openAttachMenu = (): void => {
       const wrap = document.createElement('div')
       wrap.className = 'attach-menu'
       const photoBtn = document.createElement('button')
       photoBtn.type = 'button'
       photoBtn.className = 'attach-menu__item'
-      photoBtn.textContent = '📷 Photo'
+      photoBtn.innerHTML = `${CAMERA_ICON}<span>Photo</span>`
       const fileBtn = document.createElement('button')
       fileBtn.type = 'button'
       fileBtn.className = 'attach-menu__item'
-      fileBtn.textContent = '📎 File'
+      fileBtn.innerHTML = `${ATTACH_FILE_ICON}<span>File</span>`
       wrap.append(photoBtn, fileBtn)
       const modal = openModal(wrap)
       photoBtn.addEventListener('click', () => {
@@ -1191,6 +1196,8 @@ export const ChatPage: Page = (root, go) => {
     const MIC_ICON =
       '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>'
     const STOP_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+    const SPINNER_ICON =
+      '<svg class="chat__icon-spinner" width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="40 56.5"/></svg>'
 
     let recorderHandle: VoiceRecorderHandle | null = null
     let recordingTimer: ReturnType<typeof setInterval> | null = null
@@ -1210,11 +1217,23 @@ export const ChatPage: Page = (root, go) => {
       recordingTime.textContent = formatDuration(0)
       input.hidden = false
       attachBtn.hidden = false
+      micBtn.disabled = false
       micBtn.innerHTML = MIC_ICON
       micBtn.title = 'Record a voice note'
       micBtn.setAttribute('aria-label', 'Record voice note')
     }
     resetRecordingUI()
+
+    // Shown on the mic button itself while a finished recording uploads in
+    // the background (the composer is already back to idle by then — see
+    // finishRecording). Disabling the button blocks a second tap from
+    // starting a new recording mid-upload.
+    const setMicLoading = (loading: boolean): void => {
+      micBtn.disabled = loading
+      micBtn.innerHTML = loading ? SPINNER_ICON : MIC_ICON
+      micBtn.title = loading ? 'Sending…' : 'Record a voice note'
+      micBtn.setAttribute('aria-label', loading ? 'Sending voice note' : 'Record voice note')
+    }
 
     const beginRecording = async (): Promise<void> => {
       if (isRecording) return
@@ -1257,10 +1276,13 @@ export const ChatPage: Page = (root, go) => {
       try {
         const { blob, durationSec } = await handle.stop()
         if (durationSec < MIN_RECORDING_SEC) return // accidental tap — drop silently
+        setMicLoading(true)
         const uploaded = await uploadAttachment(connectionId, 'voice', blob)
         sendMessage('', 'voice', { ...uploaded, duration: durationSec })
       } catch {
         showNotice('Could not send that voice note — try again.')
+      } finally {
+        setMicLoading(false)
       }
     }
 
