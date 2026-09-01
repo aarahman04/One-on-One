@@ -4,6 +4,9 @@
 export interface SlashContext {
   input: HTMLTextAreaElement
   writeLetter: () => void
+  writeCountdown: () => void
+  writeCheckin: () => void
+  writeAsk: () => void
 }
 
 interface SlashCommand {
@@ -46,6 +49,9 @@ function dailyPrompt(): string {
 const COMMANDS: SlashCommand[] = [
   { name: 'letter', description: 'Write a letter', run: (ctx) => { ctx.input.value = ''; ctx.writeLetter() } },
   { name: 'daily', description: 'Question of the day', run: (ctx) => insert(ctx, dailyPrompt()) },
+  { name: 'countdown', description: 'Start a shared countdown', run: (ctx) => { ctx.input.value = ''; ctx.writeCountdown() } },
+  { name: 'checkin', description: 'How are you, really?', run: (ctx) => { ctx.input.value = ''; ctx.writeCheckin() } },
+  { name: 'ask', description: 'A sealed question, revealed together', run: (ctx) => { ctx.input.value = ''; ctx.writeAsk() } },
 ]
 
 // Exact "/command" match. Backs `runIfCommand`, which ChatPage's form-submit
