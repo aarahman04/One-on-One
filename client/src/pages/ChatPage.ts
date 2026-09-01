@@ -1,5 +1,13 @@
 import type { Page } from '../state/router'
-import { formatClock, formatDateSeparator, formatFullTimestamp, formatMessageTime, isSameDay } from '../utils/formatTime'
+import {
+  formatClock,
+  formatDateSeparator,
+  formatDuration,
+  formatFullTimestamp,
+  formatMessageTime,
+  isSameDay,
+} from '../utils/formatTime'
+import { downloadFromUrl, formatFileSize } from '../utils/download'
 import { mountMenuDropdown } from '../components/MenuDropdown'
 import { openModal } from '../components/Modal'
 import { showToast } from '../components/Toast'
@@ -23,6 +31,8 @@ import {
   type ReactionUpdate,
   type Transport,
 } from '../services/messageService'
+import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
+import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
 import { linkifyInto } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
 import { signOut } from '../services/authService'
@@ -62,6 +72,51 @@ interface QuotableMessage {
   senderId: string
   content: string
   type: MessageType
+}
+
+// payload shapes for the three attachment message types (validated
+// server-side in messageService.validateMediaPayload; read defensively here).
+interface ImagePayload {
+  path: string
+  mime: string
+  size: number
+  width: number
+  height: number
+}
+interface VoicePayload {
+  path: string
+  mime: string
+  size: number
+  duration: number
+}
+interface FilePayload {
+  path: string
+  mime: string
+  size: number
+  name: string
+}
+
+function mediaPathOf(message: ChatMessage): string | null {
+  if (message.type !== 'image' && message.type !== 'voice' && message.type !== 'file') return null
+  const p = message.payload as { path?: unknown } | null
+  return typeof p?.path === 'string' ? p.path : null
+}
+
+// Short label standing in for a non-text message's content — used wherever a
+// message is quoted rather than rendered in full (reply preview, reply bar).
+function mediaLabel(type: MessageType): string | null {
+  switch (type) {
+    case 'letter':
+      return 'A letter'
+    case 'image':
+      return 'Photo'
+    case 'voice':
+      return 'Voice message'
+    case 'file':
+      return 'File'
+    default:
+      return null
+  }
 }
 
 export const ChatPage: Page = (root, go) => {
@@ -383,7 +438,7 @@ export const ChatPage: Page = (root, go) => {
       name.textContent = original ? (original.senderId === myUserId ? 'You' : otherName) : otherName
       const snippet = document.createElement('div')
       snippet.className = 'chat__quote-snippet'
-      snippet.textContent = original ? (original.type === 'letter' ? 'A letter' : original.content) : 'Original message'
+      snippet.textContent = original ? (mediaLabel(original.type) ?? original.content) : 'Original message'
       q.append(name, snippet)
       q.addEventListener('click', (e) => {
         e.stopPropagation()
@@ -416,6 +471,209 @@ export const ChatPage: Page = (root, go) => {
       card.addEventListener('click', (e) => {
         e.stopPropagation() // don't also toggle the row's timestamp
         openLetter(message.content, p)
+      })
+      return card
+    }
+
+    // Attachments sit behind short-lived signed URLs (private bucket — see
+    // attachmentService.signAttachments), so a bubble renders a placeholder
+    // first and swaps in the real src/href once resolved. getSignedUrls
+    // caches per path, so the bulk pre-fetch on history load (below) makes
+    // each row's own call here an instant cache hit instead of a new request.
+    const hydrateMedia = (path: string, onUrl: (url: string) => void, onError?: () => void): void => {
+      getSignedUrls(connectionId, [path])
+        .then((urls) => {
+          if (disposed) return
+          const url = urls[path]
+          if (url) onUrl(url)
+          else onError?.()
+        })
+        .catch(() => {
+          if (!disposed) onError?.()
+        })
+    }
+
+    const openImageViewer = (url: string, filename: string): void => {
+      const wrap = document.createElement('div')
+      wrap.className = 'image-viewer'
+      const img = document.createElement('img')
+      img.className = 'image-viewer__img'
+      img.src = url
+      img.alt = 'Photo'
+      const actions = document.createElement('div')
+      actions.className = 'image-viewer__actions'
+      const dl = document.createElement('button')
+      dl.type = 'button'
+      dl.className = 'primary'
+      dl.textContent = 'Download'
+      dl.addEventListener('click', () => {
+        void downloadFromUrl(url, filename).catch(() => showNotice('Could not download this photo.'))
+      })
+      actions.append(dl)
+      wrap.append(img, actions)
+      openModal(wrap)
+    }
+
+    // An image renders as a thumbnail + optional caption; tap opens a full
+    // view with a download action.
+    const imageBubble = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<ImagePayload>
+      const wrap = document.createElement('div')
+      wrap.className = 'image-bubble'
+
+      const img = document.createElement('img')
+      img.className = 'image-bubble__img'
+      img.alt = 'Photo'
+      img.loading = 'lazy'
+      if (p.width && p.height) img.style.aspectRatio = `${p.width} / ${p.height}`
+      wrap.append(img)
+
+      if (message.content) {
+        const caption = document.createElement('div')
+        caption.className = 'image-bubble__caption'
+        linkifyInto(caption, message.content)
+        wrap.append(caption)
+      }
+
+      const path = p.path
+      const ext = path?.split('.').pop() ?? 'jpg'
+      let resolvedUrl = ''
+      if (path) {
+        hydrateMedia(path, (url) => {
+          resolvedUrl = url
+          img.src = url
+        })
+      }
+
+      img.addEventListener('click', (e) => {
+        e.stopPropagation()
+        if (resolvedUrl) openImageViewer(resolvedUrl, `photo.${ext}`)
+      })
+      return wrap
+    }
+
+    // A voice note renders as a play button + a simple progress bar (no
+    // waveform — a deliberate V1 simplification) over a hidden <audio>.
+    const voiceBubble = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<VoicePayload>
+      const duration = typeof p.duration === 'number' ? p.duration : 0
+
+      const wrap = document.createElement('div')
+      wrap.className = 'voice-bubble'
+
+      const playBtn = document.createElement('button')
+      playBtn.type = 'button'
+      playBtn.className = 'voice-bubble__play'
+      playBtn.textContent = '▶'
+      playBtn.disabled = true
+
+      const track = document.createElement('div')
+      track.className = 'voice-bubble__track'
+      const progress = document.createElement('div')
+      progress.className = 'voice-bubble__progress'
+      track.append(progress)
+
+      const time = document.createElement('span')
+      time.className = 'voice-bubble__time'
+      time.textContent = formatDuration(duration)
+
+      wrap.append(playBtn, track, time)
+
+      const audio = new Audio()
+      audio.preload = 'none'
+      let ready = false
+
+      if (p.path) {
+        hydrateMedia(p.path, (url) => {
+          audio.src = url
+          ready = true
+          playBtn.disabled = false
+        })
+      }
+
+      audio.addEventListener('timeupdate', () => {
+        if (audio.duration) progress.style.width = `${(audio.currentTime / audio.duration) * 100}%`
+        time.textContent = formatDuration(Math.max(0, (audio.duration || duration) - audio.currentTime))
+      })
+      audio.addEventListener('ended', () => {
+        playBtn.textContent = '▶'
+        progress.style.width = '0%'
+        time.textContent = formatDuration(duration)
+      })
+      playBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        if (!ready) return
+        if (audio.paused) {
+          void audio.play()
+          playBtn.textContent = '⏸'
+        } else {
+          audio.pause()
+          playBtn.textContent = '▶'
+        }
+      })
+      track.addEventListener('click', (e) => {
+        e.stopPropagation()
+        if (!ready || !audio.duration) return
+        const rect = track.getBoundingClientRect()
+        const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+        audio.currentTime = ratio * audio.duration
+      })
+      return wrap
+    }
+
+    const FILE_ICONS: Record<string, string> = {
+      pdf: '📄',
+      doc: '📄',
+      docx: '📄',
+      txt: '📄',
+      csv: '📊',
+      xls: '📊',
+      xlsx: '📊',
+      ppt: '📑',
+      pptx: '📑',
+    }
+
+    // A file renders as a card (icon + name + size); tap downloads it.
+    const fileCard = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<FilePayload>
+      const name = p.name ?? 'File'
+      const ext = name.split('.').pop()?.toLowerCase() ?? ''
+
+      const card = document.createElement('button')
+      card.type = 'button'
+      card.className = 'file-card'
+
+      const icon = document.createElement('span')
+      icon.className = 'file-card__icon'
+      icon.textContent = FILE_ICONS[ext] ?? '📎'
+
+      const info = document.createElement('span')
+      info.className = 'file-card__info'
+      const nameEl = document.createElement('span')
+      nameEl.className = 'file-card__name'
+      nameEl.textContent = name
+      const meta = document.createElement('span')
+      meta.className = 'file-card__meta'
+      meta.textContent = formatFileSize(p.size ?? 0)
+      info.append(nameEl, meta)
+      card.append(icon, info)
+
+      const path = p.path
+      card.addEventListener('click', (e) => {
+        e.stopPropagation()
+        if (!path || card.disabled) return
+        card.disabled = true
+        hydrateMedia(
+          path,
+          (url) => {
+            card.disabled = false
+            void downloadFromUrl(url, name).catch(() => showNotice('Could not download this file.'))
+          },
+          () => {
+            card.disabled = false
+            showNotice('Could not open this file — try again.')
+          },
+        )
       })
       return card
     }
@@ -460,7 +718,16 @@ export const ChatPage: Page = (root, go) => {
       bubbleTime.className = 'chat__bubble-time'
       bubbleTime.textContent = formatMessageTime(at)
 
-      const content = message.type === 'letter' ? letterCard(message) : text
+      const content =
+        message.type === 'letter'
+          ? letterCard(message)
+          : message.type === 'image'
+            ? imageBubble(message)
+            : message.type === 'voice'
+              ? voiceBubble(message)
+              : message.type === 'file'
+                ? fileCard(message)
+                : text
 
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
@@ -666,6 +933,11 @@ export const ChatPage: Page = (root, go) => {
       .slice()
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     if (disposed) return
+    // One batched sign call warms the cache for the whole page, so each
+    // bubble's own hydrateMedia() call below resolves from cache instead of
+    // firing its own request.
+    const historyMediaPaths = history.map(mediaPathOf).filter((p): p is string => !!p)
+    if (historyMediaPaths.length) void getSignedUrls(connectionId, historyMediaPaths).catch(() => {})
     for (const message of history) appendMessage(message)
     if (!history.length) appendSystemLine('Say hello — this is the start of your one-on-one.')
     oldestLoadedAt = history[0]?.createdAt ?? null
@@ -696,6 +968,8 @@ export const ChatPage: Page = (root, go) => {
     const input = root.querySelector<HTMLTextAreaElement>('#message-input')!
     const composer = root.querySelector<HTMLFormElement>('#composer')!
     const sendBtn = root.querySelector<HTMLButtonElement>('#send-btn')!
+    const micBtn = root.querySelector<HTMLButtonElement>('#mic-btn')!
+    const attachBtn = root.querySelector<HTMLButtonElement>('#attach-btn')!
 
     // Tapping a <button> moves focus to it on most mobile browsers, which
     // dismisses the soft keyboard — jarring versus WhatsApp/iMessage, where
@@ -710,8 +984,22 @@ export const ChatPage: Page = (root, go) => {
       input.style.height = 'auto'
       input.style.height = `${Math.min(input.scrollHeight, MAX_INPUT_HEIGHT)}px`
     }
-    input.addEventListener('input', autoGrow)
-    autoGrow()
+
+    // Send arrow shows once there's text to send; otherwise the mic takes its
+    // place (WhatsApp/Instagram placement) so composing and recording never
+    // fight for the same slot.
+    const updateComposerMode = (): void => {
+      const hasText = input.value.trim().length > 0
+      sendBtn.classList.toggle('chat__input-bar-btn--hidden', !hasText)
+      micBtn.classList.toggle('chat__input-bar-btn--hidden', hasText)
+    }
+
+    const syncComposer = (): void => {
+      autoGrow()
+      updateComposerMode()
+    }
+    input.addEventListener('input', syncComposer)
+    syncComposer()
 
     const sendMessage = (
       content: string,
@@ -743,7 +1031,7 @@ export const ChatPage: Page = (root, go) => {
         return
       }
       replyBarName.textContent = replyTarget.senderId === myUserId ? 'You' : otherName
-      replyBarSnippet.textContent = replyTarget.type === 'letter' ? 'A letter' : replyTarget.content
+      replyBarSnippet.textContent = mediaLabel(replyTarget.type) ?? replyTarget.content
       replyBar.classList.add('chat__reply-bar--visible')
     }
 
@@ -769,12 +1057,186 @@ export const ChatPage: Page = (root, go) => {
       const content = input.value.trim()
       if (!content) return
       input.value = ''
-      autoGrow()
+      syncComposer()
       const replyTo = replyTarget?.id ?? null
       cancelReply()
       sendMessage(content, 'text', null, replyTo)
       input.focus() // keep the keyboard open for the next message, like WhatsApp
     }
+
+    // --- Attachments: "+" opens Photo/File; picking one uploads then sends
+    // immediately (no caption step, matching the plan) as a media message. --
+    const imageInput = root.querySelector<HTMLInputElement>('#attach-image-input')!
+    const fileInput = root.querySelector<HTMLInputElement>('#attach-file-input')!
+    const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+    const MAX_FILE_BYTES = 25 * 1024 * 1024
+
+    const openAttachMenu = (): void => {
+      const wrap = document.createElement('div')
+      wrap.className = 'attach-menu'
+      const photoBtn = document.createElement('button')
+      photoBtn.type = 'button'
+      photoBtn.className = 'attach-menu__item'
+      photoBtn.textContent = '📷 Photo'
+      const fileBtn = document.createElement('button')
+      fileBtn.type = 'button'
+      fileBtn.className = 'attach-menu__item'
+      fileBtn.textContent = '📎 File'
+      wrap.append(photoBtn, fileBtn)
+      const modal = openModal(wrap)
+      photoBtn.addEventListener('click', () => {
+        modal.close()
+        imageInput.click()
+      })
+      fileBtn.addEventListener('click', () => {
+        modal.close()
+        fileInput.click()
+      })
+    }
+    attachBtn.addEventListener('click', openAttachMenu)
+
+    const readImageDimensions = (file: File): Promise<{ width: number; height: number }> =>
+      new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file)
+        const img = new Image()
+        img.onload = () => {
+          URL.revokeObjectURL(url)
+          resolve({ width: img.naturalWidth, height: img.naturalHeight })
+        }
+        img.onerror = () => {
+          URL.revokeObjectURL(url)
+          reject(new Error('could not read image'))
+        }
+        img.src = url
+      })
+
+    const sendImage = async (file: File): Promise<void> => {
+      if (file.size > MAX_IMAGE_BYTES) {
+        showNotice('That photo is too large (max 10MB).')
+        return
+      }
+      attachBtn.disabled = true
+      try {
+        const { width, height } = await readImageDimensions(file)
+        const uploaded = await uploadAttachment(connectionId, 'image', file)
+        sendMessage('', 'image', { ...uploaded, width, height })
+      } catch {
+        showNotice('Could not send that photo — try again.')
+      } finally {
+        attachBtn.disabled = false
+      }
+    }
+
+    const sendFile = async (file: File): Promise<void> => {
+      if (file.size > MAX_FILE_BYTES) {
+        showNotice('That file is too large (max 25MB).')
+        return
+      }
+      attachBtn.disabled = true
+      try {
+        const uploaded = await uploadAttachment(connectionId, 'file', file)
+        sendMessage('', 'file', { ...uploaded, name: file.name })
+      } catch {
+        showNotice('Could not send that file — try again.')
+      } finally {
+        attachBtn.disabled = false
+      }
+    }
+
+    imageInput.addEventListener('change', () => {
+      const file = imageInput.files?.[0]
+      imageInput.value = ''
+      if (file) void sendImage(file)
+    })
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files?.[0]
+      fileInput.value = ''
+      if (file) void sendFile(file)
+    })
+
+    // --- Voice notes: hold the mic button to record, release to send, leave
+    // the button (slide off) or tap Cancel to discard. --------------------
+    const recordingBar = root.querySelector<HTMLDivElement>('#recording-bar')!
+    const recordingTime = root.querySelector<HTMLSpanElement>('#recording-time')!
+    const recordingCancelBtn = root.querySelector<HTMLButtonElement>('#recording-cancel')!
+    const MIN_RECORDING_SEC = 1
+
+    let recorderHandle: VoiceRecorderHandle | null = null
+    let recordingTimer: ReturnType<typeof setInterval> | null = null
+    let recordingStartedAt = 0
+
+    const setRecordingUI = (active: boolean): void => {
+      recordingBar.hidden = !active
+      input.hidden = active
+      attachBtn.hidden = active
+    }
+
+    const stopRecordingTimer = (): void => {
+      if (recordingTimer) clearInterval(recordingTimer)
+      recordingTimer = null
+    }
+
+    const beginRecording = async (): Promise<void> => {
+      if (recorderHandle) return
+      let handle: VoiceRecorderHandle
+      try {
+        handle = await startRecording()
+      } catch {
+        showNotice('Could not access the microphone.')
+        return
+      }
+      if (disposed) {
+        handle.cancel()
+        return
+      }
+      recorderHandle = handle
+      recordingStartedAt = Date.now()
+      recordingTime.textContent = formatDuration(0)
+      setRecordingUI(true)
+      recordingTimer = setInterval(() => {
+        recordingTime.textContent = formatDuration((Date.now() - recordingStartedAt) / 1000)
+      }, 250)
+    }
+
+    const finishRecording = async (shouldSend: boolean): Promise<void> => {
+      const handle = recorderHandle
+      recorderHandle = null
+      stopRecordingTimer()
+      setRecordingUI(false)
+      if (!handle) return
+      if (!shouldSend) {
+        handle.cancel()
+        return
+      }
+      try {
+        const { blob, durationSec } = await handle.stop()
+        if (durationSec < MIN_RECORDING_SEC) return // accidental tap — drop silently
+        micBtn.disabled = true
+        const uploaded = await uploadAttachment(connectionId, 'voice', blob)
+        sendMessage('', 'voice', { ...uploaded, duration: durationSec })
+      } catch {
+        showNotice('Could not send that voice note — try again.')
+      } finally {
+        micBtn.disabled = false
+      }
+    }
+
+    micBtn.addEventListener('pointerdown', (e) => {
+      e.preventDefault()
+      void beginRecording()
+    })
+    micBtn.addEventListener('pointerup', () => void finishRecording(true))
+    micBtn.addEventListener('pointerleave', () => void finishRecording(false))
+    micBtn.addEventListener('pointercancel', () => void finishRecording(false))
+    recordingCancelBtn.addEventListener('click', () => void finishRecording(false))
+
+    // Leaving mid-recording must still release the mic (same teardown
+    // tracking as the overlays this page opens — see `overlays` above).
+    overlays.add(() => {
+      recorderHandle?.cancel()
+      recorderHandle = null
+      stopRecordingTimer()
+    })
 
     const slashCtx = {
       input,
@@ -796,7 +1258,7 @@ export const ChatPage: Page = (root, go) => {
       e.preventDefault()
       if (runIfCommand(input.value, slashCtx)) {
         input.value = ''
-        autoGrow()
+        syncComposer()
         return
       }
       send()
@@ -1277,8 +1739,17 @@ function renderChat(root: HTMLElement, displayName: string): void {
         <button type="button" class="chat__reply-bar-cancel" id="reply-bar-cancel">✕</button>
       </div>
       <form class="chat__input-bar" id="composer">
+        <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach">+</button>
         <textarea id="message-input" placeholder="Type a message..." autocomplete="off" enterkeyhint="send" rows="1"></textarea>
+        <div class="chat__recording-bar" id="recording-bar" hidden>
+          <span class="chat__recording-dot"></span>
+          <span class="chat__recording-time" id="recording-time">0:00</span>
+          <button type="button" class="chat__recording-cancel" id="recording-cancel">Cancel</button>
+        </div>
+        <button type="button" class="chat__icon-btn" id="mic-btn" title="Hold to record a voice note" aria-label="Record voice note">&#127908;</button>
         <button class="primary" id="send-btn" type="submit">&uarr;</button>
+        <input type="file" id="attach-image-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
+        <input type="file" id="attach-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden />
       </form>
     </div>
   `

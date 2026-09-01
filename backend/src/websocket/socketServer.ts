@@ -4,7 +4,7 @@ import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { resolveUserFromToken } from '../services/authToken.js'
 import { ConnectionError, markDelivered } from '../services/connectionService.js'
 import { getLiveConnectionForUser, type MemberConnection } from '../services/connectionAccess.js'
-import { saveMessage, type Message } from '../services/messageService.js'
+import { saveMessage, isMessageType, type Message } from '../services/messageService.js'
 import { addReaction, removeReaction } from '../services/reactionService.js'
 import { sendToUser } from '../services/pushService.js'
 import { otherMemberId } from '../utils/connections.js'
@@ -38,6 +38,21 @@ export function emitConnectionEnded(connectionId: string): void {
   ioRef?.to(room(connectionId)).emit('connection:ended')
 }
 
+function mediaNoticeFor(message: Message): string {
+  switch (message.type) {
+    case 'letter':
+      return 'sent you a letter'
+    case 'image':
+      return 'sent you a photo'
+    case 'voice':
+      return 'sent you a voice message'
+    case 'file':
+      return 'sent you a file'
+    default:
+      return message.content.slice(0, 120)
+  }
+}
+
 // One fetchSockets() decides both delivery paths for a just-sent message: if
 // the recipient has a live socket in the room, the message reached them over
 // the open connection right now — mark it delivered immediately rather than
@@ -64,7 +79,7 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
       .maybeSingle()
 
     const title = senderMember?.nickname ?? 'New message'
-    const body = message.type === 'letter' ? 'sent you a letter' : message.content.slice(0, 120)
+    const body = mediaNoticeFor(message)
     await sendToUser(recipientId, { title, body })
   } catch {
     /* best-effort — never fail the send because delivery-sync/push failed */
@@ -135,7 +150,7 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         }
         socket.join(room(connection.id))
         const content = typeof msg?.content === 'string' ? msg.content : ''
-        const type = msg?.type === 'letter' ? 'letter' : 'text'
+        const type = isMessageType(msg?.type) ? msg.type : 'text'
         const replyTo = typeof msg?.replyTo === 'string' ? msg.replyTo : null
         const tempId = typeof msg?.tempId === 'string' ? msg.tempId : undefined
         const message = await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo)

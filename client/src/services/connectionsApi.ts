@@ -45,7 +45,7 @@ export interface HistoryMessage {
   senderId: string
   content: string
   createdAt: string
-  type: 'text' | 'letter'
+  type: 'text' | 'letter' | 'voice' | 'image' | 'file'
   payload: unknown | null
   replyTo: string | null
   reactions: ReactionSummary[]
