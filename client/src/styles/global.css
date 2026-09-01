@@ -860,6 +860,18 @@ input:focus {
   background: var(--bg-raised);
 }
 
+/* This rule's own `display: flex` above is an author style, which beats the
+   browser's built-in `[hidden] { display: none }` regardless of the
+   `hidden` attribute being set correctly (author styles always win over
+   user-agent defaults) — so the bar rendered visibly at idle even though
+   resetRecordingUI() was setting `.hidden = true` correctly all along. This
+   compound selector is more specific than the plain class above, so it wins
+   back. No change to the show/hide logic itself — same `.hidden` toggles
+   already driving the tap-to-record transition. */
+.chat__recording-bar[hidden] {
+  display: none;
+}
+
 .chat__recording-dot {
   width: 10px;
   height: 10px;
@@ -1198,6 +1210,19 @@ input:focus {
   justify-content: flex-end;
   gap: 4px;
   margin-top: 2px;
+}
+
+/* Text bubbles only: the footer is appended INSIDE .chat__message-text
+   (which is display:inline in bubble mode) instead of after it, and floated
+   right — the browser's own text-reflow wraps the message around it, so a
+   short message sits on one line with the footer trailing it, and a wrapped
+   message keeps the footer glued to the last line instead of a separate row
+   below the paragraph. Letter/image/voice/file keep the row-below-content
+   .chat__meta behavior above unchanged. */
+.chat--bubbles .chat__message[data-type='text'] .chat__meta {
+  float: right;
+  margin-top: 0;
+  margin-left: 8px;
 }
 
 .chat--bubbles .chat__message-text::before {
