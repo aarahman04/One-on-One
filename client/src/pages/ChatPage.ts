@@ -693,6 +693,7 @@ export const ChatPage: Page = (root, go) => {
       const row = document.createElement('div')
       row.className = 'chat__message' + (pending ? ' chat__message--pending' : '')
       row.dataset.at = message.createdAt
+      row.dataset.type = message.type // lets CSS give image/voice/file their own bubble treatment
       if (message.id) row.dataset.id = message.id
 
       const time = document.createElement('div')
@@ -714,9 +715,17 @@ export const ChatPage: Page = (root, go) => {
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
 
+      // Time + receipt render as one unit (WhatsApp-style): in line mode
+      // `.chat__meta` is `display: contents`, so its children lay out exactly
+      // as if appended to body directly (unchanged from before); in bubble
+      // mode it becomes a single flex row pinned to the bubble's bottom-right.
+      const meta = document.createElement('div')
+      meta.className = 'chat__meta'
+
       const bubbleTime = document.createElement('div')
       bubbleTime.className = 'chat__bubble-time'
       bubbleTime.textContent = formatMessageTime(at)
+      meta.append(bubbleTime)
 
       const content =
         message.type === 'letter'
@@ -732,14 +741,19 @@ export const ChatPage: Page = (root, go) => {
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
       body.append(content)
-      body.append(bubbleTime)
       if (isMine) {
         row.dataset.mine = '1' // keyed by the bubble-mode preview
         if (!pending) row.dataset.delivered = '1'
         const receipt = document.createElement('span')
         receipt.className = 'chat__receipt'
-        body.append(receipt) // sits at the end of the message
+        // WhatsApp-shaped tick glyph (line mode ignores this and renders its
+        // own dot via .chat__receipt's background — see applyReceipt).
+        const ticks = document.createElement('span')
+        ticks.className = 'chat__receipt-ticks'
+        receipt.append(ticks)
+        meta.append(receipt)
       }
+      body.append(meta)
       body.append(fullTime)
       row.append(time, body)
       // Scoped to the message content itself, not the row/body — .chat__message-body
@@ -791,6 +805,14 @@ export const ChatPage: Page = (root, go) => {
     let otherLastRead: string | null = current.otherLastReadAt
     let otherLastDelivered: string | null = current.otherLastDeliveredAt
 
+    // WhatsApp's actual tick paths (bubble mode only — line mode's dot never
+    // reads this markup). fill="currentColor" so the existing color rules
+    // (seen = WhatsApp blue, per-wallpaper recolors) keep working unchanged.
+    const TICK_SINGLE =
+      '<svg viewBox="0 0 16 15" width="14" height="13"><path fill="currentColor" d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.266c.143.14.361.125.484-.033l6.272-8.048a.366.366 0 0 0-.064-.512z"/></svg>'
+    const TICK_DOUBLE =
+      '<svg viewBox="0 0 16 15" width="14" height="13"><path fill="currentColor" d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.266c.143.14.361.125.484-.033l6.272-8.048a.366.366 0 0 0-.064-.512z"/><path fill="currentColor" d="M11.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L4.666 9.879a.32.32 0 0 1-.484.033L1.891 7.769a.366.366 0 0 0-.517.006l-.423.433a.364.364 0 0 0 .006.514l3.258 3.185c.143.14.361.125.484-.033l6.272-8.048a.365.365 0 0 0-.064-.512z"/></svg>'
+
     const applyReceipt = (row: HTMLElement): void => {
       const receipt = row.querySelector<HTMLElement>('.chat__receipt')
       if (!receipt) return
@@ -801,6 +823,8 @@ export const ChatPage: Page = (root, go) => {
       receipt.classList.toggle('chat__receipt--pending', !acked)
       receipt.classList.toggle('chat__receipt--delivered', delivered)
       receipt.classList.toggle('chat__receipt--seen', seen)
+      const ticks = receipt.querySelector<HTMLElement>('.chat__receipt-ticks')
+      if (ticks) ticks.innerHTML = delivered || seen ? TICK_DOUBLE : TICK_SINGLE
     }
 
     const refreshReceipts = (): void => {
@@ -1154,30 +1178,46 @@ export const ChatPage: Page = (root, go) => {
       if (file) void sendFile(file)
     })
 
-    // --- Voice notes: hold the mic button to record, release to send, leave
-    // the button (slide off) or tap Cancel to discard. --------------------
+    // --- Voice notes: tap the mic to start, tap again (same button, now a
+    // stop glyph) to finish and send. The recording indicator REPLACES the
+    // text input in place — never a separate element beside it — and every
+    // exit path (send, cancel, teardown) routes through resetRecordingUI so
+    // no state (timer text, hidden input) survives into the next take. -----
     const recordingBar = root.querySelector<HTMLDivElement>('#recording-bar')!
     const recordingTime = root.querySelector<HTMLSpanElement>('#recording-time')!
     const recordingCancelBtn = root.querySelector<HTMLButtonElement>('#recording-cancel')!
     const MIN_RECORDING_SEC = 1
 
+    const MIC_ICON =
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>'
+    const STOP_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+
     let recorderHandle: VoiceRecorderHandle | null = null
     let recordingTimer: ReturnType<typeof setInterval> | null = null
     let recordingStartedAt = 0
-
-    const setRecordingUI = (active: boolean): void => {
-      recordingBar.hidden = !active
-      input.hidden = active
-      attachBtn.hidden = active
-    }
+    let isRecording = false
 
     const stopRecordingTimer = (): void => {
       if (recordingTimer) clearInterval(recordingTimer)
       recordingTimer = null
     }
 
+    // The one place idle composer state is (re)established — always safe to
+    // call, recording or not.
+    const resetRecordingUI = (): void => {
+      isRecording = false
+      recordingBar.hidden = true
+      recordingTime.textContent = formatDuration(0)
+      input.hidden = false
+      attachBtn.hidden = false
+      micBtn.innerHTML = MIC_ICON
+      micBtn.title = 'Record a voice note'
+      micBtn.setAttribute('aria-label', 'Record voice note')
+    }
+    resetRecordingUI()
+
     const beginRecording = async (): Promise<void> => {
-      if (recorderHandle) return
+      if (isRecording) return
       let handle: VoiceRecorderHandle
       try {
         handle = await startRecording()
@@ -1190,9 +1230,15 @@ export const ChatPage: Page = (root, go) => {
         return
       }
       recorderHandle = handle
+      isRecording = true
       recordingStartedAt = Date.now()
       recordingTime.textContent = formatDuration(0)
-      setRecordingUI(true)
+      recordingBar.hidden = false
+      input.hidden = true
+      attachBtn.hidden = true
+      micBtn.innerHTML = STOP_ICON
+      micBtn.title = 'Stop and send'
+      micBtn.setAttribute('aria-label', 'Stop recording and send')
       recordingTimer = setInterval(() => {
         recordingTime.textContent = formatDuration((Date.now() - recordingStartedAt) / 1000)
       }, 250)
@@ -1202,7 +1248,7 @@ export const ChatPage: Page = (root, go) => {
       const handle = recorderHandle
       recorderHandle = null
       stopRecordingTimer()
-      setRecordingUI(false)
+      resetRecordingUI() // clears instantly; a send (if any) continues in the background
       if (!handle) return
       if (!shouldSend) {
         handle.cancel()
@@ -1211,23 +1257,17 @@ export const ChatPage: Page = (root, go) => {
       try {
         const { blob, durationSec } = await handle.stop()
         if (durationSec < MIN_RECORDING_SEC) return // accidental tap — drop silently
-        micBtn.disabled = true
         const uploaded = await uploadAttachment(connectionId, 'voice', blob)
         sendMessage('', 'voice', { ...uploaded, duration: durationSec })
       } catch {
         showNotice('Could not send that voice note — try again.')
-      } finally {
-        micBtn.disabled = false
       }
     }
 
-    micBtn.addEventListener('pointerdown', (e) => {
-      e.preventDefault()
-      void beginRecording()
+    micBtn.addEventListener('click', () => {
+      if (isRecording) void finishRecording(true)
+      else void beginRecording()
     })
-    micBtn.addEventListener('pointerup', () => void finishRecording(true))
-    micBtn.addEventListener('pointerleave', () => void finishRecording(false))
-    micBtn.addEventListener('pointercancel', () => void finishRecording(false))
     recordingCancelBtn.addEventListener('click', () => void finishRecording(false))
 
     // Leaving mid-recording must still release the mic (same teardown
@@ -1746,7 +1786,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
           <span class="chat__recording-time" id="recording-time">0:00</span>
           <button type="button" class="chat__recording-cancel" id="recording-cancel">Cancel</button>
         </div>
-        <button type="button" class="chat__icon-btn" id="mic-btn" title="Hold to record a voice note" aria-label="Record voice note">&#127908;</button>
+        <button type="button" class="chat__icon-btn" id="mic-btn"></button>
         <button class="primary" id="send-btn" type="submit">&uarr;</button>
         <input type="file" id="attach-image-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
         <input type="file" id="attach-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden />

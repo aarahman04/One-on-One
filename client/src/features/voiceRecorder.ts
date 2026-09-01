@@ -40,15 +40,20 @@ export async function startRecording(): Promise<VoiceRecorderHandle> {
 
   recorder.start()
 
-  const waitForStop = (): Promise<Blob> =>
-    new Promise((resolve) => {
-      recorder.addEventListener(
-        'stop',
-        () => resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' })),
-        { once: true },
-      )
-      if (recorder.state !== 'inactive') recorder.stop()
+  const assembleBlob = (): Blob => new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' })
+
+  // If the recorder somehow already stopped itself (e.g. the browser ended
+  // the session), its 'stop' event already fired in the past — attaching a
+  // fresh listener and calling stop() again would wait forever for an event
+  // that's never coming, which would leave the tracks (and the mic) held
+  // open until the page unmounts. Short-circuit instead.
+  const waitForStop = (): Promise<Blob> => {
+    if (recorder.state === 'inactive') return Promise.resolve(assembleBlob())
+    return new Promise((resolve) => {
+      recorder.addEventListener('stop', () => resolve(assembleBlob()), { once: true })
+      recorder.stop()
     })
+  }
 
   return {
     stop: async () => {
