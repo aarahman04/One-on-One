@@ -894,6 +894,25 @@ input:focus {
   }
 }
 
+/* Loading state on the mic button itself, while a stopped recording uploads
+   in the background (see setMicLoading in ChatPage.ts). */
+.chat__icon-spinner {
+  animation: chat-icon-spin 0.8s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes chat-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat__icon-spinner {
+    animation: none;
+  }
+}
+
 .attach-menu {
   display: flex;
   flex-direction: column;
@@ -902,6 +921,9 @@ input:focus {
 }
 
 .attach-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   text-align: left;
   padding: 12px 16px;
 }
@@ -1220,8 +1242,14 @@ input:focus {
   opacity: 0.5;
 }
 
+/* A darker navy rather than WhatsApp's actual (lighter) blue — our own
+   "mine" bubble is also blue (--bubble-mine-bg: #0a84ff), so the standard
+   WhatsApp blue tick barely showed up against it. Scoped to the plain
+   text/voice/file bubble; the image overlay's dark scrim doesn't have that
+   blending problem, so it keeps the standard WhatsApp blue (see data-type
+   ='image' override further down). */
 .chat--bubbles .chat__receipt--seen {
-  color: #53bdeb; /* WhatsApp blue */
+  color: #0a3d67;
 }
 
 .chat--bubbles .chat__receipt-ticks {
@@ -1592,7 +1620,11 @@ input:focus {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 22px;
+  /* Extra top clearance so content that starts flush with the panel edge
+     (the image viewer's photo, in particular) never sits under the close
+     button — previously 22px all round, which the button's own ~10-34px
+     footprint dipped past. */
+  padding: 46px 22px 22px;
   width: 100%;
   max-width: 620px;
   max-height: 90dvh;
@@ -1602,8 +1634,8 @@ input:focus {
 
 .modal-close {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 12px;
+  right: 12px;
   background: transparent;
   border: none;
   color: var(--text-dim);
