@@ -1591,6 +1591,109 @@ input:focus {
   font-size: 14px;
 }
 
+/* This or that — same keepsake-card family as letter/countdown/checkin/ask.
+   Sealed (locked, tappable) hides both picks until the recipient answers;
+   revealed lays the two options side by side with whoever picked each one. */
+.thisorthat-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: linear-gradient(135deg, #3a1f28, #2e1922);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.thisorthat-card:hover {
+  border-color: var(--text-dim);
+}
+
+.thisorthat-card--revealed {
+  cursor: default;
+}
+
+.thisorthat-card__icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.thisorthat-card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.thisorthat-card__prompt {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.thisorthat-card__hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.thisorthat-card__options {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.thisorthat-card__option {
+  flex: 1;
+  min-width: 0;
+}
+
+.thisorthat-card__option-text {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.thisorthat-card__vs {
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 2px;
+}
+
+.thisorthat-card__picks {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.chat--bubbles .chat__message[data-mine='1'] .thisorthat-card {
+  color: var(--text);
+}
+
+.thisorthat-compose__picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.thisorthat-pick-opt {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.thisorthat-pick-opt--active {
+  border-color: var(--accent-other);
+  color: var(--text);
+}
+
 .checkin-compose__picker {
   display: flex;
   flex-wrap: wrap;

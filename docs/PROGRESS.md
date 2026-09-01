@@ -11,6 +11,82 @@ Notes/deviations:
 
 ---
 
+## [UI/UX fixes batch] Dark theme, viewport zoom, footer regression, send button, logout, /thisorthat — 2026-09-01
+Status: code complete; client (`tsc`/`vite build`) and backend (`tsc`) both
+build clean. Migration 025 written but **not yet applied to the live DB**
+(this batch adds no auto-migrate hook — same manual step as 024). Several
+items are visually inspectable directly; two are flagged below for a manual
+mobile/two-account pass (Chrome extension unavailable this session).
+What shipped, in commit order:
+- **Dark-theme CSS fixes** — added a global `textarea{}` rule mirroring the
+  existing `input{}` one (fixed white background on the `/checkin` note and
+  `/ask` answer fields — both are textareas, which had no dark rule of their
+  own). `.chat__reaction-badge` background → `transparent` (was
+  `var(--bg-raised)`, read as solid black). `.chat--bubbles
+  .chat__receipt--seen` → `var(--accent-you)` (light green) — **scoped to the
+  plain text/voice/file bubble only**; the image-overlay tick and Love-
+  wallpaper tick keep their own already-correct colors for their own
+  (non-blue) backgrounds, left untouched. `.voice-bubble__play` gets
+  `padding: 0` (was inheriting the base button's `10px 18px`, forcing an
+  oval) and its `▶`/`⏸` text glyphs became small centered inline SVGs.
+- **Mobile zoom-on-focus fix** — `.checkin-compose__note` and
+  `.ask-compose__answer` set `font-size: 14px` outside the existing
+  `@media(max-width:480px)` zoom-prevention rule, later in source order, so
+  equal-specificity tie-breaking always favored the 14px rule. Added
+  compound-class selectors (`.msg-compose__field.checkin-compose__note` /
+  `.msg-compose__field.ask-compose__answer`, matching the real two-class DOM)
+  inside that media rule for guaranteed higher specificity — same fix
+  already applied once for `.chat__input-bar textarea`.
+- **Bubble footer regression fix** — `.chat__bubble-time` is `display: none`
+  at the base (line mode has its own left-column clock); the `.chat--bubbles`
+  override only set color/size and never restored `display`, so the
+  per-bubble timestamp never rendered. Separately, the previous batch's
+  float-based footer (`.chat__meta` floated right *inside*
+  `.chat__message-text`, which is `display: inline`) escaped to the top of
+  the nearest block ancestor instead of hugging the last line, since a float
+  inside an inline box isn't contained by it. Fixed by restoring `display:
+  inline` on `.chat__bubble-time` and replacing the float with `display:
+  inline-flex` on `.chat__meta` for text bubbles, so it flows as a trailing
+  inline unit and wraps with the last line naturally. Card types never used
+  the float path and are unaffected.
+- **Send button redesign** — replaced the spark/comet glyph (read as a
+  comment icon) with a filled paper-plane SVG. Added a "launch" animation
+  synced to the message actually sending: `triggerSendAnimation()` fires
+  from `send()` right after the empty-content guard (never on an empty
+  submit or the slash-command branch), toggling a `--launch` class with a
+  forced reflow so rapid sends restart it cleanly; the icon flies out and
+  fades, then a fresh one drops back in, respecting
+  `prefers-reduced-motion`. The existing `:active` press-nudge is untouched
+  (separate, instant tap feedback).
+- **Removed chat-screen logout** — the app's model is block-based, not
+  logout-based. Removed the "Log out" item from the chat `•••` menu
+  (`MenuDropdown`), its handler, the `onLogout` param, and the now-orphaned
+  `signOut` wiring/import from `ChatPage.ts`. The `ConnectionIdPage` (home
+  screen) logout is a separate button and is untouched.
+- **`/daily` replaced with `/thisorthat`.** `/daily`'s once-a-day plain-text
+  prompt insert didn't meet the bar the other three slash commands hit (no
+  card, no type, no lasting interaction) — removed along with its 12-prompt
+  bank and the `insert()` helper it was the last user of. Added
+  **`/thisorthat`**: a new keepsake-card type following the `/ask` sealed-
+  reveal pattern exactly — `features/thisorthat.ts` (composer + answer
+  modal), `thisorthatCard` in `ChatPage.ts`, `.thisorthat-card` /
+  `.thisorthat-pick-opt` CSS (own gradient, unflattened in bubble mode).
+  Sender writes two options and picks their own favorite in one step
+  (sealed); recipient taps one of the two options (no free text — the
+  format's whole point is a single tap) and both picks reveal side by side.
+  Payload `{optionA, optionB, pickSender, pickRecipient?}`; sent as two
+  ordinary reply-linked messages, same no-new-live-update-path approach as
+  ask. Migration 025 widens `messages_type_chk` to add `'thisorthat'`.
+Notes/deviations: **migration 025 still needs manual application** to the
+live DB (same as 024) before `/thisorthat` can actually insert — code paths
+are in place and typecheck clean either way. **Two items need a manual
+mobile/two-account check**, not just build verification: the zoom-on-focus
+fix (needs an actual phone/emulator) and the bubble footer fix (novel
+layout, worth eyes-on beyond the CSS reasoning) — flagged to the user rather
+than assumed working from build success alone.
+
+---
+
 ## [Slash commands refresh, batches 4-6] /countdown, /checkin, /ask — 2026-09-01
 Status: code complete, both projects build clean (`tsc`/`vite build`); pending
 manual two-account walkthrough (migration 024 already applied to the live DB

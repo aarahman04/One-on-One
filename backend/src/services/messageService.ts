@@ -4,9 +4,9 @@ import { getConnectionForMember, type MemberConnection } from './connectionAcces
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
 import { isAllowedMime, maxBytesFor, type AttachmentKind } from './attachmentService.js'
 
-export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin'
+export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat'
 
-const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin']
+const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat']
 export function isMessageType(x: unknown): x is MessageType {
   return MESSAGE_TYPES.includes(x as MessageType)
 }
@@ -137,6 +137,26 @@ function validateAskPayload(payload: unknown): { question: string; answerA: stri
   return { question, answerA, answerB }
 }
 
+const THISORTHAT_PICKS = ['a', 'b']
+
+function validateThisOrThatPayload(
+  payload: unknown,
+): { optionA: string; optionB: string; pickSender: 'a' | 'b'; pickRecipient?: 'a' | 'b' } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  const optionA = String(p.optionA ?? '').trim()
+  if (optionA.length < 1 || optionA.length > 100) throw new ConnectionError(400, 'option must be 1-100 characters')
+  const optionB = String(p.optionB ?? '').trim()
+  if (optionB.length < 1 || optionB.length > 100) throw new ConnectionError(400, 'option must be 1-100 characters')
+  const pickSender = String(p.pickSender ?? '')
+  if (!THISORTHAT_PICKS.includes(pickSender)) throw new ConnectionError(400, 'invalid pick')
+  if (p.pickRecipient === undefined || p.pickRecipient === null) {
+    return { optionA, optionB, pickSender: pickSender as 'a' | 'b' }
+  }
+  const pickRecipient = String(p.pickRecipient)
+  if (!THISORTHAT_PICKS.includes(pickRecipient)) throw new ConnectionError(400, 'invalid pick')
+  return { optionA, optionB, pickSender: pickSender as 'a' | 'b', pickRecipient: pickRecipient as 'a' | 'b' }
+}
+
 const HISTORY_PAGE_SIZE = 50
 
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
@@ -192,8 +212,9 @@ export async function saveMessage(
   const isMedia = (MEDIA_TYPES as string[]).includes(type)
 
   // Media messages carry an optional caption — content can be empty. Every
-  // other type (text, letter, ask, countdown, checkin) still requires actual
-  // content — each one's primary display string (body / question / label / note).
+  // other type (text, letter, ask, countdown, checkin, thisorthat) still
+  // requires actual content — each one's primary display string
+  // (body / question / label / note / "optionA vs optionB").
   const trimmed = content.trim()
   if (isMedia) {
     if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
@@ -211,7 +232,9 @@ export async function saveMessage(
           ? validateCheckinPayload(payload)
           : type === 'ask'
             ? validateAskPayload(payload)
-            : null
+            : type === 'thisorthat'
+              ? validateThisOrThatPayload(payload)
+              : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 

@@ -16,6 +16,7 @@ import { openLetter, openLetterComposer, type LetterPayload } from '../features/
 import { formatCountdown, openCountdownComposer, type CountdownPayload } from '../features/countdown'
 import { moodEmoji, openCheckinComposer, type CheckinPayload } from '../features/checkin'
 import { openAskAnswerModal, openAskComposer, type AskPayload } from '../features/ask'
+import { openThisOrThatAnswerModal, openThisOrThatComposer, type ThisOrThatPayload } from '../features/thisorthat'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
@@ -609,6 +610,94 @@ export const ChatPage: Page = (root, go) => {
       return card
     }
 
+    // Same sealed/revealed shape as askCard above, but the payload holds two
+    // options + a pick from each side instead of a question + two answers.
+    const thisorthatCard = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<ThisOrThatPayload>
+      const optionA = p.optionA ?? ''
+      const optionB = p.optionB ?? ''
+      const isMine = message.senderId === myUserId
+
+      if (p.pickRecipient) {
+        const senderName = isMine ? 'You' : otherName
+        const recipientName = isMine ? otherName : 'You'
+        const picksFor = (opt: 'a' | 'b'): string => {
+          const names: string[] = []
+          if (p.pickSender === opt) names.push(senderName)
+          if (p.pickRecipient === opt) names.push(recipientName)
+          return names.join(' & ')
+        }
+
+        const card = document.createElement('div')
+        card.className = 'thisorthat-card thisorthat-card--revealed'
+        const icon = document.createElement('span')
+        icon.className = 'thisorthat-card__icon'
+        icon.textContent = '🎲'
+        const body = document.createElement('div')
+        body.className = 'thisorthat-card__body'
+        const options = document.createElement('div')
+        options.className = 'thisorthat-card__options'
+
+        const buildOption = (opt: 'a' | 'b', label: string): HTMLElement => {
+          const cell = document.createElement('div')
+          cell.className = 'thisorthat-card__option'
+          const text = document.createElement('div')
+          text.className = 'thisorthat-card__option-text'
+          text.textContent = label
+          const picks = document.createElement('div')
+          picks.className = 'thisorthat-card__picks'
+          picks.textContent = picksFor(opt)
+          cell.append(text, picks)
+          return cell
+        }
+
+        const vs = document.createElement('span')
+        vs.className = 'thisorthat-card__vs'
+        vs.textContent = 'vs'
+        options.append(buildOption('a', optionA), vs, buildOption('b', optionB))
+        body.append(options)
+        card.append(icon, body)
+        return card
+      }
+
+      const card = document.createElement('button')
+      card.type = 'button'
+      card.className = 'thisorthat-card'
+      const icon = document.createElement('span')
+      icon.className = 'thisorthat-card__icon'
+      icon.textContent = '🎲'
+      const body = document.createElement('span')
+      body.className = 'thisorthat-card__body'
+      const prompt = document.createElement('div')
+      prompt.className = 'thisorthat-card__prompt'
+      prompt.textContent = `${optionA} vs ${optionB}`
+      const hint = document.createElement('div')
+      hint.className = 'thisorthat-card__hint'
+      hint.textContent = isMine ? `sealed — waiting for ${otherName.toLowerCase()} to pick` : 'sealed — tap to pick'
+      body.append(prompt, hint)
+      card.append(icon, body)
+      card.addEventListener('click', (e) => {
+        e.stopPropagation() // don't also toggle the row's timestamp
+        if (isMine) {
+          showNotice(`Waiting for ${otherName.toLowerCase()} to pick.`)
+          return
+        }
+        openThisOrThatAnswerModal({
+          optionA,
+          optionB,
+          onPick: (pickRecipient) => {
+            sendMessage(
+              `${optionA} vs ${optionB}`,
+              'thisorthat',
+              { optionA, optionB, pickSender: p.pickSender ?? 'a', pickRecipient },
+              message.id ?? null,
+            )
+          },
+        })
+      })
+      return card
+    }
+
     // Attachments sit behind short-lived signed URLs (private bucket — see
     // attachmentService.signAttachments), so a bubble renders a placeholder
     // first and swaps in the real src/href once resolved. getSignedUrls
@@ -881,7 +970,9 @@ export const ChatPage: Page = (root, go) => {
                     ? checkinCard(message)
                     : message.type === 'ask'
                       ? askCard(message)
-                      : text
+                      : message.type === 'thisorthat'
+                        ? thisorthatCard(message)
+                        : text
 
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
@@ -1491,6 +1582,13 @@ export const ChatPage: Page = (root, go) => {
         openAskComposer({
           onSend: (question, payload) => {
             sendMessage(question, 'ask', payload)
+            cancelReply()
+          },
+        }),
+      writeThisOrThat: () =>
+        openThisOrThatComposer({
+          onSend: (content, payload) => {
+            sendMessage(content, 'thisorthat', payload)
             cancelReply()
           },
         }),
