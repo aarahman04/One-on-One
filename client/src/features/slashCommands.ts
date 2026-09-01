@@ -20,10 +20,32 @@ const insert = (ctx: SlashContext, text: string): void => {
   ctx.input.focus()
 }
 
+// Curated prompts for /daily — deliberately specific to two people who already
+// know each other, not generic icebreakers. Picked deterministically by day of
+// year so both partners land on the same prompt if they both reach for it.
+const DAILY_PROMPTS: string[] = [
+  "What's a small thing I did this week that you noticed?",
+  'What moment today would you want to live in a little longer?',
+  "What's something about me that took you time to learn to love?",
+  "What are you looking forward to that we haven't talked about?",
+  'What did you almost text me earlier but didn’t?',
+  "What's a memory of us you replayed recently?",
+  'What do you need more of from me this week?',
+  "What's something you're proud of that you haven't said out loud?",
+  'What made you laugh today, even a little?',
+  "What's on your mind that you keep putting off saying?",
+  'What do you wish I asked you more often?',
+  "What's a version of the future with me you thought about recently?",
+]
+
+function dailyPrompt(): string {
+  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000)
+  return DAILY_PROMPTS[dayOfYear % DAILY_PROMPTS.length]
+}
+
 const COMMANDS: SlashCommand[] = [
   { name: 'letter', description: 'Write a letter', run: (ctx) => { ctx.input.value = ''; ctx.writeLetter() } },
-  { name: 'shrug', description: '¯\\_(ツ)_/¯', run: (ctx) => insert(ctx, '¯\\_(ツ)_/¯') },
-  { name: 'flip', description: '(╯°□°)╯︵ ┻━┻', run: (ctx) => insert(ctx, '(╯°□°)╯︵ ┻━┻') },
+  { name: 'daily', description: 'Question of the day', run: (ctx) => insert(ctx, dailyPrompt()) },
 ]
 
 // Exact "/command" match. Backs `runIfCommand`, which ChatPage's form-submit

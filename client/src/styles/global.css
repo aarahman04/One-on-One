@@ -844,6 +844,30 @@ input:focus {
   line-height: 1;
 }
 
+/* Send button — round to match the attach/mic icon buttons it sits beside,
+   with a small "launch" press animation (spark glyph itself lives in the
+   template markup, ChatPage.ts renderChat). */
+.chat__send-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat__send-btn:active {
+  transform: scale(0.94) translate(1px, -1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat__send-btn:active {
+    transform: none;
+  }
+}
+
 .chat__input-bar-btn--hidden {
   display: none;
 }
