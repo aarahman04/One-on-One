@@ -753,7 +753,13 @@ export const ChatPage: Page = (root, go) => {
         receipt.append(ticks)
         meta.append(receipt)
       }
-      body.append(meta)
+      // Text bubbles: float the footer INSIDE the text's own inline flow
+      // (WhatsApp's actual technique) so it hugs the end of the last line
+      // instead of sitting on its own row below the paragraph — the
+      // browser's native text reflow wraps around it per-line for free.
+      // Every other type keeps the footer as its own row after the content.
+      if (message.type === 'text') text.append(meta)
+      else body.append(meta)
       body.append(fullTime)
       row.append(time, body)
       // Scoped to the message content itself, not the row/body — .chat__message-body
