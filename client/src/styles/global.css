@@ -1231,10 +1231,12 @@ input:focus {
   display: inline;
 }
 
-/* Small gray timestamp, WhatsApp-style — sizing only; position comes from
+/* Small gray timestamp, WhatsApp-style — the base .chat__bubble-time rule
+   hides it for line mode, so it must be re-shown here. Position comes from
    .chat__meta below (real WhatsApp pins the time bottom-right of EVERY
    bubble, sent or received — ticks are the only sent-only piece). */
 .chat--bubbles .chat__bubble-time {
+  display: inline;
   color: var(--text-dim);
   font-size: 11px;
 }
@@ -1249,14 +1251,17 @@ input:focus {
 }
 
 /* Text bubbles only: the footer is appended INSIDE .chat__message-text
-   (which is display:inline in bubble mode) instead of after it, and floated
-   right — the browser's own text-reflow wraps the message around it, so a
-   short message sits on one line with the footer trailing it, and a wrapped
-   message keeps the footer glued to the last line instead of a separate row
-   below the paragraph. Letter/image/voice/file keep the row-below-content
-   .chat__meta behavior above unchanged. */
+   (which is display:inline in bubble mode) instead of after it, as an
+   inline-flex box — the browser's own text-reflow treats it as a trailing
+   inline unit, so a short message sits on one line with the footer right
+   after it, and a wrapped message wraps the footer along with the last
+   line instead of a separate row below the paragraph. (An earlier float:
+   right attempt escaped upward, since a float inside an inline container
+   isn't contained by it — it pins to the nearest block ancestor's top
+   instead of the text's last line.) Letter/image/voice/file keep the
+   row-below-content .chat__meta behavior above unchanged. */
 .chat--bubbles .chat__message[data-type='text'] .chat__meta {
-  float: right;
+  display: inline-flex;
   margin-top: 0;
   margin-left: 8px;
 }
