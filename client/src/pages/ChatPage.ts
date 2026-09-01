@@ -1015,7 +1015,7 @@ export const ChatPage: Page = (root, go) => {
       input.style.height = `${Math.min(input.scrollHeight, MAX_INPUT_HEIGHT)}px`
     }
 
-    // Send arrow shows once there's text to send; otherwise the mic takes its
+    // Send button shows once there's text to send; otherwise the mic takes its
     // place (WhatsApp/Instagram placement) so composing and recording never
     // fight for the same slot.
     const updateComposerMode = (): void => {
@@ -1815,7 +1815,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
           <button type="button" class="chat__recording-cancel" id="recording-cancel">Cancel</button>
         </div>
         <button type="button" class="chat__icon-btn" id="mic-btn"></button>
-        <button class="primary" id="send-btn" type="submit">&uarr;</button>
+        <button class="primary chat__send-btn" id="send-btn" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19c3.5-5 7-8.5 10.5-10.5"/><circle cx="17.5" cy="7" r="1.8" fill="currentColor" stroke="none"/></svg></button>
         <input type="file" id="attach-image-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
         <input type="file" id="attach-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden />
       </form>

@@ -11,6 +11,35 @@ Notes/deviations:
 
 ---
 
+## [Slash commands refresh, batch 0-2] Remove /shrug+/flip, add /daily, spark send button — 2026-09-01
+Status: code complete, client builds clean (`tsc`/`vite build`); pending visual
+confirmation of the send-button icon (Chrome extension unavailable this
+session — verify via Vercel preview) and manual composer walkthrough.
+What shipped:
+- **Removed `/shrug` and `/flip`** — both were plain-text composer inserts with
+  no lasting value, unlike `/letter`. Deleted from `COMMANDS` in
+  `slashCommands.ts`; `ARCHITECTURE.md`'s stale mention updated.
+- **Added `/daily`** — question-of-the-day. Lite scope: a curated bank of
+  12 prompts specific to two people who already know each other (not generic
+  icebreakers), picked deterministically by day-of-year so both partners land
+  on the same prompt, inserted into the composer via the existing `insert`
+  helper (kept alive by this addition after shrug/flip's removal). No new
+  message type, no migration — plain `text` message once sent.
+- **Spark/comet send button** — replaced the plain `&uarr;` glyph with an
+  inline feather-style SVG (curved tail + filled head, matching the existing
+  attach/mic icon language) in `renderChat`'s composer markup. Button made
+  round (`.chat__send-btn`, 40px) to match the attach/mic buttons it sits
+  beside; a small "launch" transform on `:active`, respecting
+  `prefers-reduced-motion`. Continues to tint via the existing
+  `button.primary` → `var(--accent-you)` wallpaper-accent binding — no new
+  theming work needed.
+Notes/deviations: this is batches 0-2 of the 7-batch slash-command-refresh
+plan (`~/.claude/plans/brainstorming-planning-phase-virtual-spark.md`) —
+`/ask`, `/countdown`, `/checkin` and their enabling migration are separate,
+higher-risk batches, staged after this one lands.
+
+---
+
 ## [Chat UX batch] Receipts, reactions, logout, timestamps, wallpaper-1 — 2026-08-31
 Status: code complete, both projects build clean (`tsc`/`vite build`); pending
 migrations 021–023 applied to the live DB and a two-account manual walkthrough.
