@@ -20,3 +20,34 @@ export function downloadFile(filename: string, mime: string, content: string): v
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10000)
 }
+
+// Attachments live behind cross-origin signed Storage URLs — a plain
+// `<a download>` to one of those just navigates instead of downloading in
+// most browsers, since `download` is only honored same-origin. Fetching the
+// bytes first and downloading the resulting blob (same trick as above) works
+// regardless of origin.
+export async function downloadFromUrl(url: string, filename: string): Promise<void> {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`download failed (${res.status})`)
+  const blob = await res.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objectUrl
+  a.download = filename
+  document.body.append(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 10000)
+}
+
+export function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 1024) return `${Math.max(0, Math.round(bytes))} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let i = 0
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024
+    i++
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`
+}

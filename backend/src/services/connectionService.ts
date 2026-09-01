@@ -3,6 +3,7 @@ import { otherMemberId } from '../utils/connections.js'
 import { RAISE_EXCEPTION } from '../utils/pgErrors.js'
 import { getConnectionForMember, memberOrFilter } from './connectionAccess.js'
 import { ConnectionError } from '../utils/connectionError.js'
+import { deleteConnectionAttachments } from './attachmentService.js'
 
 // Re-exported for the many call sites that import it from here.
 export { ConnectionError }
@@ -276,6 +277,16 @@ async function getMemberLeaveRows(connectionId: string, userIds: string[]): Prom
 async function terminate(connectionId: string): Promise<void> {
   const { error } = await supabaseAdmin.from('connections').delete().eq('id', connectionId)
   if (error) throw error
+
+  // Storage isn't covered by the connections table's FK cascade — clean it up
+  // separately. Best-effort: a Storage hiccup shouldn't leave the connection
+  // half-terminated, but a leftover object under a dead connection's prefix
+  // is unreachable anyway (every route checks live membership first).
+  try {
+    await deleteConnectionAttachments(connectionId)
+  } catch (err) {
+    console.error('terminate: failed to clean up attachments', err)
+  }
 }
 
 interface LeaveResult {

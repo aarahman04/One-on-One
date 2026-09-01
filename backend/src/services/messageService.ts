@@ -2,10 +2,17 @@ import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
 import { getConnectionForMember, type MemberConnection } from './connectionAccess.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
+import { isAllowedMime, maxBytesFor, type AttachmentKind } from './attachmentService.js'
 
-type MessageType = 'text' | 'letter'
+export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file'
+
+const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file']
+export function isMessageType(x: unknown): x is MessageType {
+  return MESSAGE_TYPES.includes(x as MessageType)
+}
 
 const LETTER_APPEARANCES = ['dawn', 'botanical']
+const MEDIA_TYPES: AttachmentKind[] = ['voice', 'image', 'file']
 
 export interface Message {
   id: string
@@ -52,6 +59,45 @@ function validateLetterPayload(payload: unknown): { appearance: string; from: st
   if (from.length < 1 || from.length > 40) throw new ConnectionError(400, 'from must be 1-40 characters')
   if (to.length < 1 || to.length > 40) throw new ConnectionError(400, 'to must be 1-40 characters')
   return { appearance, from, to }
+}
+
+// Media messages carry the uploaded object's path/mime/size in `payload` plus
+// a type-specific field (dimensions/duration/name). The path must live under
+// this connection's own attachment prefix — never trust a client-supplied
+// path into another connection's files (spec §20).
+function validateMediaPayload(connectionId: string, kind: AttachmentKind, payload: unknown): Record<string, unknown> {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+
+  const path = String(p.path ?? '')
+  if (!path.startsWith(`${connectionId}/`)) throw new ConnectionError(400, 'invalid attachment path')
+
+  const mime = String(p.mime ?? '')
+  if (!isAllowedMime(kind, mime)) throw new ConnectionError(400, 'invalid attachment type')
+
+  const size = Number(p.size)
+  if (!Number.isFinite(size) || size < 1 || size > maxBytesFor(kind)) {
+    throw new ConnectionError(400, 'invalid attachment size')
+  }
+
+  if (kind === 'image') {
+    const width = Number(p.width)
+    const height = Number(p.height)
+    if (!Number.isInteger(width) || width < 1 || width > 20000) throw new ConnectionError(400, 'invalid image width')
+    if (!Number.isInteger(height) || height < 1 || height > 20000) throw new ConnectionError(400, 'invalid image height')
+    return { path, mime, size, width, height }
+  }
+
+  if (kind === 'voice') {
+    const duration = Number(p.duration)
+    if (!Number.isFinite(duration) || duration <= 0 || duration > 3600) {
+      throw new ConnectionError(400, 'invalid voice duration')
+    }
+    return { path, mime, size, duration }
+  }
+
+  const name = String(p.name ?? '').trim()
+  if (name.length < 1 || name.length > 255) throw new ConnectionError(400, 'invalid file name')
+  return { path, mime, size, name }
 }
 
 const HISTORY_PAGE_SIZE = 50
@@ -105,12 +151,23 @@ export async function saveMessage(
   payload: unknown = null,
   replyTo: string | null = null,
 ): Promise<Message> {
+  if (!isMessageType(type)) throw new ConnectionError(400, 'invalid message type')
+  const isMedia = (MEDIA_TYPES as string[]).includes(type)
+
+  // Media messages carry an optional caption — content can be empty. Text and
+  // letters still require actual content.
   const trimmed = content.trim()
-  if (trimmed.length < 1 || trimmed.length > 4000) {
+  if (isMedia) {
+    if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
+  } else if (trimmed.length < 1 || trimmed.length > 4000) {
     throw new ConnectionError(400, 'message must be 1-4000 characters')
   }
-  if (type !== 'text' && type !== 'letter') throw new ConnectionError(400, 'invalid message type')
-  const storedPayload = type === 'letter' ? validateLetterPayload(payload) : null
+
+  const storedPayload = isMedia
+    ? validateMediaPayload(connection.id, type as AttachmentKind, payload)
+    : type === 'letter'
+      ? validateLetterPayload(payload)
+      : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 
