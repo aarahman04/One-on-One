@@ -777,6 +777,20 @@ input:focus {
   display: none;
 }
 
+/* Wraps bubble-time + receipt as one unit. In line mode this must be
+   invisible as a box — `display: contents` unwraps it so the (hidden)
+   .chat__bubble-time and the (visible dot) .chat__receipt lay out exactly as
+   if appended to body directly, unchanged from before this element existed. */
+.chat__meta {
+  display: contents;
+}
+
+/* WhatsApp tick glyph, injected by applyReceipt(); line mode never shows
+   this — its receipt dot comes from .chat__receipt's own background. */
+.chat__receipt-ticks {
+  display: none;
+}
+
 .chat__input-bar {
   position: relative; /* anchors .slash-menu so it stays on-screen on phones */
   display: flex;
@@ -1147,17 +1161,21 @@ input:focus {
   display: inline;
 }
 
-/* Small gray timestamp under each bubble, WhatsApp-style. */
+/* Small gray timestamp, WhatsApp-style — sizing only; position comes from
+   .chat__meta below (real WhatsApp pins the time bottom-right of EVERY
+   bubble, sent or received — ticks are the only sent-only piece). */
 .chat--bubbles .chat__bubble-time {
-  display: block;
   color: var(--text-dim);
   font-size: 11px;
-  margin-top: 2px;
-  text-align: right;
 }
 
-.chat--bubbles .chat__message:not([data-mine='1']) .chat__bubble-time {
-  text-align: left;
+/* Time + receipt as one small row, pinned to the bubble's bottom-right. */
+.chat--bubbles .chat__meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 2px;
 }
 
 .chat--bubbles .chat__message-text::before {
@@ -1181,20 +1199,20 @@ input:focus {
   color: rgba(255, 255, 255, 0.7);
 }
 
-/* Bubble mode read receipt = WhatsApp-style ticks: ✓ sent, ✓✓ delivered
-   (gray), ✓✓ read (WhatsApp's actual blue, #53bdeb) — instead of the
-   line-mode dot. Rendered translucent-white by default against the
-   always-saturated "mine" bubble background so they stay visible instead of
-   blending into it. */
+/* Bubble mode read receipt = WhatsApp-shaped tick glyph (single = sent,
+   double = delivered, double blue = read, #53bdeb) instead of the line-mode
+   dot. The glyph itself is injected by applyReceipt() as an inline SVG (see
+   ChatPage.ts) so it can be recolored via `color` the same way text is —
+   translucent-white by default against the always-saturated "mine" bubble
+   background so it stays visible instead of blending into it. */
 .chat--bubbles .chat__receipt {
   width: auto;
   height: auto;
   border: none;
   border-radius: 0;
   background: transparent;
-  font-size: 11px;
-  line-height: 1;
-  letter-spacing: -2px;
+  display: inline-flex;
+  align-items: center;
   color: rgba(255, 255, 255, 0.65);
 }
 
@@ -1202,21 +1220,12 @@ input:focus {
   opacity: 0.5;
 }
 
-.chat--bubbles .chat__receipt::after {
-  content: '✓';
-}
-
-.chat--bubbles .chat__receipt--delivered::after,
-.chat--bubbles .chat__receipt--seen::after {
-  content: '✓✓';
-}
-
 .chat--bubbles .chat__receipt--seen {
   color: #53bdeb; /* WhatsApp blue */
 }
 
-.chat--bubbles .chat__receipt--seen::after {
-  content: '✓✓';
+.chat--bubbles .chat__receipt-ticks {
+  display: inline-flex;
 }
 
 /* "Love" wallpaper: a dusk couple-silhouette photo background, with bubble
@@ -1334,6 +1343,52 @@ input:focus {
   overflow-wrap: anywhere;
 }
 
+/* Bubble mode: the image fills the bubble edge-to-edge (no padding/border of
+   its own — the outer bubble's rounded corners clip it via overflow:hidden),
+   with time+ticks overlaid on its bottom-right corner instead of sitting
+   below it in the bubble's padding. */
+.chat--bubbles .chat__message[data-type='image'] .chat__message-body {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+}
+
+.chat--bubbles .chat__message[data-type='image'] .image-bubble {
+  max-width: none;
+  gap: 0;
+}
+
+.chat--bubbles .chat__message[data-type='image'] .image-bubble__img {
+  border-radius: 0;
+}
+
+.chat--bubbles .chat__message[data-type='image'] .image-bubble__caption {
+  padding: 6px 10px 2px;
+}
+
+.chat--bubbles .chat__message[data-type='image'] .chat__meta {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  margin-top: 0;
+  padding: 1px 6px;
+  border-radius: 8px;
+  /* dark scrim behind the meta only — legible over any photo, not a bar
+     across the whole image */
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+}
+
+/* Always light-on-scrim, regardless of mine/other or the active wallpaper's
+   own bubble-text color — the scrim is dark either way. */
+.chat--bubbles .chat__message[data-type='image'] .chat__bubble-time,
+.chat--bubbles .chat__message[data-type='image'] .chat__receipt {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.chat--bubbles .chat__message[data-type='image'] .chat__receipt--seen {
+  color: #53bdeb;
+}
+
 .image-viewer {
   display: flex;
   flex-direction: column;
@@ -1398,6 +1453,21 @@ input:focus {
   font-variant-numeric: tabular-nums;
 }
 
+/* Bubble mode: no separate inner card — the voice note sits directly on the
+   message bubble's own background (was a double-container: an outer chat
+   bubble around an inner dark card). Its label inherits the bubble's own
+   text color instead of a fixed gray so it stays legible on every wallpaper. */
+.chat--bubbles .voice-bubble {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.chat--bubbles .voice-bubble__time {
+  color: inherit;
+  opacity: 0.85;
+}
+
 .file-card {
   display: flex;
   align-items: center;
@@ -1445,9 +1515,20 @@ input:focus {
   font-size: 12px;
 }
 
-.chat--bubbles .chat__message[data-mine='1'] .voice-bubble,
-.chat--bubbles .chat__message[data-mine='1'] .file-card {
-  color: var(--text); /* keep readable inside a colored bubble, same as letter-card */
+/* Same flattening as .voice-bubble above — the file card sits directly on
+   the message bubble's own background, and inherits its text color instead
+   of the fixed dark-card palette (which would go wrong on the lighter
+   wallpaper bubble themes, e.g. Love's gold "mine" bubble). */
+.chat--bubbles .file-card {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+
+.chat--bubbles .file-card__meta {
+  color: inherit;
+  opacity: 0.75;
 }
 
 .slash-menu {
