@@ -7,6 +7,7 @@ export interface SlashContext {
   writeCountdown: () => void
   writeCheckin: () => void
   writeAsk: () => void
+  writeThisOrThat: () => void
 }
 
 interface SlashCommand {
@@ -15,43 +16,12 @@ interface SlashCommand {
   run: (ctx: SlashContext) => void
 }
 
-const insert = (ctx: SlashContext, text: string): void => {
-  // Replace only the leading "/token", keep anything else already typed, and
-  // fire an input event so the composer's autoGrow (and the slash menu) update.
-  ctx.input.value = ctx.input.value.replace(/^\/\S*/, text)
-  ctx.input.dispatchEvent(new Event('input', { bubbles: true }))
-  ctx.input.focus()
-}
-
-// Curated prompts for /daily — deliberately specific to two people who already
-// know each other, not generic icebreakers. Picked deterministically by day of
-// year so both partners land on the same prompt if they both reach for it.
-const DAILY_PROMPTS: string[] = [
-  "What's a small thing I did this week that you noticed?",
-  'What moment today would you want to live in a little longer?',
-  "What's something about me that took you time to learn to love?",
-  "What are you looking forward to that we haven't talked about?",
-  'What did you almost text me earlier but didn’t?',
-  "What's a memory of us you replayed recently?",
-  'What do you need more of from me this week?',
-  "What's something you're proud of that you haven't said out loud?",
-  'What made you laugh today, even a little?',
-  "What's on your mind that you keep putting off saying?",
-  'What do you wish I asked you more often?',
-  "What's a version of the future with me you thought about recently?",
-]
-
-function dailyPrompt(): string {
-  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000)
-  return DAILY_PROMPTS[dayOfYear % DAILY_PROMPTS.length]
-}
-
 const COMMANDS: SlashCommand[] = [
   { name: 'letter', description: 'Write a letter', run: (ctx) => { ctx.input.value = ''; ctx.writeLetter() } },
-  { name: 'daily', description: 'Question of the day', run: (ctx) => insert(ctx, dailyPrompt()) },
   { name: 'countdown', description: 'Start a shared countdown', run: (ctx) => { ctx.input.value = ''; ctx.writeCountdown() } },
   { name: 'checkin', description: 'How are you, really?', run: (ctx) => { ctx.input.value = ''; ctx.writeCheckin() } },
   { name: 'ask', description: 'A sealed question, revealed together', run: (ctx) => { ctx.input.value = ''; ctx.writeAsk() } },
+  { name: 'thisorthat', description: 'A playful pick, revealed together', run: (ctx) => { ctx.input.value = ''; ctx.writeThisOrThat() } },
 ]
 
 // Exact "/command" match. Backs `runIfCommand`, which ChatPage's form-submit

@@ -16,6 +16,7 @@ import { openLetter, openLetterComposer, type LetterPayload } from '../features/
 import { formatCountdown, openCountdownComposer, type CountdownPayload } from '../features/countdown'
 import { moodEmoji, openCheckinComposer, type CheckinPayload } from '../features/checkin'
 import { openAskAnswerModal, openAskComposer, type AskPayload } from '../features/ask'
+import { openThisOrThatAnswerModal, openThisOrThatComposer, type ThisOrThatPayload } from '../features/thisorthat'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
@@ -38,7 +39,6 @@ import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
 import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
 import { linkifyInto } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
-import { signOut } from '../services/authService'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
@@ -339,7 +339,6 @@ export const ChatPage: Page = (root, go) => {
       },
       () => openAppearance(nav, chatEl, currentWallpaper, onWallpaperChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
-      () => void signOut().then(() => location.assign('/')),
     )
 
     // --- Presence: the other side marks read every ~4s while the chat is on
@@ -611,6 +610,94 @@ export const ChatPage: Page = (root, go) => {
       return card
     }
 
+    // Same sealed/revealed shape as askCard above, but the payload holds two
+    // options + a pick from each side instead of a question + two answers.
+    const thisorthatCard = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<ThisOrThatPayload>
+      const optionA = p.optionA ?? ''
+      const optionB = p.optionB ?? ''
+      const isMine = message.senderId === myUserId
+
+      if (p.pickRecipient) {
+        const senderName = isMine ? 'You' : otherName
+        const recipientName = isMine ? otherName : 'You'
+        const picksFor = (opt: 'a' | 'b'): string => {
+          const names: string[] = []
+          if (p.pickSender === opt) names.push(senderName)
+          if (p.pickRecipient === opt) names.push(recipientName)
+          return names.join(' & ')
+        }
+
+        const card = document.createElement('div')
+        card.className = 'thisorthat-card thisorthat-card--revealed'
+        const icon = document.createElement('span')
+        icon.className = 'thisorthat-card__icon'
+        icon.textContent = '🎲'
+        const body = document.createElement('div')
+        body.className = 'thisorthat-card__body'
+        const options = document.createElement('div')
+        options.className = 'thisorthat-card__options'
+
+        const buildOption = (opt: 'a' | 'b', label: string): HTMLElement => {
+          const cell = document.createElement('div')
+          cell.className = 'thisorthat-card__option'
+          const text = document.createElement('div')
+          text.className = 'thisorthat-card__option-text'
+          text.textContent = label
+          const picks = document.createElement('div')
+          picks.className = 'thisorthat-card__picks'
+          picks.textContent = picksFor(opt)
+          cell.append(text, picks)
+          return cell
+        }
+
+        const vs = document.createElement('span')
+        vs.className = 'thisorthat-card__vs'
+        vs.textContent = 'vs'
+        options.append(buildOption('a', optionA), vs, buildOption('b', optionB))
+        body.append(options)
+        card.append(icon, body)
+        return card
+      }
+
+      const card = document.createElement('button')
+      card.type = 'button'
+      card.className = 'thisorthat-card'
+      const icon = document.createElement('span')
+      icon.className = 'thisorthat-card__icon'
+      icon.textContent = '🎲'
+      const body = document.createElement('span')
+      body.className = 'thisorthat-card__body'
+      const prompt = document.createElement('div')
+      prompt.className = 'thisorthat-card__prompt'
+      prompt.textContent = `${optionA} vs ${optionB}`
+      const hint = document.createElement('div')
+      hint.className = 'thisorthat-card__hint'
+      hint.textContent = isMine ? `sealed — waiting for ${otherName.toLowerCase()} to pick` : 'sealed — tap to pick'
+      body.append(prompt, hint)
+      card.append(icon, body)
+      card.addEventListener('click', (e) => {
+        e.stopPropagation() // don't also toggle the row's timestamp
+        if (isMine) {
+          showNotice(`Waiting for ${otherName.toLowerCase()} to pick.`)
+          return
+        }
+        openThisOrThatAnswerModal({
+          optionA,
+          optionB,
+          onPick: (pickRecipient) => {
+            sendMessage(
+              `${optionA} vs ${optionB}`,
+              'thisorthat',
+              { optionA, optionB, pickSender: p.pickSender ?? 'a', pickRecipient },
+              message.id ?? null,
+            )
+          },
+        })
+      })
+      return card
+    }
+
     // Attachments sit behind short-lived signed URLs (private bucket — see
     // attachmentService.signAttachments), so a bubble renders a placeholder
     // first and swaps in the real src/href once resolved. getSignedUrls
@@ -697,10 +784,15 @@ export const ChatPage: Page = (root, go) => {
       const wrap = document.createElement('div')
       wrap.className = 'voice-bubble'
 
+      const playIcon =
+        '<svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor"><path d="M0 0L12 7L0 14V0Z"/></svg>'
+      const pauseIcon =
+        '<svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor"><rect x="0" width="4" height="14"/><rect x="8" width="4" height="14"/></svg>'
+
       const playBtn = document.createElement('button')
       playBtn.type = 'button'
       playBtn.className = 'voice-bubble__play'
-      playBtn.textContent = '▶'
+      playBtn.innerHTML = playIcon
       playBtn.disabled = true
 
       const track = document.createElement('div')
@@ -732,7 +824,7 @@ export const ChatPage: Page = (root, go) => {
         time.textContent = formatDuration(Math.max(0, (audio.duration || duration) - audio.currentTime))
       })
       audio.addEventListener('ended', () => {
-        playBtn.textContent = '▶'
+        playBtn.innerHTML = playIcon
         progress.style.width = '0%'
         time.textContent = formatDuration(duration)
       })
@@ -741,10 +833,10 @@ export const ChatPage: Page = (root, go) => {
         if (!ready) return
         if (audio.paused) {
           void audio.play()
-          playBtn.textContent = '⏸'
+          playBtn.innerHTML = pauseIcon
         } else {
           audio.pause()
-          playBtn.textContent = '▶'
+          playBtn.innerHTML = playIcon
         }
       })
       track.addEventListener('click', (e) => {
@@ -878,7 +970,9 @@ export const ChatPage: Page = (root, go) => {
                     ? checkinCard(message)
                     : message.type === 'ask'
                       ? askCard(message)
-                      : text
+                      : message.type === 'thisorthat'
+                        ? thisorthatCard(message)
+                        : text
 
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
@@ -1225,9 +1319,21 @@ export const ChatPage: Page = (root, go) => {
 
     root.querySelector<HTMLButtonElement>('#reply-bar-cancel')!.addEventListener('click', cancelReply)
 
+    // "Launch" animation on the send button icon: the class is re-added
+    // (with a forced reflow so rapid sends restart it) and removed after
+    // the animation's own duration, rather than an instant icon swap.
+    const SEND_ANIMATION_MS = 380
+    const triggerSendAnimation = (): void => {
+      sendBtn.classList.remove('chat__send-btn--launch')
+      void sendBtn.offsetWidth
+      sendBtn.classList.add('chat__send-btn--launch')
+      window.setTimeout(() => sendBtn.classList.remove('chat__send-btn--launch'), SEND_ANIMATION_MS)
+    }
+
     const send = (): void => {
       const content = input.value.trim()
       if (!content) return
+      triggerSendAnimation()
       input.value = ''
       syncComposer()
       const replyTo = replyTarget?.id ?? null
@@ -1476,6 +1582,13 @@ export const ChatPage: Page = (root, go) => {
         openAskComposer({
           onSend: (question, payload) => {
             sendMessage(question, 'ask', payload)
+            cancelReply()
+          },
+        }),
+      writeThisOrThat: () =>
+        openThisOrThatComposer({
+          onSend: (content, payload) => {
+            sendMessage(content, 'thisorthat', payload)
             cancelReply()
           },
         }),
@@ -1978,7 +2091,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
           <button type="button" class="chat__recording-cancel" id="recording-cancel">Cancel</button>
         </div>
         <button type="button" class="chat__icon-btn" id="mic-btn"></button>
-        <button class="primary chat__send-btn" id="send-btn" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19c3.5-5 7-8.5 10.5-10.5"/><circle cx="17.5" cy="7" r="1.8" fill="currentColor" stroke="none"/></svg></button>
+        <button class="primary chat__send-btn" id="send-btn" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg></button>
         <input type="file" id="attach-image-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
         <input type="file" id="attach-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden />
       </form>

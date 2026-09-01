@@ -180,6 +180,16 @@ input {
   padding: 10px 12px;
 }
 
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
 input:focus {
   outline: none;
   border-color: var(--accent-other);
@@ -685,7 +695,7 @@ input:focus {
   bottom: -8px;
   display: flex;
   gap: 2px;
-  background: var(--bg-raised);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 1px 4px;
@@ -844,9 +854,13 @@ input:focus {
   line-height: 1;
 }
 
-/* Send button — round to match the attach/mic icon buttons it sits beside,
-   with a small "launch" press animation (spark glyph itself lives in the
-   template markup, ChatPage.ts renderChat). */
+/* Send button — round to match the attach/mic icon buttons it sits beside
+   (paper-plane glyph itself lives in the template markup, ChatPage.ts
+   renderChat). :active is an instant press-feedback nudge; --launch is a
+   separate, longer "sent" animation toggled by JS in sync with the
+   message actually leaving the composer (see triggerSendAnimation in
+   ChatPage.ts) — the icon flies out and fades, then a fresh one drops
+   back in, instead of an instant icon swap. */
 .chat__send-btn {
   flex-shrink: 0;
   width: 40px;
@@ -862,9 +876,36 @@ input:focus {
   transform: scale(0.94) translate(1px, -1px);
 }
 
+@keyframes send-launch {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  45% {
+    transform: translate(10px, -10px) scale(0.7);
+    opacity: 0;
+  }
+  46% {
+    transform: translate(-10px, 10px) scale(0.7);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+}
+
+.chat__send-btn--launch svg {
+  animation: send-launch 380ms ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat__send-btn:active {
     transform: none;
+  }
+
+  .chat__send-btn--launch svg {
+    animation: none;
   }
 }
 
@@ -1094,7 +1135,9 @@ input:focus {
      silently stay at the (too-small, zoom-triggering) inherited 15px. */
   input,
   textarea,
-  .chat__input-bar textarea {
+  .chat__input-bar textarea,
+  .msg-compose__field.checkin-compose__note,
+  .msg-compose__field.ask-compose__answer {
     font-size: 16px;
   }
 
@@ -1219,10 +1262,12 @@ input:focus {
   display: inline;
 }
 
-/* Small gray timestamp, WhatsApp-style — sizing only; position comes from
+/* Small gray timestamp, WhatsApp-style — the base .chat__bubble-time rule
+   hides it for line mode, so it must be re-shown here. Position comes from
    .chat__meta below (real WhatsApp pins the time bottom-right of EVERY
    bubble, sent or received — ticks are the only sent-only piece). */
 .chat--bubbles .chat__bubble-time {
+  display: inline;
   color: var(--text-dim);
   font-size: 11px;
 }
@@ -1237,14 +1282,17 @@ input:focus {
 }
 
 /* Text bubbles only: the footer is appended INSIDE .chat__message-text
-   (which is display:inline in bubble mode) instead of after it, and floated
-   right — the browser's own text-reflow wraps the message around it, so a
-   short message sits on one line with the footer trailing it, and a wrapped
-   message keeps the footer glued to the last line instead of a separate row
-   below the paragraph. Letter/image/voice/file keep the row-below-content
-   .chat__meta behavior above unchanged. */
+   (which is display:inline in bubble mode) instead of after it, as an
+   inline-flex box — the browser's own text-reflow treats it as a trailing
+   inline unit, so a short message sits on one line with the footer right
+   after it, and a wrapped message wraps the footer along with the last
+   line instead of a separate row below the paragraph. (An earlier float:
+   right attempt escaped upward, since a float inside an inline container
+   isn't contained by it — it pins to the nearest block ancestor's top
+   instead of the text's last line.) Letter/image/voice/file keep the
+   row-below-content .chat__meta behavior above unchanged. */
 .chat--bubbles .chat__message[data-type='text'] .chat__meta {
-  float: right;
+  display: inline-flex;
   margin-top: 0;
   margin-left: 8px;
 }
@@ -1291,14 +1339,14 @@ input:focus {
   opacity: 0.5;
 }
 
-/* A darker navy rather than WhatsApp's actual (lighter) blue — our own
-   "mine" bubble is also blue (--bubble-mine-bg: #0a84ff), so the standard
-   WhatsApp blue tick barely showed up against it. Scoped to the plain
-   text/voice/file bubble; the image overlay's dark scrim doesn't have that
-   blending problem, so it keeps the standard WhatsApp blue (see data-type
+/* Light green rather than WhatsApp's actual blue — our own "mine" bubble
+   is also blue (--bubble-mine-bg: #0a84ff), so a blue tick (WhatsApp's or
+   our earlier darker-navy attempt) barely showed up against it. Scoped to
+   the plain text/voice/file bubble; the image overlay's dark scrim doesn't
+   have that blending problem, so it keeps its own blue (see data-type
    ='image' override further down). */
 .chat--bubbles .chat__receipt--seen {
-  color: #0a3d67;
+  color: var(--accent-you);
 }
 
 .chat--bubbles .chat__receipt-ticks {
@@ -1543,6 +1591,109 @@ input:focus {
   font-size: 14px;
 }
 
+/* This or that — same keepsake-card family as letter/countdown/checkin/ask.
+   Sealed (locked, tappable) hides both picks until the recipient answers;
+   revealed lays the two options side by side with whoever picked each one. */
+.thisorthat-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: linear-gradient(135deg, #3a1f28, #2e1922);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.thisorthat-card:hover {
+  border-color: var(--text-dim);
+}
+
+.thisorthat-card--revealed {
+  cursor: default;
+}
+
+.thisorthat-card__icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.thisorthat-card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.thisorthat-card__prompt {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.thisorthat-card__hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.thisorthat-card__options {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.thisorthat-card__option {
+  flex: 1;
+  min-width: 0;
+}
+
+.thisorthat-card__option-text {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.thisorthat-card__vs {
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 2px;
+}
+
+.thisorthat-card__picks {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.chat--bubbles .chat__message[data-mine='1'] .thisorthat-card {
+  color: var(--text);
+}
+
+.thisorthat-compose__picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.thisorthat-pick-opt {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.thisorthat-pick-opt--active {
+  border-color: var(--accent-other);
+  color: var(--text);
+}
+
 .checkin-compose__picker {
   display: flex;
   flex-wrap: wrap;
@@ -1670,11 +1821,11 @@ input:focus {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
+  padding: 0;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
