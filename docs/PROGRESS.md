@@ -11,6 +11,53 @@ Notes/deviations:
 
 ---
 
+## [Slash commands refresh, batches 4-6] /countdown, /checkin, /ask — 2026-09-01
+Status: code complete, both projects build clean (`tsc`/`vite build`); pending
+manual two-account walkthrough (migration 024 already applied to the live DB
+per PR #36).
+What shipped — three new compose modules mirroring `letters.ts`'s split
+(feature module owns compose/answer UI, `ChatPage.ts` owns the inline card),
+each slotted in via the confirmed 5-step pattern (`SlashContext` field +
+`COMMANDS` entry, feature module, `slashCtx` callback + card builder + dispatch
+branch):
+- **`/countdown`** — `features/countdown.ts`. One-step compose (label +
+  datetime-local, no letter-style write/preview split needed for structured
+  data). `countdownCard` in `ChatPage.ts` runs a live `setInterval` ticker that
+  self-clears the first time it finds its own card detached from the DOM,
+  rather than needing new page-level teardown tracking.
+- **`/checkin`** — `features/checkin.ts`. Mood picker (5-point scale) + a short
+  note; the picker is the "permission-giver" that makes the honest line easier
+  to send.
+- **`/ask`** — `features/ask.ts`. The mutual sealed-reveal mechanic, built as
+  two *ordinary* messages rather than a mutated one: the sender's sealed
+  original (`{question, answerA}`) renders locked; tapping it as the recipient
+  opens an answer modal that sends a second `ask` message reply-linked
+  (`replyTo`) to the original with `{question, answerA, answerB}` filled in.
+  That second message renders revealed (both answers, labeled by sender) —
+  reusing the pre-existing generic reply/quote system (any message with a
+  `replyTo` already gets a quote block in `buildMessageRow`) instead of adding
+  any new live-update plumbing, exactly the "lite mechanic" the plan called
+  for. No compose-time question re-validation against the original on answer
+  submit — out of scope for lite (a double-answer just renders a second
+  revealed card; accepted for v1).
+- All three get their own "keepsake card" look in `global.css` (own gradient
+  accent, unflattened in bubble mode) — the `.letter-card` family, not the
+  flattened `.file-card`/`.voice-bubble` one — since they're meant to feel
+  special/memorable, not utilitarian. Shared compose-modal classes
+  (`.msg-compose__title/__field/__actions`) added by extending the existing
+  `.letter-compose__*` selectors rather than duplicating rules, since all
+  three (and letter) need the identical title/field/actions shape.
+- `mediaLabel()` in `ChatPage.ts` gained cases for `countdown`/`checkin`
+  (reply-quote snippets); `ask` deliberately has none — its `content` already
+  *is* the question, so the existing fallback (`original.content`) already
+  reads correctly in a reply quote.
+Notes/deviations: batches 4-6 of 7, bundled into one PR (client-only, same
+shape, same risk level) — same reasoning as batches 0-2. This closes out the
+slash-commands-refresh plan
+(`~/.claude/plans/brainstorming-planning-phase-virtual-spark.md`).
+
+---
+
 ## [Slash commands refresh, batch 3] Migration 024 + ask/countdown/checkin type plumbing — 2026-09-01
 Status: code complete, both projects build clean (`tsc`); **migration 024 not
 yet applied to the live DB** — apply before batch 4 (`/countdown`) lands, since

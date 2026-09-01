@@ -13,6 +13,9 @@ import { openModal } from '../components/Modal'
 import { showToast } from '../components/Toast'
 import { applyAppearance, closeAppearance, openAppearance } from '../features/appearancePreview'
 import { openLetter, openLetterComposer, type LetterPayload } from '../features/letters'
+import { formatCountdown, openCountdownComposer, type CountdownPayload } from '../features/countdown'
+import { moodEmoji, openCheckinComposer, type CheckinPayload } from '../features/checkin'
+import { openAskAnswerModal, openAskComposer, type AskPayload } from '../features/ask'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
@@ -114,6 +117,10 @@ function mediaLabel(type: MessageType): string | null {
       return 'Voice message'
     case 'file':
       return 'File'
+    case 'countdown':
+      return 'Countdown'
+    case 'checkin':
+      return 'Check-in'
     default:
       return null
   }
@@ -475,6 +482,135 @@ export const ChatPage: Page = (root, go) => {
       return card
     }
 
+    // A countdown renders as a live-ticking card; no separate viewer to open —
+    // the card itself is always live, ticking down for as long as it's on
+    // screen. The interval self-clears the first time it finds the card
+    // detached (e.g. after navigating away), rather than needing page-level
+    // teardown tracking.
+    const countdownCard = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<CountdownPayload>
+      const card = document.createElement('div')
+      card.className = 'countdown-card'
+      const icon = document.createElement('span')
+      icon.className = 'countdown-card__icon'
+      icon.textContent = '⏳'
+      const info = document.createElement('span')
+      info.className = 'countdown-card__info'
+      const label = document.createElement('span')
+      label.className = 'countdown-card__label'
+      label.textContent = p.label ?? message.content
+      const ticker = document.createElement('span')
+      ticker.className = 'countdown-card__ticker'
+      info.append(label, ticker)
+      card.append(icon, info)
+
+      const targetIso = p.targetIso
+      if (targetIso) {
+        ticker.textContent = formatCountdown(targetIso)
+        const timer = setInterval(() => {
+          if (!card.isConnected) {
+            clearInterval(timer)
+            return
+          }
+          ticker.textContent = formatCountdown(targetIso)
+        }, 1000)
+      }
+      return card
+    }
+
+    // A check-in renders as a mood + note card — a structured, distinct look
+    // that signals "this one's an honest check-in", not just another message.
+    const checkinCard = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<CheckinPayload>
+      const card = document.createElement('div')
+      card.className = 'checkin-card'
+      const icon = document.createElement('span')
+      icon.className = 'checkin-card__icon'
+      icon.textContent = moodEmoji(p.mood ?? 'okay')
+      const note = document.createElement('span')
+      note.className = 'checkin-card__note'
+      linkifyInto(note, p.note ?? message.content)
+      card.append(icon, note)
+      return card
+    }
+
+    // An ask has two card states, both built from ordinary messages — no
+    // separate live-update path. The sealed original (no answerB in payload)
+    // renders locked; tapping it (as the recipient) opens the answer modal,
+    // which sends a SECOND ask message reply-linked to the original with
+    // answerB filled in. That second message is what renders revealed —
+    // reusing the existing generic reply/quote system (buildMessageRow
+    // already appends a quoteBlock for any message with a replyTo) rather
+    // than mutating the original message or its already-rendered row.
+    const askCard = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<AskPayload>
+      const question = p.question ?? message.content
+      const isMine = message.senderId === myUserId
+
+      if (p.answerB) {
+        const original = message.replyTo ? messagesById.get(message.replyTo) : undefined
+        const aName = original ? (original.senderId === myUserId ? 'You' : otherName) : otherName
+        const bName = isMine ? 'You' : otherName
+
+        const card = document.createElement('div')
+        card.className = 'ask-card ask-card--revealed'
+        const icon = document.createElement('span')
+        icon.className = 'ask-card__icon'
+        icon.textContent = '💌'
+        const body = document.createElement('div')
+        body.className = 'ask-card__body'
+        const q = document.createElement('div')
+        q.className = 'ask-card__question'
+        q.textContent = question
+        const rowA = document.createElement('div')
+        rowA.className = 'ask-card__answer'
+        const nameA = document.createElement('span')
+        nameA.className = 'ask-card__answer-name'
+        nameA.textContent = `${aName}: `
+        rowA.append(nameA, document.createTextNode(p.answerA ?? ''))
+        const rowB = document.createElement('div')
+        rowB.className = 'ask-card__answer'
+        const nameB = document.createElement('span')
+        nameB.className = 'ask-card__answer-name'
+        nameB.textContent = `${bName}: `
+        rowB.append(nameB, document.createTextNode(p.answerB))
+        body.append(q, rowA, rowB)
+        card.append(icon, body)
+        return card
+      }
+
+      const card = document.createElement('button')
+      card.type = 'button'
+      card.className = 'ask-card'
+      const icon = document.createElement('span')
+      icon.className = 'ask-card__icon'
+      icon.textContent = '🔒'
+      const body = document.createElement('span')
+      body.className = 'ask-card__body'
+      const q = document.createElement('span')
+      q.className = 'ask-card__question'
+      q.textContent = question
+      const hint = document.createElement('span')
+      hint.className = 'ask-card__hint'
+      hint.textContent = isMine ? `sealed — waiting for ${otherName.toLowerCase()} to answer` : 'sealed — tap to answer'
+      body.append(q, document.createElement('br'), hint)
+      card.append(icon, body)
+      card.addEventListener('click', (e) => {
+        e.stopPropagation() // don't also toggle the row's timestamp
+        if (isMine) {
+          showNotice(`Waiting for ${otherName.toLowerCase()} to answer.`)
+          return
+        }
+        openAskAnswerModal({
+          question,
+          onAnswer: (answerB) => {
+            sendMessage(question, 'ask', { question, answerA: p.answerA ?? '', answerB }, message.id ?? null)
+          },
+        })
+      })
+      return card
+    }
+
     // Attachments sit behind short-lived signed URLs (private bucket — see
     // attachmentService.signAttachments), so a bubble renders a placeholder
     // first and swaps in the real src/href once resolved. getSignedUrls
@@ -736,7 +872,13 @@ export const ChatPage: Page = (root, go) => {
               ? voiceBubble(message)
               : message.type === 'file'
                 ? fileCard(message)
-                : text
+                : message.type === 'countdown'
+                  ? countdownCard(message)
+                  : message.type === 'checkin'
+                    ? checkinCard(message)
+                    : message.type === 'ask'
+                      ? askCard(message)
+                      : text
 
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
@@ -1314,6 +1456,27 @@ export const ChatPage: Page = (root, go) => {
           onSend: (letterBody, letterPayload) => {
             sendMessage(letterBody, 'letter', letterPayload)
             cancelReply() // letters don't carry reply context; don't leave the bar stuck open
+          },
+        }),
+      writeCountdown: () =>
+        openCountdownComposer({
+          onSend: (label, payload) => {
+            sendMessage(label, 'countdown', payload)
+            cancelReply()
+          },
+        }),
+      writeCheckin: () =>
+        openCheckinComposer({
+          onSend: (note, payload) => {
+            sendMessage(note, 'checkin', payload)
+            cancelReply()
+          },
+        }),
+      writeAsk: () =>
+        openAskComposer({
+          onSend: (question, payload) => {
+            sendMessage(question, 'ask', payload)
+            cancelReply()
           },
         }),
     }
