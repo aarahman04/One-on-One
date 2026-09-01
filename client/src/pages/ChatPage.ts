@@ -697,10 +697,15 @@ export const ChatPage: Page = (root, go) => {
       const wrap = document.createElement('div')
       wrap.className = 'voice-bubble'
 
+      const playIcon =
+        '<svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor"><path d="M0 0L12 7L0 14V0Z"/></svg>'
+      const pauseIcon =
+        '<svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor"><rect x="0" width="4" height="14"/><rect x="8" width="4" height="14"/></svg>'
+
       const playBtn = document.createElement('button')
       playBtn.type = 'button'
       playBtn.className = 'voice-bubble__play'
-      playBtn.textContent = '▶'
+      playBtn.innerHTML = playIcon
       playBtn.disabled = true
 
       const track = document.createElement('div')
@@ -732,7 +737,7 @@ export const ChatPage: Page = (root, go) => {
         time.textContent = formatDuration(Math.max(0, (audio.duration || duration) - audio.currentTime))
       })
       audio.addEventListener('ended', () => {
-        playBtn.textContent = '▶'
+        playBtn.innerHTML = playIcon
         progress.style.width = '0%'
         time.textContent = formatDuration(duration)
       })
@@ -741,10 +746,10 @@ export const ChatPage: Page = (root, go) => {
         if (!ready) return
         if (audio.paused) {
           void audio.play()
-          playBtn.textContent = '⏸'
+          playBtn.innerHTML = pauseIcon
         } else {
           audio.pause()
-          playBtn.textContent = '▶'
+          playBtn.innerHTML = playIcon
         }
       })
       track.addEventListener('click', (e) => {

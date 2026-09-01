@@ -180,6 +180,16 @@ input {
   padding: 10px 12px;
 }
 
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
 input:focus {
   outline: none;
   border-color: var(--accent-other);
@@ -685,7 +695,7 @@ input:focus {
   bottom: -8px;
   display: flex;
   gap: 2px;
-  background: var(--bg-raised);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 1px 4px;
@@ -1291,14 +1301,14 @@ input:focus {
   opacity: 0.5;
 }
 
-/* A darker navy rather than WhatsApp's actual (lighter) blue — our own
-   "mine" bubble is also blue (--bubble-mine-bg: #0a84ff), so the standard
-   WhatsApp blue tick barely showed up against it. Scoped to the plain
-   text/voice/file bubble; the image overlay's dark scrim doesn't have that
-   blending problem, so it keeps the standard WhatsApp blue (see data-type
+/* Light green rather than WhatsApp's actual blue — our own "mine" bubble
+   is also blue (--bubble-mine-bg: #0a84ff), so a blue tick (WhatsApp's or
+   our earlier darker-navy attempt) barely showed up against it. Scoped to
+   the plain text/voice/file bubble; the image overlay's dark scrim doesn't
+   have that blending problem, so it keeps its own blue (see data-type
    ='image' override further down). */
 .chat--bubbles .chat__receipt--seen {
-  color: #0a3d67;
+  color: var(--accent-you);
 }
 
 .chat--bubbles .chat__receipt-ticks {
@@ -1670,11 +1680,11 @@ input:focus {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
+  padding: 0;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
