@@ -11,6 +11,39 @@ Notes/deviations:
 
 ---
 
+## [Slash commands refresh, batch 3] Migration 024 + ask/countdown/checkin type plumbing — 2026-09-01
+Status: code complete, both projects build clean (`tsc`); **migration 024 not
+yet applied to the live DB** — apply before batch 4 (`/countdown`) lands, since
+that's the first batch that actually sends one of the new types.
+What shipped:
+- **Migration `024_message_types_widen.sql`** — widens `messages_type_chk`
+  (currently `text,letter,voice` per migration 017) to the full 8-type union.
+  Written idempotently (`drop constraint if exists` + recreate) since this
+  session's sandbox couldn't reach the live DB directly (Supabase's
+  direct-connect host is IPv6-only, unresolvable here) to confirm its current
+  state — **worth a manual check**: `image`/`file` media messages already
+  shipped and were verified working (PR #31/#32), which implies the live
+  constraint already permits them via some out-of-band change, since no
+  migration in this repo's history ever added them before now. This migration
+  is safe either way, but that gap is worth understanding, not just papering over.
+- **`MessageType` union widened** to include `'ask' | 'countdown' | 'checkin'`
+  in both `messageService.ts` (backend) and `Transport.ts` (client) — kept in
+  sync per the existing three-place pattern.
+- **Payload validators added** (`messageService.ts`, structural only — no
+  compose/render UI yet): `validateCountdownPayload` (`{label, targetIso}`,
+  label 1-100 chars, targetIso must parse as a date), `validateCheckinPayload`
+  (`{mood, note}`, mood from a fixed 5-point scale, note 1-300 chars),
+  `validateAskPayload` (`{question, answerA, answerB?}`, question 1-300,
+  answers 1-500 each). Each new type's primary display string (label / note /
+  question) lives in `content` too, same shape as `text`/`letter` — no change
+  needed to `saveMessage`'s content-length branch.
+- `mediaLabel()` in `ChatPage.ts` already has a `default: null` case, so the
+  widened union type-checks with no client renderer changes required yet.
+Notes/deviations: this is batch 3 of 7. `/countdown`, `/checkin`, `/ask`
+(compose UI + card renderers) are batches 4-6, staged next.
+
+---
+
 ## [Slash commands refresh, batch 0-2] Remove /shrug+/flip, add /daily, spark send button — 2026-09-01
 Status: code complete, client builds clean (`tsc`/`vite build`); pending visual
 confirmation of the send-button icon (Chrome extension unavailable this

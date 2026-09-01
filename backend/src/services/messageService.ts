@@ -4,15 +4,16 @@ import { getConnectionForMember, type MemberConnection } from './connectionAcces
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
 import { isAllowedMime, maxBytesFor, type AttachmentKind } from './attachmentService.js'
 
-export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file'
+export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin'
 
-const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file']
+const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin']
 export function isMessageType(x: unknown): x is MessageType {
   return MESSAGE_TYPES.includes(x as MessageType)
 }
 
 const LETTER_APPEARANCES = ['dawn', 'botanical']
 const MEDIA_TYPES: AttachmentKind[] = ['voice', 'image', 'file']
+const CHECKIN_MOODS = ['great', 'good', 'okay', 'down', 'struggling']
 
 export interface Message {
   id: string
@@ -100,6 +101,42 @@ function validateMediaPayload(connectionId: string, kind: AttachmentKind, payloa
   return { path, mime, size, name }
 }
 
+// Countdown, check-in, and ask carry no separate "body" concept the way letter
+// does, so `content` holds each one's own primary display string (label /
+// note / question) while `payload` holds the full structured data. This
+// batch (3) only adds structural validation for the three new types; ask's
+// reply-linked reveal semantics land with the /ask feature itself (batch 6).
+
+function validateCountdownPayload(payload: unknown): { label: string; targetIso: string } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  const label = String(p.label ?? '').trim()
+  if (label.length < 1 || label.length > 100) throw new ConnectionError(400, 'label must be 1-100 characters')
+  const target = new Date(String(p.targetIso ?? ''))
+  if (Number.isNaN(target.getTime())) throw new ConnectionError(400, 'invalid countdown date')
+  return { label, targetIso: target.toISOString() }
+}
+
+function validateCheckinPayload(payload: unknown): { mood: string; note: string } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  const mood = String(p.mood ?? '')
+  if (!CHECKIN_MOODS.includes(mood)) throw new ConnectionError(400, 'invalid check-in mood')
+  const note = String(p.note ?? '').trim()
+  if (note.length < 1 || note.length > 300) throw new ConnectionError(400, 'note must be 1-300 characters')
+  return { mood, note }
+}
+
+function validateAskPayload(payload: unknown): { question: string; answerA: string; answerB?: string } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  const question = String(p.question ?? '').trim()
+  if (question.length < 1 || question.length > 300) throw new ConnectionError(400, 'question must be 1-300 characters')
+  const answerA = String(p.answerA ?? '').trim()
+  if (answerA.length < 1 || answerA.length > 500) throw new ConnectionError(400, 'answer must be 1-500 characters')
+  if (p.answerB === undefined || p.answerB === null) return { question, answerA }
+  const answerB = String(p.answerB).trim()
+  if (answerB.length < 1 || answerB.length > 500) throw new ConnectionError(400, 'answer must be 1-500 characters')
+  return { question, answerA, answerB }
+}
+
 const HISTORY_PAGE_SIZE = 50
 
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
@@ -154,8 +191,9 @@ export async function saveMessage(
   if (!isMessageType(type)) throw new ConnectionError(400, 'invalid message type')
   const isMedia = (MEDIA_TYPES as string[]).includes(type)
 
-  // Media messages carry an optional caption — content can be empty. Text and
-  // letters still require actual content.
+  // Media messages carry an optional caption — content can be empty. Every
+  // other type (text, letter, ask, countdown, checkin) still requires actual
+  // content — each one's primary display string (body / question / label / note).
   const trimmed = content.trim()
   if (isMedia) {
     if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
@@ -167,7 +205,13 @@ export async function saveMessage(
     ? validateMediaPayload(connection.id, type as AttachmentKind, payload)
     : type === 'letter'
       ? validateLetterPayload(payload)
-      : null
+      : type === 'countdown'
+        ? validateCountdownPayload(payload)
+        : type === 'checkin'
+          ? validateCheckinPayload(payload)
+          : type === 'ask'
+            ? validateAskPayload(payload)
+            : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 
