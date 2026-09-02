@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env src/index.ts",
     "migrate": "tsx --env-file=.env src/database/migrate.ts",
+    "backfill:encrypt": "tsx --env-file=.env src/database/backfillEncryption.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },

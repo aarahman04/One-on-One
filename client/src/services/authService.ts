@@ -1,9 +1,15 @@
 import { supabase } from './supabaseClient'
 
-export async function signInWithGoogle(): Promise<void> {
+// forceAccountChooser adds Google's `prompt=select_account` so the account
+// picker always appears — used by the login screen's "Use a different account"
+// escape hatch, where Google would otherwise silently reuse the last account.
+export async function signInWithGoogle(forceAccountChooser = false): Promise<void> {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: window.location.origin },
+    options: {
+      redirectTo: window.location.origin,
+      ...(forceAccountChooser ? { queryParams: { prompt: 'select_account' } } : {}),
+    },
   })
   if (error) throw error
 }

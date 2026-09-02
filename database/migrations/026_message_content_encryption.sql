@@ -1,0 +1,21 @@
+-- Encryption at rest, Option C (see docs/DECISIONS-encryption-at-rest.md).
+-- Chunk 1 of 4: schema only. No data is touched here; existing plaintext rows
+-- keep reading fine until the backfill (Chunk 4).
+--
+-- `messages.content` will hold app-layer AES-256-GCM ciphertext ("v1:base64…"),
+-- which for a 4000-char plaintext is far longer than 4000 chars. The plaintext
+-- length check from 004_messages.sql (`content text not null check
+-- (char_length(content) between 1 and 4000)`) would reject that ciphertext, so
+-- drop it. Length is now enforced pre-encrypt in messageService.saveMessage.
+--
+-- `content` stays NOT NULL (ciphertext is always a non-empty string).
+-- `payload` (jsonb) and `message_reports.message_content` (text) already store
+-- arbitrary strings/objects, so they need no schema change — the encrypted
+-- envelope goes in as-is.
+--
+-- Idempotent. NOTE: the 004 check was created inline (unnamed), so Postgres
+-- auto-named it `messages_content_check`. If an out-of-band change ever renamed
+-- it on the live DB, this `if exists` is a safe no-op — verify the check is
+-- actually gone after applying (\d messages).
+
+alter table messages drop constraint if exists messages_content_check;

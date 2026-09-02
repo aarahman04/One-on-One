@@ -11,6 +11,40 @@ Notes/deviations:
 
 ---
 
+## [Security] Message encryption at rest (Option C) — 2026-09-02
+Status: code complete on branch `feat/message-encryption-at-rest` (4 commits);
+all `tsc` clean, crypto/wiring/backfill logic verified with throwaway scripts.
+**Live steps pending (user-owned):** manual two-account Chunk 3 pass → deploy →
+backfill dry-run → `--apply`. PR held until the backfill is confirmed clean.
+What shipped (application-layer AES-256-GCM, key only in backend env — full
+rationale in `docs/DECISIONS-encryption-at-rest.md`):
+- **Chunk 1** migration 026 — drops the plaintext `char_length(content)` check
+  so `content` can hold ciphertext; `content`/`payload` column types unchanged.
+  Applied + verified on the live DB.
+- **Chunk 2** `backend/src/services/crypto.ts` — `encrypt`/`decrypt`/
+  `isEncrypted`, envelope `v{N}:base64(iv|tag|ct)`, version-tagged for rotation
+  (highest `ENCRYPTION_KEY_V<n>` = write key), GCM tamper detection, fails fast
+  if unconfigured. Documented in `.env.example`.
+- **Chunk 3** wiring — `saveMessage` encrypts `content` + `payload` (jsonb
+  `{enc}`) on write and returns the in-memory plaintext `Message`, so socket
+  broadcast + push preview are unchanged; `getHistory` decrypts on read with
+  legacy-plaintext passthrough. `reportService` snapshot stores ciphertext
+  verbatim (decrypt-on-review), no logic change.
+- **Chunk 4** `backend/src/database/backfillEncryption.ts` (`npm run
+  backfill:encrypt`) — one-off, dry-run by default, `--apply` to write,
+  idempotent; covers `messages` + `message_reports` snapshots.
+Notes/deviations: Protects a DB leak (logical dump / stolen service-role key /
+backup), NOT a full backend compromise — same trust boundary as before, strictly
+more protection; **not E2EE, don't overclaim**. Backend-reads-plaintext model
+preserved (spec §20) — every membership/live/reply-target/media-path check is
+unchanged. Two documented, accepted plaintext gaps: **push previews**
+(`mediaNoticeFor` sends up to 120 chars of a text message post-decrypt) and
+**attachment bytes** (Storage disk-at-rest only; app-layer would break
+signed-URL delivery — only attachment *metadata* in `payload` is encrypted).
+Rotation constraint: never destroy a key version while a report snapshot still
+references it. A subtle "encrypted at rest" UI indicator is proposed separately,
+held for sign-off.
+
 ## [UI/UX fixes batch] Dark theme, viewport zoom, footer regression, send button, logout, /thisorthat — 2026-09-01
 Status: code complete; client (`tsc`/`vite build`) and backend (`tsc`) both
 build clean. Migration 025 written but **not yet applied to the live DB**
