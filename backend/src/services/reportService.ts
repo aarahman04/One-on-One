@@ -10,6 +10,9 @@ const MAX_REASON_LEN = 1000
 // message text is snapshotted so the report survives the connection being
 // terminated.
 export async function reportMessage(messageId: string, reporterId: string, reason: unknown): Promise<void> {
+  // `content` is the message's stored ciphertext (encryption at rest, Option C).
+  // The snapshot copies it verbatim — never a decrypted plaintext copy at rest.
+  // Moderation review decrypts on read. See docs/DECISIONS-encryption-at-rest.md.
   const { messageContent: content } = await getConnectionByMessageId(messageId, reporterId, { everMember: true })
   const trimmed = typeof reason === 'string' ? reason.trim().slice(0, MAX_REASON_LEN) : ''
 

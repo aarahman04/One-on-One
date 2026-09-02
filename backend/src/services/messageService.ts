@@ -3,6 +3,7 @@ import { ConnectionError } from './connectionService.js'
 import { getConnectionForMember, type MemberConnection } from './connectionAccess.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
 import { isAllowedMime, maxBytesFor, type AttachmentKind } from './attachmentService.js'
+import { encrypt, decrypt, isEncrypted } from './crypto.js'
 
 export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat'
 
@@ -47,6 +48,27 @@ function toMessage(row: MessageRow, reactions: ReactionSummary[] = []): Message 
     replyTo: row.reply_to ?? null,
     reactions,
   }
+}
+
+// content and payload are encrypted at rest (Option C — see
+// docs/DECISIONS-encryption-at-rest.md). Reads decrypt before serving. Rows
+// written before the Chunk 4 backfill are still plaintext, so anything that
+// isn't a ciphertext envelope passes through unchanged during the rollout.
+function decryptContent(value: string): string {
+  return isEncrypted(value) ? decrypt(value) : value
+}
+
+// Encrypted payloads are stored as the jsonb envelope `{ enc: "v1:…" }`; legacy
+// plaintext payloads are the raw object (or null) and pass through untouched.
+function decryptPayload(payload: unknown): unknown {
+  if (
+    payload !== null &&
+    typeof payload === 'object' &&
+    typeof (payload as { enc?: unknown }).enc === 'string'
+  ) {
+    return JSON.parse(decrypt((payload as { enc: string }).enc))
+  }
+  return payload
 }
 
 // Letters carry structured metadata in `payload`; the letter body stays in
@@ -182,7 +204,12 @@ export async function getHistory(
 
   const rows = (data ?? []).reverse()
   const reactionsByMessage = await getReactionsForMessages(rows.map((r) => r.id))
-  return rows.map((row) => toMessage(row, reactionsByMessage.get(row.id) ?? []))
+  return rows.map((row) =>
+    toMessage(
+      { ...row, content: decryptContent(row.content), payload: decryptPayload(row.payload) },
+      reactionsByMessage.get(row.id) ?? [],
+    ),
+  )
 }
 
 // A reply target must be a real message in the SAME connection — never trust
@@ -243,12 +270,12 @@ export async function saveMessage(
     .insert({
       connection_id: connection.id,
       sender_id: senderId,
-      content: trimmed,
+      content: encrypt(trimmed),
       type,
-      payload: storedPayload,
+      payload: storedPayload === null ? null : { enc: encrypt(JSON.stringify(storedPayload)) },
       reply_to: replyTo,
     })
-    .select('id, sender_id, content, created_at, type, payload, reply_to')
+    .select('id, sender_id, created_at')
     .single()
   if (error) throw error
 
@@ -262,5 +289,16 @@ export async function saveMessage(
     .eq('user_id', senderId)
   if (readError) console.error('saveMessage: failed to bump sender last_read_at', readError)
 
-  return toMessage(data)
+  // Return the plaintext we already hold rather than decrypting the row back.
+  // This Message is what the socket broadcasts and the push preview reads, so it
+  // must be plaintext — only content/payload at rest are encrypted.
+  return toMessage({
+    id: data.id,
+    sender_id: data.sender_id,
+    content: trimmed,
+    created_at: data.created_at,
+    type,
+    payload: storedPayload,
+    reply_to: replyTo,
+  })
 }
