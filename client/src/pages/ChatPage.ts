@@ -17,6 +17,7 @@ import { formatCountdown, openCountdownComposer, type CountdownPayload } from '.
 import { moodEmoji, openCheckinComposer, type CheckinPayload } from '../features/checkin'
 import { openAskAnswerModal, openAskComposer, type AskPayload } from '../features/ask'
 import { openThisOrThatAnswerModal, openThisOrThatComposer, type ThisOrThatPayload } from '../features/thisorthat'
+import { confirmSendAlarm } from '../features/alarm'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
@@ -1591,6 +1592,13 @@ export const ChatPage: Page = (root, go) => {
             sendMessage(content, 'thisorthat', payload)
             cancelReply()
           },
+        }),
+      // No composer — there's nothing to write, just a confirm before firing
+      // (an emergency alert is too easy to misfire without one).
+      writeAlarm: () =>
+        confirmSendAlarm(() => {
+          sendMessage('', 'alarm', {})
+          cancelReply()
         }),
     }
 
