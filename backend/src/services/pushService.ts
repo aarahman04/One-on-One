@@ -42,6 +42,11 @@ if (configured) {
 interface PushPayload {
   title: string
   body: string
+  // Set for /alarm sends only — tells the service worker to show a more
+  // intrusive notification (requireInteraction + vibrate + renotify).
+  // Real platform limits apply: no OS-level DND bypass exists for web push,
+  // and iOS PWA ignores vibrate/custom-sound entirely (see sw.js).
+  urgent?: boolean
 }
 
 interface SubscriptionRow {

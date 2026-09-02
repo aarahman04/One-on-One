@@ -17,6 +17,7 @@ import { formatCountdown, openCountdownComposer, type CountdownPayload } from '.
 import { moodEmoji, openCheckinComposer, type CheckinPayload } from '../features/checkin'
 import { openAskAnswerModal, openAskComposer, type AskPayload } from '../features/ask'
 import { openThisOrThatAnswerModal, openThisOrThatComposer, type ThisOrThatPayload } from '../features/thisorthat'
+import { confirmSendAlarm, createAlarmController, type AlarmController } from '../features/alarm'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
@@ -121,6 +122,8 @@ function mediaLabel(type: MessageType): string | null {
       return 'Countdown'
     case 'checkin':
       return 'Check-in'
+    case 'alarm':
+      return '🚨 Emergency alarm'
     default:
       return null
   }
@@ -134,6 +137,7 @@ export const ChatPage: Page = (root, go) => {
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let searchDebounce: ReturnType<typeof setTimeout> | null = null
   let focusHandler: (() => void) | null = null
+  let alarmController: AlarmController | null = null
   let disposed = false
 
   // Modals/popovers/menus append to document.body, which the router's
@@ -165,6 +169,8 @@ export const ChatPage: Page = (root, go) => {
     searchDebounce = null
     if (focusHandler) window.removeEventListener('focus', focusHandler)
     focusHandler = null
+    alarmController?.dispose()
+    alarmController = null
   }
 
   root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
@@ -289,6 +295,17 @@ export const ChatPage: Page = (root, go) => {
     const nav = root.querySelector<HTMLElement>('.chat__nav')!
     const menuBtn = root.querySelector<HTMLButtonElement>('#menu-btn')!
     const chatEl = root.querySelector<HTMLElement>('.chat')!
+
+    // --- Alarm: pulsing red glow while an emergency alert is active. The
+    // controller owns sound/vibration/the no-ack auto-clear timer; this page
+    // owns the glow and when to (not) call it (see onIncoming/sendMessage/
+    // history-resume below, and the hybrid clear model in the plan: opening
+    // the chat stops the sound, the glow persists until acknowledged).
+    alarmController = createAlarmController()
+    const setAlarmGlow = (active: boolean): void => {
+      chatEl.classList.toggle('chat--alarm', active)
+    }
+    alarmController.onAutoClear(() => setAlarmGlow(false))
 
     // Wallpaper is shared per-connection (either member's pick applies to
     // both); style/theme stay per-device. Synced via the poll below.
@@ -698,6 +715,60 @@ export const ChatPage: Page = (root, go) => {
       return card
     }
 
+    // Same raise/reply shape as ask/thisorthat above: the raise renders as
+    // its own permanent card (a sender never gets to see it as anything but
+    // "sent"), and an acknowledgement is a SEPARATE alarm message reply-linked
+    // to the raise, rendered as its own small confirmation card underneath —
+    // no message-mutation path exists or is needed. The live sound/vibration/
+    // glow are triggered separately in sendMessage/onIncoming below; this
+    // only builds the static card.
+    const alarmCard = (message: ChatMessage): HTMLElement => {
+      const ack = (message.payload as { ack?: string } | null)?.ack
+      const isMine = message.senderId === myUserId
+
+      if (ack) {
+        const card = document.createElement('div')
+        card.className = 'alarm-card alarm-card--ack'
+        const icon = document.createElement('span')
+        icon.className = 'alarm-card__icon'
+        icon.textContent = '✅'
+        const label = document.createElement('span')
+        label.textContent = isMine ? 'You acknowledged the alarm' : `${otherName} acknowledged the alarm`
+        card.append(icon, label)
+        return card
+      }
+
+      const card = document.createElement('button')
+      card.type = 'button'
+      card.className = 'alarm-card alarm-card--raise'
+      const icon = document.createElement('span')
+      icon.className = 'alarm-card__icon'
+      icon.textContent = '🚨'
+      const body = document.createElement('span')
+      body.className = 'alarm-card__body'
+      const title = document.createElement('div')
+      title.className = 'alarm-card__title'
+      title.textContent = 'Emergency alarm'
+      const hint = document.createElement('div')
+      hint.className = 'alarm-card__hint'
+      hint.textContent = isMine ? `waiting for ${otherName.toLowerCase()} to acknowledge` : 'tap to acknowledge'
+      body.append(title, hint)
+      card.append(icon, body)
+
+      if (isMine) {
+        card.disabled = true // nothing to tap on your own raise
+      } else {
+        card.addEventListener('click', (e) => {
+          e.stopPropagation() // don't also toggle the row's timestamp
+          if (card.disabled) return
+          card.disabled = true
+          hint.textContent = 'acknowledged'
+          sendMessage('', 'alarm', { ack: message.id }, message.id ?? null)
+        })
+      }
+      return card
+    }
+
     // Attachments sit behind short-lived signed URLs (private bucket — see
     // attachmentService.signAttachments), so a bubble renders a placeholder
     // first and swaps in the real src/href once resolved. getSignedUrls
@@ -972,7 +1043,9 @@ export const ChatPage: Page = (root, go) => {
                       ? askCard(message)
                       : message.type === 'thisorthat'
                         ? thisorthatCard(message)
-                        : text
+                        : message.type === 'alarm'
+                          ? alarmCard(message)
+                          : text
 
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
@@ -1206,6 +1279,14 @@ export const ChatPage: Page = (root, go) => {
     if (historyMediaPaths.length) void getSignedUrls(connectionId, historyMediaPaths).catch(() => {})
     for (const message of history) appendMessage(message)
     if (!history.length) appendSystemLine('Say hello — this is the start of your one-on-one.')
+    // Resume the alert on reopen: if the most recent alarm-type message in
+    // history is a raise (not yet followed by an ack — an ack would itself
+    // be the more recent alarm message), the emergency is still live.
+    const lastAlarm = [...history].reverse().find((m) => m.type === 'alarm')
+    if (lastAlarm && !(lastAlarm.payload as { ack?: string } | null)?.ack) {
+      setAlarmGlow(true)
+      alarmController?.start(lastAlarm.senderId === myUserId ? { silent: true } : undefined)
+    }
     oldestLoadedAt = history[0]?.createdAt ?? null
     if (history.length >= HISTORY_PAGE) log.prepend(loadOlderBtn)
     refreshReceipts()
@@ -1282,6 +1363,18 @@ export const ChatPage: Page = (root, go) => {
       const entry: Pending = { tempId, content, row, sent: false, type, payload, replyTo }
       pending.push(entry)
       trySend(entry)
+
+      // Alarm glow/sound react to your OWN send optimistically too — no
+      // reason to wait on the round trip for state you already know.
+      if (type === 'alarm') {
+        if ((payload as { ack?: string } | null)?.ack) {
+          alarmController?.stopAll()
+          setAlarmGlow(false)
+        } else {
+          setAlarmGlow(true)
+          alarmController?.start({ silent: true }) // you don't need alerting to your own alarm
+        }
+      }
     }
 
     // --- Reply: swipe (phone) or right-click "Reply" (desktop) sets a target;
@@ -1591,6 +1684,13 @@ export const ChatPage: Page = (root, go) => {
             sendMessage(content, 'thisorthat', payload)
             cancelReply()
           },
+        }),
+      // No composer — there's nothing to write, just a confirm before firing
+      // (an emergency alert is too easy to misfire without one).
+      writeAlarm: () =>
+        confirmSendAlarm(() => {
+          sendMessage('', 'alarm', {})
+          cancelReply()
         }),
     }
 
@@ -1971,6 +2071,16 @@ export const ChatPage: Page = (root, go) => {
       // Dedup: a reconnect can re-deliver recent message:new events.
       if (message.id && messagesById.has(message.id)) return
 
+      if (message.type === 'alarm') {
+        if ((message.payload as { ack?: string } | null)?.ack) {
+          alarmController?.stopAll()
+          setAlarmGlow(false)
+        } else if (message.senderId !== myUserId) {
+          setAlarmGlow(true)
+          alarmController?.start() // the real alert — sound + vibration + glow
+        }
+      }
+
       appendMessage(message, false, true)
       if (message.senderId !== myUserId) {
         void markRead(connectionId).catch(() => {})
@@ -2007,7 +2117,13 @@ export const ChatPage: Page = (root, go) => {
     }
     void ensureConnected()
 
-    focusHandler = () => void markRead(connectionId).catch(() => {})
+    // Hybrid alarm clear: focusing/opening the chat silences the sound and
+    // vibration right away; the red glow + card persist until acknowledged
+    // (or the auto-clear timeout) — see setAlarmGlow call sites above.
+    focusHandler = () => {
+      void markRead(connectionId).catch(() => {})
+      alarmController?.stopSound()
+    }
     window.addEventListener('focus', focusHandler)
 
     // --- Poll: leave state, termination, seen, reconnect ------------------
@@ -2038,7 +2154,10 @@ export const ChatPage: Page = (root, go) => {
       }
       // Keep marking read while the chat is actually on screen — makes the
       // other side's "seen" tick reliable even if a discrete event was missed.
-      if (document.visibilityState === 'visible') void markRead(connectionId).catch(() => {})
+      if (document.visibilityState === 'visible') {
+        void markRead(connectionId).catch(() => {})
+        alarmController?.stopSound()
+      }
     }
 
     // Self-scheduling so a slow tick can't stack overlapping polls.

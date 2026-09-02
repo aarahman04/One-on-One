@@ -10,13 +10,27 @@ self.addEventListener('push', (event) => {
     /* keep the default */
   }
 
-  event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: '/icon.svg',
-      badge: '/icon.svg',
-    }),
-  )
+  // /alarm sends set urgent — ask for a more insistent notification. This is
+  // still an ordinary web push under the hood: no platform lets a page bypass
+  // OS-level Do Not Disturb, and iOS ignores vibrate/custom sound entirely.
+  // Android Chrome honors requireInteraction + vibrate + renotify.
+  const options = data.urgent
+    ? {
+        body: data.body,
+        icon: '/icon.svg',
+        badge: '/icon.svg',
+        requireInteraction: true,
+        renotify: true,
+        tag: 'alarm',
+        vibrate: [300, 150, 300, 150, 300, 150, 300],
+      }
+    : {
+        body: data.body,
+        icon: '/icon.svg',
+        badge: '/icon.svg',
+      }
+
+  event.waitUntil(self.registration.showNotification(data.title, options))
 })
 
 self.addEventListener('notificationclick', (event) => {

@@ -48,9 +48,28 @@ function mediaNoticeFor(message: Message): string {
       return 'sent you a voice message'
     case 'file':
       return 'sent you a file'
+    case 'alarm':
+      return (message.payload as { ack?: string } | null)?.ack
+        ? 'acknowledged the alarm'
+        : '🚨 sent an emergency alarm'
     default:
       return message.content.slice(0, 120)
   }
+}
+
+// A raise-alarm sender can only fire so often — an emergency feature is a
+// tempting spam vector otherwise. Acknowledgements are exempt (they're a
+// reply to someone else's alarm, not a new alert). Keyed by userId (not
+// socket) so reconnecting doesn't reset the window; in-memory is fine for a
+// single-instance server.
+const ALARM_COOLDOWN_MS = 3 * 60_000
+const lastAlarmRaiseAt = new Map<string, number>()
+function alarmRaiseAllowed(userId: string): boolean {
+  const last = lastAlarmRaiseAt.get(userId)
+  const now = Date.now()
+  if (last !== undefined && now - last < ALARM_COOLDOWN_MS) return false
+  lastAlarmRaiseAt.set(userId, now)
+  return true
 }
 
 // One fetchSockets() decides both delivery paths for a just-sent message: if
@@ -80,7 +99,7 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
 
     const title = senderMember?.nickname ?? 'New message'
     const body = mediaNoticeFor(message)
-    await sendToUser(recipientId, { title, body })
+    await sendToUser(recipientId, { title, body, urgent: message.type === 'alarm' })
   } catch {
     /* best-effort — never fail the send because delivery-sync/push failed */
   }
@@ -153,6 +172,13 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         const type = isMessageType(msg?.type) ? msg.type : 'text'
         const replyTo = typeof msg?.replyTo === 'string' ? msg.replyTo : null
         const tempId = typeof msg?.tempId === 'string' ? msg.tempId : undefined
+        // Only a fresh raise is rate-limited — an ack payload replies to
+        // someone else's alarm and shouldn't be throttled by the raiser's window.
+        const isAlarmRaise = type === 'alarm' && !(msg?.payload as { ack?: unknown } | null)?.ack
+        if (isAlarmRaise && !alarmRaiseAllowed(userId)) {
+          ack?.({ error: 'wait a bit before sending another alarm' })
+          return
+        }
         const message = await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo)
         // tempId echoed so the sender can reconcile its optimistic row exactly.
         io.to(room(connection.id)).emit('message:new', { ...message, tempId })
