@@ -2,7 +2,7 @@
 // future BluetoothTransport implements this same interface so the chat UI
 // and MessageService never change.
 
-export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat'
+export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm'
 
 export interface IncomingMessage {
   id: string

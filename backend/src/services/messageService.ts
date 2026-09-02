@@ -5,9 +5,9 @@ import { getReactionsForMessages, type ReactionSummary } from './reactionService
 import { isAllowedMime, maxBytesFor, type AttachmentKind } from './attachmentService.js'
 import { encrypt, decrypt, isEncrypted } from './crypto.js'
 
-export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat'
+export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm'
 
-const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat']
+const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat', 'alarm']
 export function isMessageType(x: unknown): x is MessageType {
   return MESSAGE_TYPES.includes(x as MessageType)
 }
@@ -179,6 +179,18 @@ function validateThisOrThatPayload(
   return { optionA, optionB, pickSender: pickSender as 'a' | 'b', pickRecipient: pickRecipient as 'a' | 'b' }
 }
 
+// An alarm raise carries no payload; an acknowledgement is a follow-up alarm
+// message reply-linked (via replyTo) to the original, with payload {ack:<id>}
+// naming the raise it clears. No message-mutation path exists (see thisorthat),
+// so ack is a new message, not an edit of the original.
+function validateAlarmPayload(payload: unknown): { ack?: string } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  if (p.ack === undefined || p.ack === null) return {}
+  const ack = String(p.ack).trim()
+  if (ack.length < 1) throw new ConnectionError(400, 'invalid alarm acknowledgement')
+  return { ack }
+}
+
 const HISTORY_PAGE_SIZE = 50
 
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
@@ -238,12 +250,13 @@ export async function saveMessage(
   if (!isMessageType(type)) throw new ConnectionError(400, 'invalid message type')
   const isMedia = (MEDIA_TYPES as string[]).includes(type)
 
-  // Media messages carry an optional caption — content can be empty. Every
-  // other type (text, letter, ask, countdown, checkin, thisorthat) still
-  // requires actual content — each one's primary display string
+  // Media messages carry an optional caption, and an alarm carries no
+  // meaningful content of its own — both can be empty. Every other type
+  // (text, letter, ask, countdown, checkin, thisorthat) still requires
+  // actual content — each one's primary display string
   // (body / question / label / note / "optionA vs optionB").
   const trimmed = content.trim()
-  if (isMedia) {
+  if (isMedia || type === 'alarm') {
     if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
   } else if (trimmed.length < 1 || trimmed.length > 4000) {
     throw new ConnectionError(400, 'message must be 1-4000 characters')
@@ -261,7 +274,9 @@ export async function saveMessage(
             ? validateAskPayload(payload)
             : type === 'thisorthat'
               ? validateThisOrThatPayload(payload)
-              : null
+              : type === 'alarm'
+                ? validateAlarmPayload(payload)
+                : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 
