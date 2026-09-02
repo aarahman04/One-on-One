@@ -31,8 +31,11 @@ window.addEventListener('pointerdown', primeAudioOnce, { once: true })
 window.addEventListener('keydown', primeAudioOnce, { once: true })
 
 export interface AlarmController {
-  /** Begin the full in-app alert for a newly raised, unacknowledged alarm. */
-  start: () => void
+  /** Begin the full in-app alert for a newly raised, unacknowledged alarm.
+   *  `silent` skips sound/vibration (used for your own raise — you don't
+   *  need alerting to something you just sent) but still runs the
+   *  auto-clear timer. */
+  start: (opts?: { silent?: boolean }) => void
   /** Stop sound + vibration only — call when the chat becomes visible/focused.
    *  The visual glow/card persist until acknowledged or auto-cleared. */
   stopSound: () => void
@@ -77,15 +80,17 @@ export function createAlarmController(): AlarmController {
     clearAutoTimer()
   }
 
-  const start = (): void => {
+  const start = (opts: { silent?: boolean } = {}): void => {
     stopAll()
-    void audio.play().catch(() => {
-      /* blocked (no prior gesture this session) — vibration + red glow still fire */
-    })
-    if (navigator.vibrate) {
-      navigator.vibrate(VIBRATE_PATTERN)
-      const cycleMs = VIBRATE_PATTERN.reduce((a, b) => a + b, 0)
-      vibrateTimer = setInterval(() => navigator.vibrate?.(VIBRATE_PATTERN), cycleMs)
+    if (!opts.silent) {
+      void audio.play().catch(() => {
+        /* blocked (no prior gesture this session) — vibration + red glow still fire */
+      })
+      if (navigator.vibrate) {
+        navigator.vibrate(VIBRATE_PATTERN)
+        const cycleMs = VIBRATE_PATTERN.reduce((a, b) => a + b, 0)
+        vibrateTimer = setInterval(() => navigator.vibrate?.(VIBRATE_PATTERN), cycleMs)
+      }
     }
     autoClearTimer = setTimeout(() => {
       stopAll()
