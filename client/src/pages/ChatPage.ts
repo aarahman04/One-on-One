@@ -2082,6 +2082,10 @@ function renderChat(root: HTMLElement, displayName: string): void {
         </div>
         <button type="button" class="chat__reply-bar-cancel" id="reply-bar-cancel">✕</button>
       </div>
+      <div class="chat__enc-note">
+        <svg class="chat__enc-note-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        <span>Messages are encrypted</span>
+      </div>
       <form class="chat__input-bar" id="composer">
         <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach">+</button>
         <textarea id="message-input" placeholder="Type a message..." autocomplete="off" enterkeyhint="send" rows="1"></textarea>

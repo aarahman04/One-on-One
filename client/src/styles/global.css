@@ -801,6 +801,26 @@ input:focus {
   display: none;
 }
 
+/* Ambient reassurance above the composer: encryption is at rest (+ TLS), not
+   end-to-end — copy is deliberately not "end-to-end". Kept faint so it sits
+   below the message list visually; --text-dim is already theme-aware. */
+.chat__enc-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.45;
+  padding: 4px 12px 2px;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.chat__enc-note-icon {
+  flex: none;
+}
+
 .chat__input-bar {
   position: relative; /* anchors .slash-menu so it stays on-screen on phones */
   display: flex;
