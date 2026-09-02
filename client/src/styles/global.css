@@ -269,6 +269,23 @@ input:focus {
   margin-top: 8px;
 }
 
+/* Quiet secondary action under the primary button — a borderless text link so
+   it never competes with "Continue with Google". */
+.screen__alt {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.screen__alt:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .connection-id {
   font-family: var(--font-mono);
   font-size: 32px;
