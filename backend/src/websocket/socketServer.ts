@@ -8,15 +8,13 @@ import { saveMessage, bumpSenderLastRead, isMessageType, type Message } from '..
 import { signAttachments, isAttachmentKind } from '../services/attachmentService.js'
 import { addReaction, removeReaction } from '../services/reactionService.js'
 import { sendToUser } from '../services/pushService.js'
-import { otherMemberId } from '../utils/connections.js'
+import { otherMemberId, room } from '../utils/connections.js'
+import { acceptCall, declineCall, endCall, inviteAllowed, inviteCall, relaySignal, type CallKind } from '../services/callService.js'
+import { getIceServers } from '../services/turnService.js'
 
 interface SocketData {
   userId: string
   connectionId: string | null
-}
-
-function room(connectionId: string): string {
-  return `conn:${connectionId}`
 }
 
 // Only surface domain errors to the client; everything else is 'internal error'
@@ -239,6 +237,105 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
           ack?.({ ok: true })
         } catch (err) {
           ack?.({ error: clientError(err, 'failed to remove reaction') })
+        }
+      },
+    )
+
+    // --- Calls (audio/video signaling) ------------------------------------
+    // Every handler re-resolves the caller's live connection server-side
+    // (never trusts a client-sent connection/peer id) before touching
+    // callService, matching the same rule message:send follows above.
+
+    socket.on(
+      'call:invite',
+      async (msg: { kind?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          if (!withinRateLimit()) return ack?.({ error: 'slow down' })
+          const { userId } = socket.data as SocketData
+          if (!inviteAllowed(userId)) {
+            ack?.({ error: 'wait a moment before calling again' })
+            return
+          }
+          const connection = await getLiveConnectionForUser(userId)
+          if (!connection) {
+            ack?.({ error: 'no active connection' })
+            return
+          }
+          const kind: CallKind = msg?.kind === 'video' ? 'video' : 'audio'
+          const { callId } = await inviteCall(io, connection, userId, kind)
+          const iceServers = await getIceServers()
+          ack?.({ ok: true, callId, iceServers })
+        } catch (err) {
+          ack?.({ error: clientError(err, 'failed to start call') })
+        }
+      },
+    )
+
+    socket.on(
+      'call:accept',
+      async (msg: { callId?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          if (!withinRateLimit()) return ack?.({ error: 'slow down' })
+          const { userId } = socket.data as SocketData
+          const connection = await getLiveConnectionForUser(userId)
+          if (!connection) return ack?.({ error: 'no active connection' })
+          const callId = typeof msg?.callId === 'string' ? msg.callId : ''
+          acceptCall(io, connection.id, callId, userId)
+          const iceServers = await getIceServers()
+          ack?.({ ok: true, iceServers })
+        } catch (err) {
+          ack?.({ error: clientError(err, 'failed to accept call') })
+        }
+      },
+    )
+
+    socket.on(
+      'call:decline',
+      async (msg: { callId?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          if (!withinRateLimit()) return ack?.({ error: 'slow down' })
+          const { userId } = socket.data as SocketData
+          const connection = await getLiveConnectionForUser(userId)
+          if (!connection) return ack?.({ error: 'no active connection' })
+          const callId = typeof msg?.callId === 'string' ? msg.callId : ''
+          declineCall(io, connection.id, callId, userId)
+          ack?.({ ok: true })
+        } catch (err) {
+          ack?.({ error: clientError(err, 'failed to decline call') })
+        }
+      },
+    )
+
+    socket.on(
+      'call:signal',
+      async (msg: { callId?: unknown; data?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          if (!withinRateLimit()) return ack?.({ error: 'slow down' })
+          const { userId } = socket.data as SocketData
+          const connection = await getLiveConnectionForUser(userId)
+          if (!connection) return ack?.({ error: 'no active connection' })
+          const callId = typeof msg?.callId === 'string' ? msg.callId : ''
+          await relaySignal(io, connection.id, callId, userId, msg?.data)
+          ack?.({ ok: true })
+        } catch (err) {
+          ack?.({ error: clientError(err, 'failed to relay call signal') })
+        }
+      },
+    )
+
+    socket.on(
+      'call:end',
+      async (msg: { callId?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          if (!withinRateLimit()) return ack?.({ error: 'slow down' })
+          const { userId } = socket.data as SocketData
+          const connection = await getLiveConnectionForUser(userId)
+          if (!connection) return ack?.({ error: 'no active connection' })
+          const callId = typeof msg?.callId === 'string' ? msg.callId : ''
+          endCall(io, connection.id, callId, userId)
+          ack?.({ ok: true })
+        } catch (err) {
+          ack?.({ error: clientError(err, 'failed to end call') })
         }
       },
     )

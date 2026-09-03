@@ -6,6 +6,7 @@ import { connectionsRouter } from './routes/connections.js'
 import { messagesRouter } from './routes/messages.js'
 import { attachmentsRouter } from './routes/attachments.js'
 import { pushRouter } from './routes/push.js'
+import { turnRouter } from './routes/turn.js'
 import { ConnectionError } from './services/connectionService.js'
 import { createSocketServer } from './websocket/socketServer.js'
 import { apiLimiter } from './middleware/rateLimit.js'
@@ -31,6 +32,7 @@ app.use('/api', connectionsRouter)
 app.use('/api', messagesRouter)
 app.use('/api', attachmentsRouter)
 app.use('/api', pushRouter)
+app.use('/api', turnRouter)
 
 app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (res.headersSent) {
