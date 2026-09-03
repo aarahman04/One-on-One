@@ -145,6 +145,15 @@ button:active {
   transform: scale(0.97);
 }
 
+/* Keyboard-only focus ring — nothing else in this file sets `outline`, so one
+   rule covers every button, menu item, and appearance/mood/pick option
+   site-wide without touching each component. Inputs keep their own
+   border-color focus style below; this adds on top of it, not instead. */
+:focus-visible {
+  outline: 2px solid var(--accent-other);
+  outline-offset: 2px;
+}
+
 button.primary {
   background: var(--accent-you);
   color: #04170a;
@@ -383,10 +392,15 @@ input:focus {
 .chat__menu-btn {
   background: transparent;
   border: none;
+  border-radius: 6px;
   color: var(--text-dim);
   font-size: 18px;
   padding: 4px 8px;
   flex-shrink: 0;
+}
+
+.chat__menu-btn:hover {
+  background: var(--bg-raised);
 }
 
 .chat__log {
@@ -695,9 +709,14 @@ input:focus {
 .chat__reply-bar-cancel {
   background: transparent;
   border: none;
+  border-radius: 6px;
   color: var(--text-dim);
   font-size: 14px;
   padding: 4px 8px;
+}
+
+.chat__reply-bar-cancel:hover {
+  background: var(--bg);
 }
 
 .chat__emoji-picker {
@@ -2162,9 +2181,14 @@ input:focus {
   right: 12px;
   background: transparent;
   border: none;
+  border-radius: 6px;
   color: var(--text-dim);
   font-size: 16px;
   padding: 4px 8px;
+}
+
+.modal-close:hover {
+  background: var(--bg);
 }
 
 .letter-compose__title,
