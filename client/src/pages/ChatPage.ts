@@ -32,11 +32,13 @@ import {
 } from '../services/connectionsApi'
 import {
   connectMessaging,
+  getCallTransport,
   type IncomingMessage,
   type MessageType,
   type ReactionUpdate,
   type Transport,
 } from '../services/messageService'
+import { mountCallBar } from '../features/call/controller'
 import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
 import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
 import { linkifyInto } from '../utils/linkify'
@@ -155,12 +157,15 @@ export const ChatPage: Page = (root, go) => {
   const overlays = new Set<() => void>()
   let disposeMenuDropdown: (() => void) | null = null
   let disposePopover: (() => void) | null = null
+  let disposeCallBar: (() => void) | null = null
 
   const cleanup = (): void => {
     if (disposed) return
     disposed = true
     disposePopover?.()
     disposeMenuDropdown?.()
+    disposeCallBar?.()
+    disposeCallBar = null
     closeAppearance()
     for (const dispose of overlays) dispose()
     overlays.clear()
@@ -2192,6 +2197,9 @@ export const ChatPage: Page = (root, go) => {
       })
       flushPending()
       void markRead(connectionId).catch(() => {})
+      // Mount once — ensureConnected can call attachTransport again on a
+      // later successful reconnect after an earlier attempt failed.
+      if (!disposeCallBar) disposeCallBar = mountCallBar(nav, getCallTransport(), otherName)
     }
     const ensureConnected = async (): Promise<void> => {
       if (transport || connecting || disposed) return

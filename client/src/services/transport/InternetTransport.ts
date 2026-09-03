@@ -1,6 +1,8 @@
 import { io, type Socket } from 'socket.io-client'
 import { supabase } from '../supabaseClient'
 import type { IncomingMessage, MessageType, ReactionUpdate, Transport } from './Transport'
+import type { CallTransport } from './CallTransport'
+import { InternetCallTransport } from './InternetCallTransport'
 
 const API_URL = import.meta.env.VITE_API_URL
 const CONNECT_TIMEOUT_MS = 15000
@@ -42,6 +44,14 @@ export class InternetTransport implements Transport {
   disconnect(): void {
     this.socket?.disconnect()
     this.socket = null
+  }
+
+  // Calls ride this same authenticated socket rather than opening a second
+  // connection — see messageService.getCallTransport(), the sanctioned entry
+  // point for call UI/features (spec §22: never touch Socket.IO directly).
+  getCallTransport(): CallTransport {
+    if (!this.socket) throw new Error('not connected')
+    return new InternetCallTransport(this.socket)
   }
 
   private emitWithAck(event: string, payload: unknown): Promise<void> {
