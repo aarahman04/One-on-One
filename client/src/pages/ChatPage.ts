@@ -8,6 +8,7 @@ import {
   isSameDay,
 } from '../utils/formatTime'
 import { downloadFromUrl, formatFileSize } from '../utils/download'
+import { loadingScreenHtml } from '../utils/loadingScreen'
 import { mountMenuDropdown } from '../components/MenuDropdown'
 import { openModal } from '../components/Modal'
 import { showToast } from '../components/Toast'
@@ -181,7 +182,7 @@ export const ChatPage: Page = (root, go) => {
     alarmController = null
   }
 
-  root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
+  root.innerHTML = loadingScreenHtml()
 
   ;(async () => {
     const current = await getCurrentConnection()
@@ -2299,7 +2300,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
       </div>
       <form class="chat__input-bar" id="composer">
         <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach">+</button>
-        <textarea id="message-input" placeholder="Type a message..." autocomplete="off" enterkeyhint="send" rows="1"></textarea>
+        <textarea id="message-input" placeholder="Type a message…" autocomplete="off" enterkeyhint="send" rows="1"></textarea>
         <div class="chat__recording-bar" id="recording-bar" hidden>
           <span class="chat__recording-dot"></span>
           <span class="chat__recording-time" id="recording-time">0:00</span>

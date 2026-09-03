@@ -270,6 +270,26 @@ input:focus {
   max-width: 320px;
 }
 
+/* Shared full-screen loading state (nickname, chat, connection request,
+   export, leave) — a spinner instead of a bare line of text. */
+.screen__loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+}
+
+.screen__spinner {
+  animation: chat-icon-spin 0.8s linear infinite;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen__spinner {
+    animation: none;
+  }
+}
+
 .screen__actions {
   display: flex;
   flex-wrap: wrap;

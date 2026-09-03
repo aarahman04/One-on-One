@@ -1,9 +1,10 @@
 import type { Page } from '../state/router'
 import { acceptConnection, declineConnection, getCurrentConnection } from '../services/connectionsApi'
 import { escapeHtml } from '../utils/download'
+import { loadingScreenHtml } from '../utils/loadingScreen'
 
 export const ConnectionRequestPage: Page = (root, go) => {
-  root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
+  root.innerHTML = loadingScreenHtml()
 
   getCurrentConnection()
     .then((current) => {

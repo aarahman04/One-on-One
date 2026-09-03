@@ -1,8 +1,9 @@
 import type { Page } from '../state/router'
 import { getCurrentConnection, setNickname } from '../services/connectionsApi'
+import { loadingScreenHtml } from '../utils/loadingScreen'
 
 export const NicknamePage: Page = (root, go) => {
-  root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
+  root.innerHTML = loadingScreenHtml()
 
   getCurrentConnection()
     .then((current) => {

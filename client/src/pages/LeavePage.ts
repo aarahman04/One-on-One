@@ -1,8 +1,9 @@
 import type { Page } from '../state/router'
 import { getCurrentConnection, advanceLeave, cancelLeave, confirmEndLeave } from '../services/connectionsApi'
+import { loadingScreenHtml } from '../utils/loadingScreen'
 
 export const LeavePage: Page = (root, go) => {
-  root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
+  root.innerHTML = loadingScreenHtml()
 
   getCurrentConnection()
     .then((current) => {

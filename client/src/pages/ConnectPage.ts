@@ -5,7 +5,7 @@ export const ConnectPage: Page = (root, go) => {
   root.innerHTML = `
     <div class="screen">
       <div class="screen__eyebrow">CONNECT</div>
-      <div class="screen__title">Connection ID</div>
+      <div class="screen__title">Enter their connection ID</div>
       <input id="id-input" class="screen__input screen__input--code" placeholder="K7F29PQ2" maxlength="8" />
       <div class="screen__actions">
         <button class="primary" id="connect-btn">Connect</button>
