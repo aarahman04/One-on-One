@@ -90,6 +90,10 @@ interface ImagePayload {
   // set on your OWN just-picked photo so it renders instantly from the file
   // you already have instead of waiting on upload + a signed-URL fetch.
   localUrl?: string
+  // Signed server-side at broadcast time (socketServer's message:send
+  // handler) so both sides get a viewable URL in the same event, instead of
+  // each one making its own follow-up signed-URL request to render it.
+  url?: string
 }
 interface VoicePayload {
   path: string
@@ -819,12 +823,39 @@ export const ChatPage: Page = (root, go) => {
       const wrap = document.createElement('div')
       wrap.className = 'image-bubble'
 
+      // The <img> and its loading spinner share one relatively-positioned
+      // wrapper so the spinner overlays the reserved box instead of the
+      // caption below it.
+      const media = document.createElement('div')
+      media.className = 'image-bubble__media'
+
       const img = document.createElement('img')
       img.className = 'image-bubble__img'
       img.alt = 'Photo'
       img.loading = 'lazy'
-      if (p.width && p.height) img.style.aspectRatio = `${p.width} / ${p.height}`
-      wrap.append(img)
+      if (p.width && p.height) {
+        // Reserve the real final size up front — no layout jump, no blank box.
+        img.style.aspectRatio = `${p.width} / ${p.height}`
+      } else {
+        // Legacy message from before dimensions were captured: nothing to
+        // reserve exactly, so fall back to a sane minimum instead of
+        // collapsing to 0 height until the raster decodes.
+        media.classList.add('image-bubble__media--no-dims')
+      }
+
+      const spinner = document.createElement('div')
+      spinner.className = 'image-bubble__spinner'
+      spinner.innerHTML =
+        '<svg class="chat__icon-spinner" width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="40 56.5"/></svg>'
+      const stopSpinner = (): void => spinner.remove()
+      img.addEventListener('load', () => {
+        img.classList.add('image-bubble__img--loaded') // fade in, no pop
+        stopSpinner()
+      })
+      img.addEventListener('error', stopSpinner)
+
+      media.append(img, spinner)
+      wrap.append(media)
 
       if (message.content) {
         const caption = document.createElement('div')
@@ -841,6 +872,10 @@ export const ChatPage: Page = (root, go) => {
         // no upload or signed-URL round-trip to wait on.
         resolvedUrl = p.localUrl
         img.src = p.localUrl
+      } else if (p.url) {
+        // Signed at broadcast time — already viewable, no follow-up request.
+        resolvedUrl = p.url
+        img.src = p.url
       } else if (path) {
         hydrateMedia(path, (url) => {
           resolvedUrl = url

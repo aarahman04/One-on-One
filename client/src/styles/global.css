@@ -1853,6 +1853,16 @@ input:focus {
   max-width: 260px;
 }
 
+.image-bubble__media {
+  position: relative;
+}
+
+/* Legacy message from before dimensions were captured: no aspect-ratio to
+   reserve, so hold a sane minimum instead of collapsing to 0 until decode. */
+.image-bubble__media--no-dims .image-bubble__img {
+  min-height: 160px;
+}
+
 .image-bubble__img {
   display: block;
   width: 100%;
@@ -1861,6 +1871,22 @@ input:focus {
   border-radius: 8px;
   cursor: pointer;
   background: var(--bg);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.image-bubble__img--loaded {
+  opacity: 1;
+}
+
+.image-bubble__spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  pointer-events: none;
 }
 
 .image-bubble__caption {
