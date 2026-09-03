@@ -294,15 +294,10 @@ export async function saveMessage(
     .single()
   if (error) throw error
 
-  // Sending proves the sender has read everything up to now, so advance their
-  // last_read_at (to the DB-issued created_at, avoiding app/DB clock skew). This
-  // records reads that the separate markRead call would otherwise miss.
-  const { error: readError } = await supabaseAdmin
-    .from('connection_members')
-    .update({ last_read_at: data.created_at })
-    .eq('connection_id', connection.id)
-    .eq('user_id', senderId)
-  if (readError) console.error('saveMessage: failed to bump sender last_read_at', readError)
+  // Sending proves the sender has read everything up to now, so the caller
+  // (socketServer) advances their last_read_at after broadcasting — moved out
+  // of this function so that DB write doesn't sit on the hot path gating
+  // delivery to the recipient (see bumpSenderLastRead).
 
   // Return the plaintext we already hold rather than decrypting the row back.
   // This Message is what the socket broadcasts and the push preview reads, so it
@@ -316,4 +311,18 @@ export async function saveMessage(
     payload: storedPayload,
     reply_to: replyTo,
   })
+}
+
+// Sending proves the sender has read everything up to now, so advance their
+// last_read_at (to the DB-issued created_at, avoiding app/DB clock skew) —
+// this records reads that the separate markRead call would otherwise miss.
+// Split out of saveMessage and called fire-and-forget AFTER the broadcast
+// (like syncDelivery) so this write never gates delivery to the recipient.
+export async function bumpSenderLastRead(connectionId: string, senderId: string, createdAt: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from('connection_members')
+    .update({ last_read_at: createdAt })
+    .eq('connection_id', connectionId)
+    .eq('user_id', senderId)
+  if (error) console.error('bumpSenderLastRead: failed to bump sender last_read_at', error)
 }
