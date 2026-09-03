@@ -13,3 +13,9 @@ export function otherMemberId(
 ): string {
   return conn.user_a_id === userId ? conn.user_b_id : conn.user_a_id
 }
+
+// The Socket.IO room for a connection's two members. Shared by socketServer
+// (message/reaction broadcast) and callService (call signaling broadcast).
+export function room(connectionId: string): string {
+  return `conn:${connectionId}`
+}
