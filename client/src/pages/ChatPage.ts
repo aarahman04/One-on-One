@@ -2,6 +2,7 @@ import type { Page } from '../state/router'
 import {
   formatClock,
   formatDateSeparator,
+  formatCallDuration,
   formatDuration,
   formatFullTimestamp,
   formatMessageTime,
@@ -39,6 +40,7 @@ import {
   type Transport,
 } from '../services/messageService'
 import { mountCallBar } from '../features/call/controller'
+import { CALL_LOG_ICON } from '../features/call/icons'
 import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
 import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
 import { linkifyInto } from '../utils/linkify'
@@ -1035,11 +1037,46 @@ export const ChatPage: Page = (root, go) => {
       return sep
     }
 
+    // Call log rows: server-authored, centered in the stream like WhatsApp's,
+    // with no sender label, bubble, receipt, reaction or reply affordance.
+    // senderId is always the caller, so "mine" means I placed the call.
+    const callLogRow = (message: ChatMessage, at: Date): HTMLElement => {
+      const p = (message.payload ?? {}) as { kind?: string; outcome?: string; durationSec?: number }
+      const iMadeTheCall = message.senderId === myUserId
+      const kindWord = p.kind === 'video' ? 'video call' : 'voice call'
+      const missed = p.outcome === 'missed' || p.outcome === 'declined' || p.outcome === 'cancelled'
+
+      let label: string
+      if (p.outcome === 'completed') {
+        label = `${iMadeTheCall ? 'Outgoing' : 'Incoming'} ${kindWord} · ${formatCallDuration(p.durationSec ?? 0)}`
+      } else if (p.outcome === 'declined') {
+        label = iMadeTheCall ? `${kindWord} declined` : `You declined a ${kindWord}`
+      } else if (p.outcome === 'cancelled') {
+        label = iMadeTheCall ? `You cancelled a ${kindWord}` : `Missed ${kindWord}`
+      } else if (p.outcome === 'missed') {
+        label = iMadeTheCall ? `No answer · ${kindWord}` : `Missed ${kindWord}`
+      } else {
+        label = `${kindWord} failed`
+      }
+
+      const row = document.createElement('div')
+      row.className = 'chat__call-log' + (missed && !iMadeTheCall ? ' chat__call-log--missed' : '')
+      row.dataset.at = message.createdAt
+      row.dataset.type = message.type
+      if (message.id) row.dataset.id = message.id
+      row.innerHTML = CALL_LOG_ICON
+      const text = document.createElement('span')
+      text.textContent = `${label} · ${formatClock(at)}`
+      row.append(text)
+      return row
+    }
+
     // Pure row build (no DOM insertion, no side effects) so both the forward
     // append and the "load older" prepend can share it.
     const buildMessageRow = (message: ChatMessage, pending: boolean): HTMLElement => {
       const at = new Date(message.createdAt)
       const isMine = message.senderId === myUserId
+      if (message.type === 'call') return callLogRow(message, at)
       const row = document.createElement('div')
       row.className = 'chat__message' + (pending ? ' chat__message--pending' : '')
       row.dataset.at = message.createdAt
@@ -1131,6 +1168,9 @@ export const ChatPage: Page = (root, go) => {
 
     // Side effects after a row is in the DOM (receipts, id map, reaction chips).
     const registerMessageRow = (message: ChatMessage, row: HTMLElement): void => {
+      // Call logs carry no receipt, and can't be quoted or reacted to — so
+      // they stay out of myRows and the quotable-message map entirely.
+      if (message.type === 'call') return
       if (message.senderId === myUserId) {
         myRows.push(row)
         applyReceipt(row)
@@ -2056,7 +2096,7 @@ export const ChatPage: Page = (root, go) => {
       'touchstart',
       (e) => {
         const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
-        if (!row?.dataset.id) return
+        if (!row?.dataset.id || row.dataset.type === 'call') return
         swipeRow = row
         swipeStartX = e.touches[0].clientX
         swipeStartY = e.touches[0].clientY
@@ -2129,7 +2169,7 @@ export const ChatPage: Page = (root, go) => {
 
     log.addEventListener('contextmenu', (e) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
-      if (!row?.dataset.id) return
+      if (!row?.dataset.id || row.dataset.type === 'call') return
       e.preventDefault()
       // Long-press (touchstart/touchmove/touchend) already owns this gesture
       // on touch — Android can fire a native contextmenu around the same

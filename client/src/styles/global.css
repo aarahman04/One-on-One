@@ -2365,3 +2365,149 @@ input:focus {
     transition: none;
   }
 }
+
+/* --- Calling ------------------------------------------------------------
+   Header call button, full-screen call surface, and the call-log row that
+   lands in the message stream after a call resolves. */
+
+.chat__call-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.chat__call-btn:hover {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+.call-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 60; /* above .modal-overlay — a ringing call interrupts everything */
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: calc(40px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+    calc(40px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
+}
+
+.call-screen__top {
+  text-align: center;
+}
+
+.call-screen__name {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 80vw;
+}
+
+.call-screen__status {
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums; /* timer digits don't jitter */
+}
+
+.call-screen__avatar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.call-screen__avatar span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 52px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.call-screen__controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 28px;
+  padding: 22px 26px;
+  border-radius: 22px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+}
+
+.call-screen__control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.call-screen__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.call-screen__btn--active {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.call-screen__btn--danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.call-screen__btn--accept {
+  background: var(--accent-you);
+  color: var(--bg);
+}
+
+.call-screen__control-label {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+/* Call log row in the message stream — centered, like WhatsApp's. */
+.chat__call-log {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.chat__call-log svg {
+  flex-shrink: 0;
+}
+
+.chat__call-log--missed {
+  color: var(--danger);
+}

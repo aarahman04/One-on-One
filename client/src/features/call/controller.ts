@@ -1,58 +1,180 @@
 import type { CallTransport, IceServer, IncomingCall } from '../../services/transport/CallTransport'
+import { formatCallDuration } from '../../utils/formatTime'
 import { CallSession } from './session'
+import {
+  CALL_HANGUP_ICON,
+  CALL_MIC_ICON,
+  CALL_MIC_OFF_ICON,
+  CALL_PHONE_ICON,
+  CALL_SPEAKER_ICON,
+  CALL_SPEAKER_OFF_ICON,
+} from './icons'
 
-type CallBarState = 'idle' | 'ringing-out' | 'ringing-in' | 'in-call'
+type CallState = 'idle' | 'ringing-out' | 'ringing-in' | 'in-call' | 'reconnecting'
 
-// Batch 2: deliberately minimal — a plain bar, no icons, no overlay styling.
-// Proves the signaling + WebRTC pipeline works end to end. Batch 3 replaces
-// this with the real header button, incoming-call overlay, and in-call screen.
+// Speaker/earpiece routing is not controllable from a web page on Android —
+// there is no API for it, and the browser routes WebRTC audio to the
+// loudspeaker by default. setSinkId is the only related API and exists on
+// desktop Chrome only, so the button is shown only where it can actually do
+// something rather than lying about it (see the plan's Android notes).
+function speakerControlSupported(): boolean {
+  return typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype
+}
+
 export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerName: string): () => void {
-  const bar = document.createElement('div')
-  bar.className = 'call-bar-tmp'
-  bar.style.cssText =
-    'padding:8px 20px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;font-size:13px;'
-  bar.hidden = true
-  nav.insertAdjacentElement('afterend', bar)
-
+  // --- Header call button (immediately left of the ••• menu) ---------------
   const callBtn = document.createElement('button')
   callBtn.type = 'button'
-  callBtn.textContent = '📞'
+  callBtn.className = 'chat__call-btn'
   callBtn.title = 'Audio call'
+  callBtn.setAttribute('aria-label', 'Start audio call')
+  callBtn.innerHTML = CALL_PHONE_ICON
   const menuBtn = nav.querySelector('.chat__menu-btn')
   if (menuBtn) menuBtn.insertAdjacentElement('beforebegin', callBtn)
 
-  let state: CallBarState = 'idle'
+  // --- Full-screen call surface (built once, shown per state) --------------
+  const screen = document.createElement('div')
+  screen.className = 'call-screen'
+  screen.hidden = true
+  screen.innerHTML = `
+    <div class="call-screen__top">
+      <div class="call-screen__name"></div>
+      <div class="call-screen__status"></div>
+    </div>
+    <div class="call-screen__avatar"><span></span></div>
+    <div class="call-screen__controls"></div>
+  `
+  document.body.append(screen)
+
+  const nameEl = screen.querySelector<HTMLElement>('.call-screen__name')!
+  const statusEl = screen.querySelector<HTMLElement>('.call-screen__status')!
+  const avatarEl = screen.querySelector<HTMLElement>('.call-screen__avatar span')!
+  const controlsEl = screen.querySelector<HTMLElement>('.call-screen__controls')!
+
+  nameEl.textContent = peerName
+  avatarEl.textContent = peerName.trim().charAt(0).toUpperCase() || '?'
+
+  let state: CallState = 'idle'
   let session: CallSession | null = null
   let activeCallId: string | null = null
   let remoteAudio: HTMLAudioElement | null = null
   let pendingAcceptedUnsub: (() => void) | null = null
+  let muted = false
+  let speakerOn = true
+  let connectedAt = 0
+  let timerId: ReturnType<typeof setInterval> | null = null
 
-  const render = (label: string, buttons: Array<{ text: string; onClick: () => void }>): void => {
-    bar.hidden = false
-    bar.innerHTML = ''
-    const span = document.createElement('span')
-    span.textContent = label
-    bar.append(span)
-    for (const b of buttons) {
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.textContent = b.text
-      btn.onclick = b.onClick
-      bar.append(btn)
+  // One circular icon button with a label under it, WhatsApp-style.
+  const controlBtn = (
+    label: string,
+    icon: string,
+    variant: 'neutral' | 'danger' | 'accept',
+    onClick: () => void,
+    active = false,
+  ): HTMLElement => {
+    const wrap = document.createElement('div')
+    wrap.className = 'call-screen__control'
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = `call-screen__btn call-screen__btn--${variant}` + (active ? ' call-screen__btn--active' : '')
+    btn.innerHTML = icon
+    btn.setAttribute('aria-label', label)
+    btn.onclick = onClick
+    const text = document.createElement('span')
+    text.className = 'call-screen__control-label'
+    text.textContent = label
+    wrap.append(btn, text)
+    return wrap
+  }
+
+  const stopTimer = (): void => {
+    if (timerId) clearInterval(timerId)
+    timerId = null
+  }
+
+  const renderControls = (): void => {
+    controlsEl.innerHTML = ''
+    if (state === 'ringing-in') {
+      controlsEl.append(
+        controlBtn('Decline', CALL_HANGUP_ICON, 'danger', () => {
+          if (activeCallId) void transport.decline(activeCallId)
+          reset()
+        }),
+        controlBtn('Accept', CALL_PHONE_ICON, 'accept', () => void acceptCall()),
+      )
+      return
     }
+    if (state === 'ringing-out') {
+      controlsEl.append(controlBtn('Cancel', CALL_HANGUP_ICON, 'danger', () => void hangup()))
+      return
+    }
+    // in-call / reconnecting: speaker (where supported), mute, end.
+    if (speakerControlSupported()) {
+      controlsEl.append(
+        controlBtn(
+          'Speaker',
+          speakerOn ? CALL_SPEAKER_ICON : CALL_SPEAKER_OFF_ICON,
+          'neutral',
+          () => void toggleSpeaker(),
+          speakerOn,
+        ),
+      )
+    }
+    controlsEl.append(
+      controlBtn('Mute', muted ? CALL_MIC_OFF_ICON : CALL_MIC_ICON, 'neutral', () => toggleMute(), muted),
+      controlBtn('End', CALL_HANGUP_ICON, 'danger', () => void hangup()),
+    )
+  }
+
+  const show = (status: string): void => {
+    screen.hidden = false
+    statusEl.textContent = status
+    renderControls()
   }
 
   const reset = (): void => {
     state = 'idle'
     activeCallId = null
+    muted = false
+    connectedAt = 0
+    stopTimer()
     pendingAcceptedUnsub?.()
     pendingAcceptedUnsub = null
     session?.close()
     session = null
     remoteAudio?.remove()
     remoteAudio = null
-    bar.hidden = true
-    bar.innerHTML = ''
+    screen.hidden = true
+    controlsEl.innerHTML = ''
+  }
+
+  const startTimer = (): void => {
+    stopTimer()
+    connectedAt = Date.now()
+    const tick = (): void => {
+      statusEl.textContent = formatCallDuration(Math.floor((Date.now() - connectedAt) / 1000))
+    }
+    tick()
+    timerId = setInterval(tick, 1000)
+  }
+
+  const toggleMute = (): void => {
+    muted = !muted
+    session?.setMuted(muted)
+    renderControls()
+  }
+
+  const toggleSpeaker = async (): Promise<void> => {
+    speakerOn = !speakerOn
+    const el = remoteAudio as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
+    try {
+      // '' is the system default output; 'communications' is the earpiece-ish
+      // device where the platform exposes one.
+      await el?.setSinkId?.(speakerOn ? '' : 'communications')
+    } catch {
+      /* platform refused the switch — leave routing as-is */
+    }
+    renderControls()
   }
 
   const startSession = (callId: string, iceServers: IceServer[], role: 'caller' | 'callee'): void => {
@@ -65,13 +187,21 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       },
       onStateChange: (s) => {
         if (s === 'connected') {
+          const wasReconnecting = state === 'reconnecting'
           state = 'in-call'
-          render(`In call with ${peerName}`, [
-            { text: 'Mute', onClick: () => toggleMute() },
-            { text: 'End', onClick: () => void hangup() },
-          ])
-        } else if (s === 'ended') {
-          reset()
+          screen.hidden = false
+          // Keep counting through a blip rather than restarting the clock.
+          if (!wasReconnecting || !timerId) startTimer()
+          renderControls()
+        } else if (s === 'reconnecting') {
+          state = 'reconnecting'
+          stopTimer()
+          show('Reconnecting…')
+        } else {
+          // Died on its own (reconnect grace expired). Still tell the server,
+          // or its registry keeps this call "in progress" forever and every
+          // later call on this connection is refused as busy.
+          void hangup()
         }
       },
     })
@@ -80,10 +210,17 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     else void session.startAsCallee()
   }
 
-  let muted = false
-  const toggleMute = (): void => {
-    muted = !muted
-    session?.setMuted(muted)
+  const acceptCall = async (): Promise<void> => {
+    const callId = activeCallId
+    if (!callId) return
+    try {
+      const { iceServers } = await transport.accept(callId)
+      state = 'in-call'
+      show('Connecting…')
+      startSession(callId, iceServers, 'callee')
+    } catch {
+      reset()
+    }
   }
 
   const hangup = async (): Promise<void> => {
@@ -104,16 +241,20 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
         const { callId, iceServers } = await transport.invite('audio')
         activeCallId = callId
         state = 'ringing-out'
-        render(`Calling ${peerName}…`, [{ text: 'Cancel', onClick: () => void hangup() }])
+        show('Calling…')
+        // The offer is only created once they actually answer — see session.ts.
         pendingAcceptedUnsub = transport.onAccepted((acceptedId) => {
           if (acceptedId !== callId) return
           pendingAcceptedUnsub?.()
           pendingAcceptedUnsub = null
+          state = 'in-call'
+          show('Connecting…')
           startSession(acceptedId, iceServers, 'caller')
         })
       } catch (err) {
-        render(err instanceof Error ? err.message : 'call failed', [])
-        setTimeout(reset, 3000)
+        state = 'ringing-out'
+        show(err instanceof Error ? err.message : 'Call failed')
+        setTimeout(reset, 2500)
       }
     })()
   }
@@ -122,28 +263,8 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     if (state !== 'idle') return // one call at a time — server also enforces this
     activeCallId = call.callId
     state = 'ringing-in'
-    render(`Incoming call from ${peerName}`, [
-      {
-        text: 'Accept',
-        onClick: () => {
-          void (async () => {
-            try {
-              const { iceServers } = await transport.accept(call.callId)
-              startSession(call.callId, iceServers, 'callee')
-            } catch {
-              reset()
-            }
-          })()
-        },
-      },
-      {
-        text: 'Decline',
-        onClick: () => {
-          void transport.decline(call.callId)
-          reset()
-        },
-      },
-    ])
+    show('Incoming call')
+    if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400])
   })
 
   const endedUnsub = transport.onEnded((callId) => {
@@ -155,9 +276,10 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     incomingUnsub()
     endedUnsub()
     pendingAcceptedUnsub?.()
+    stopTimer()
     session?.close()
     remoteAudio?.remove()
-    bar.remove()
+    screen.remove()
     callBtn.remove()
   }
 }

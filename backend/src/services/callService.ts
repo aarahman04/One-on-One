@@ -14,6 +14,7 @@ import type { Server } from 'socket.io'
 import { ConnectionError } from '../utils/connectionError.js'
 import { otherMemberId, room } from '../utils/connections.js'
 import type { MemberConnection } from './connectionAccess.js'
+import { saveMessage } from './messageService.js'
 
 export type CallKind = 'audio' | 'video'
 export type CallOutcome = 'missed' | 'declined' | 'cancelled' | 'completed' | 'failed'
@@ -51,11 +52,24 @@ function socketUserId(s: { data: unknown }): string {
   return (s.data as { userId: string }).userId
 }
 
-// Batch 4 adds a server-authored chat-log write at this single point (one
-// resolution path for every outcome) instead of touching each call site.
-function resolveCall(record: CallRecord, _outcome: CallOutcome): void {
+// The single resolution path for every outcome — and so the one place the
+// call gets written into chat history. Server-authored: senderId is always the
+// CALLER, and the client renders incoming/outgoing framing by comparing that
+// to its own user id (message:send refuses a client-sent 'call' type).
+// Fire-and-forget: a failed log write must never block tearing the call down.
+function resolveCall(io: Server, record: CallRecord, outcome: CallOutcome): void {
   clearTimeout(record.ringTimer)
   activeCalls.delete(record.connectionId)
+  const durationSec = record.connectedAt ? Math.round((Date.now() - record.connectedAt) / 1000) : 0
+  void saveMessage({ id: record.connectionId }, record.callerId, '', 'call', {
+    kind: record.kind,
+    outcome,
+    durationSec,
+  })
+    // Broadcast like any other message so both sides render the row live
+    // instead of only seeing it after a reload.
+    .then((message) => io.to(room(record.connectionId)).emit('message:new', message))
+    .catch((err) => console.error('callService: failed to write call to chat history', err))
 }
 
 // Caller invites the connection's other member. Resolves once call:incoming
@@ -91,7 +105,7 @@ export async function inviteCall(
       const current = activeCalls.get(connection.id)
       if (current?.id !== id) return
       io.to(room(connection.id)).emit('call:ended', { callId: id, reason: 'missed' })
-      resolveCall(current, 'missed')
+      resolveCall(io, current, 'missed')
     }, RING_TIMEOUT_MS),
   }
   activeCalls.set(connection.id, record)
@@ -118,7 +132,7 @@ export function declineCall(io: Server, connectionId: string, callId: string, us
   if (!record || record.id !== callId) throw new ConnectionError(409, 'call is no longer active')
   if (record.calleeId !== userId) throw new ConnectionError(403, 'not the callee')
   io.to(room(connectionId)).emit('call:ended', { callId, reason: 'declined' })
-  resolveCall(record, 'declined')
+  resolveCall(io, record, 'declined')
 }
 
 // No-op (not an error) if the call already ended — end races with the ring
@@ -132,7 +146,7 @@ export function endCall(io: Server, connectionId: string, callId: string, userId
   const outcome: CallOutcome =
     record.state === 'connected' ? 'completed' : record.callerId === userId ? 'cancelled' : 'declined'
   io.to(room(connectionId)).emit('call:ended', { callId, reason: outcome })
-  resolveCall(record, outcome)
+  resolveCall(io, record, outcome)
 }
 
 // Relays an opaque SDP/ICE payload to the OTHER participant's live sockets

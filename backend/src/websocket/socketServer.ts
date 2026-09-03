@@ -167,6 +167,13 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
           return
         }
         socket.join(room(connection.id))
+        // 'call' messages are server-authored only (callService.ts, at call
+        // resolution) — reject explicitly rather than silently downgrading,
+        // so a forged client-sent 'call' type never passes as ordinary text.
+        if (msg?.type === 'call') {
+          ack?.({ error: 'call messages are server-authored' })
+          return
+        }
         const content = typeof msg?.content === 'string' ? msg.content : ''
         const type = isMessageType(msg?.type) ? msg.type : 'text'
         const replyTo = typeof msg?.replyTo === 'string' ? msg.replyTo : null
