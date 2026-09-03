@@ -4,7 +4,8 @@ import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { resolveUserFromToken } from '../services/authToken.js'
 import { ConnectionError, markDelivered } from '../services/connectionService.js'
 import { getLiveConnectionForUser, type MemberConnection } from '../services/connectionAccess.js'
-import { saveMessage, isMessageType, type Message } from '../services/messageService.js'
+import { saveMessage, bumpSenderLastRead, isMessageType, type Message } from '../services/messageService.js'
+import { signAttachments, isAttachmentKind } from '../services/attachmentService.js'
 import { addReaction, removeReaction } from '../services/reactionService.js'
 import { sendToUser } from '../services/pushService.js'
 import { otherMemberId } from '../utils/connections.js'
@@ -180,9 +181,30 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
           return
         }
         const message = await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo)
+
+        // Sign media at broadcast time so BOTH sides get a viewable/playable
+        // URL in the same event, instead of every viewer (sender included)
+        // making their own follow-up signed-URL request the moment they try
+        // to render it. Best-effort: on failure the client's own hydrateMedia
+        // fallback still fetches its own URL, same as before this change.
+        let outgoingPayload = message.payload
+        if (isAttachmentKind(message.type)) {
+          const path = (message.payload as { path?: unknown } | null)?.path
+          if (typeof path === 'string') {
+            try {
+              const urls = await signAttachments([path])
+              const url = urls[path]
+              if (url) outgoingPayload = { ...(message.payload as object), url }
+            } catch (err) {
+              console.error('message:send: failed to sign attachment URL', err)
+            }
+          }
+        }
+
         // tempId echoed so the sender can reconcile its optimistic row exactly.
-        io.to(room(connection.id)).emit('message:new', { ...message, tempId })
+        io.to(room(connection.id)).emit('message:new', { ...message, payload: outgoingPayload, tempId })
         void syncDelivery(io, connection, userId, message)
+        void bumpSenderLastRead(connection.id, userId, message.createdAt)
         ack?.({ ok: true })
       } catch (err) {
         ack?.({ error: clientError(err, 'failed to send message') })
