@@ -11,13 +11,25 @@
 
 import { randomUUID } from 'node:crypto'
 import type { Server } from 'socket.io'
+import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from '../utils/connectionError.js'
 import { otherMemberId, room } from '../utils/connections.js'
 import type { MemberConnection } from './connectionAccess.js'
 import { saveMessage } from './messageService.js'
+import { sendToUser } from './pushService.js'
 
 export type CallKind = 'audio' | 'video'
 export type CallOutcome = 'missed' | 'declined' | 'cancelled' | 'completed' | 'failed'
+
+// Set once by createSocketServer at startup — mirrors socketServer.ts's own
+// ioRef (emitConnectionEnded). Lets server-initiated code outside the socket
+// layer (forceEndCall, called from connectionService.terminate) reach the
+// live io instance without connectionService <-> socketServer importing each
+// other.
+let ioRef: Server | null = null
+export function setIo(io: Server): void {
+  ioRef = io
+}
 
 interface CallRecord {
   id: string
@@ -70,6 +82,55 @@ function resolveCall(io: Server, record: CallRecord, outcome: CallOutcome): void
     // instead of only seeing it after a reload.
     .then((message) => io.to(room(record.connectionId)).emit('message:new', message))
     .catch((err) => console.error('callService: failed to write call to chat history', err))
+
+  // 'missed'/'cancelled' both mean the callee never actually engaged (ring
+  // timed out, or the caller hung up before they answered) — the one case a
+  // nudge helps, the same way a phone rings a missed-call notification
+  // whether or not the Phone app was open. 'declined' needs no push (they
+  // were right there); 'completed' obviously doesn't either.
+  if (outcome === 'missed' || outcome === 'cancelled') void notifyMissedCall(record)
+}
+
+async function notifyMissedCall(record: CallRecord): Promise<void> {
+  try {
+    // Nicknames live on the OTHER member's row (spec §11) — same lookup
+    // syncDelivery uses in socketServer.ts for the equivalent text-message push.
+    const { data: callerMember } = await supabaseAdmin
+      .from('connection_members')
+      .select('nickname')
+      .eq('connection_id', record.connectionId)
+      .eq('user_id', record.callerId)
+      .maybeSingle()
+    const title = callerMember?.nickname ?? 'Missed call'
+    const body = record.kind === 'video' ? 'Missed video call' : 'Missed voice call'
+    await sendToUser(record.calleeId, { title, body })
+  } catch {
+    /* best-effort — never fail call teardown because push failed */
+  }
+}
+
+// A socket that (re)connects mid-ring never received the original
+// call:incoming — it was emitted only to the sockets live at invite time.
+// socketServer's connection handler calls this for every new socket so a
+// network blip during ringing doesn't silently swallow the incoming call.
+export function getRingingCallForCallee(
+  connectionId: string,
+  userId: string,
+): { callId: string; kind: CallKind; fromUserId: string } | null {
+  const record = activeCalls.get(connectionId)
+  if (!record || record.state !== 'ringing' || record.calleeId !== userId) return null
+  return { callId: record.id, kind: record.kind, fromUserId: record.callerId }
+}
+
+// Server-initiated: ends whatever call is active on a connection, with no
+// participant check — used when the CONNECTION itself is going away
+// (connectionService.terminate), not by either caller or callee's own action.
+export function forceEndCall(connectionId: string, reason: CallOutcome = 'cancelled'): void {
+  if (!ioRef) return
+  const record = activeCalls.get(connectionId)
+  if (!record) return
+  ioRef.to(room(connectionId)).emit('call:ended', { callId: record.id, reason })
+  resolveCall(ioRef, record, reason)
 }
 
 // Caller invites the connection's other member. Resolves once call:incoming
