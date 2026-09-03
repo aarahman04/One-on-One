@@ -1,13 +1,13 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
-import { getConnectionForMember, type MemberConnection } from './connectionAccess.js'
+import { getConnectionForMember } from './connectionAccess.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
 import { isAllowedMime, maxBytesFor, type AttachmentKind } from './attachmentService.js'
 import { encrypt, decrypt, isEncrypted } from './crypto.js'
 
-export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm'
+export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm' | 'call'
 
-const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat', 'alarm']
+const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat', 'alarm', 'call']
 export function isMessageType(x: unknown): x is MessageType {
   return MESSAGE_TYPES.includes(x as MessageType)
 }
@@ -191,6 +191,23 @@ function validateAlarmPayload(payload: unknown): { ack?: string } {
   return { ack }
 }
 
+const CALL_KINDS = ['audio', 'video']
+const CALL_OUTCOMES = ['missed', 'declined', 'cancelled', 'completed', 'failed']
+
+// Call log rows are server-authored only (callService.ts, at call resolution)
+// — never accepted from message:send (see socketServer's explicit reject) —
+// but still validated here like every other payload rather than trusted blind.
+function validateCallPayload(payload: unknown): { kind: string; outcome: string; durationSec: number } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  const kind = String(p.kind ?? '')
+  const outcome = String(p.outcome ?? '')
+  const durationSec = Number(p.durationSec ?? 0)
+  if (!CALL_KINDS.includes(kind)) throw new ConnectionError(400, 'invalid call kind')
+  if (!CALL_OUTCOMES.includes(outcome)) throw new ConnectionError(400, 'invalid call outcome')
+  if (!Number.isFinite(durationSec) || durationSec < 0) throw new ConnectionError(400, 'invalid call duration')
+  return { kind, outcome, durationSec: Math.round(durationSec) }
+}
+
 const HISTORY_PAGE_SIZE = 50
 
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
@@ -238,9 +255,10 @@ async function assertReplyTargetInConnection(connectionId: string, replyTo: stri
 }
 
 // The connection is passed in already resolved + membership/live-checked by the
-// caller (socketServer's getLiveConnectionForUser), so this doesn't re-fetch it.
+// caller (socketServer's getLiveConnectionForUser / callService), so this
+// doesn't re-fetch it — only `.id` is ever used below.
 export async function saveMessage(
-  connection: MemberConnection,
+  connection: { id: string },
   senderId: string,
   content: string,
   type: MessageType = 'text',
@@ -250,13 +268,13 @@ export async function saveMessage(
   if (!isMessageType(type)) throw new ConnectionError(400, 'invalid message type')
   const isMedia = (MEDIA_TYPES as string[]).includes(type)
 
-  // Media messages carry an optional caption, and an alarm carries no
-  // meaningful content of its own — both can be empty. Every other type
+  // Media messages carry an optional caption, and an alarm/call carry no
+  // meaningful content of their own — both can be empty. Every other type
   // (text, letter, ask, countdown, checkin, thisorthat) still requires
   // actual content — each one's primary display string
   // (body / question / label / note / "optionA vs optionB").
   const trimmed = content.trim()
-  if (isMedia || type === 'alarm') {
+  if (isMedia || type === 'alarm' || type === 'call') {
     if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
   } else if (trimmed.length < 1 || trimmed.length > 4000) {
     throw new ConnectionError(400, 'message must be 1-4000 characters')
@@ -276,7 +294,9 @@ export async function saveMessage(
               ? validateThisOrThatPayload(payload)
               : type === 'alarm'
                 ? validateAlarmPayload(payload)
-                : null
+                : type === 'call'
+                  ? validateCallPayload(payload)
+                  : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 
