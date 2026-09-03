@@ -11,6 +11,47 @@ Notes/deviations:
 
 ---
 
+## [Performance] Message/image delivery speed — 2026-09-03
+Status: done. PR #42 merged to `main` (3 commits). No schema changes —
+runtime-only across all 3 chunks. `tsc`/`vite build` (client) and
+`tsc --noEmit` (backend) clean after every chunk.
+What shipped:
+- **Chunk 1** (backend hot path): the sender's `last_read_at` bump was
+  awaited inside `saveMessage` before it returned, gating the broadcast on a
+  DB write that has nothing to do with delivery — split out into
+  `bumpSenderLastRead`, fired fire-and-forget after the broadcast (same
+  pattern as the existing `syncDelivery` push). `saveMessage` confirmed to
+  have exactly one caller before moving it. Image/voice/file messages now
+  get their signed display URL attached to the *same* `message:new`
+  broadcast via a server-side `signAttachments()` call, best-effort with a
+  fallback to the client's own fetch on failure.
+- **Chunk 2** (sender-side image): `readImageDimensions` (local) and
+  `uploadAttachment` now run concurrently instead of sequentially. The image
+  row renders immediately at its real final size from a local object URL
+  over the picked file, before the upload even finishes — the sender never
+  waits on their own upload + a signed-URL round-trip to see what they just
+  sent. The optimistic row only enters the retry-tracked `pending` queue
+  once the upload actually resolves with a real payload (pushing it earlier
+  would let a poll/reconnect's `flushPending()` fire a send with no path
+  yet). A failed upload now shows the failed photo in place instead of
+  vanishing behind a toast.
+- **Chunk 3** (recipient-side image, "blank box that pops in" fix): a
+  `min-height` fallback reserves space for legacy messages sent before
+  dimensions were captured (previously collapsed to 0 height until decode).
+  A spinner (reusing the existing composer spinner arc) overlays the
+  reserved box and is removed on load/error; the `<img>` fades in via
+  opacity instead of popping in. `imageBubble` now prefers `payload.url`
+  (signed at broadcast, chunk 1) before falling back to its own
+  `hydrateMedia` signed-URL fetch — the recipient of a live image no longer
+  makes a follow-up request just to render it. `hydrateMedia` remains the
+  fallback for history/legacy messages that predate chunk 1.
+Notes/deviations: Text sends were already fully optimistic before this batch
+(local render before server round-trip) — investigation found the real
+latency was server-side (one avoidable DB write gating every send) and in
+the image pipeline specifically (sender waiting on its own upload, recipient
+making a second round-trip for a signed URL, no reserved size/loading state).
+Both are addressed above; text-send behavior is unchanged.
+
 ## [Emergency] /alarm command — 2026-09-02
 Status: done. PR #40 merged to `main` (3 commits: message type/validation/push
 plumbing, controller + confirm dialog + slash wiring, renderer + live
