@@ -76,6 +76,16 @@
   box-sizing: border-box;
 }
 
+/* Any author `display` rule beats the browser's built-in
+   `[hidden] { display: none }`, so an element hidden via `el.hidden = true`
+   still renders if its own class sets a display value. That has now bitten
+   twice — the recording bar (see .chat__recording-bar[hidden] below) and the
+   call screen, which rendered full-screen over the whole chat at idle. This
+   one rule ends the bug class: `hidden` always means hidden. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -2395,29 +2405,41 @@ input:focus {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: calc(40px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
-    calc(40px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: calc(var(--space-6) + env(safe-area-inset-top)) calc(var(--space-5) + env(safe-area-inset-right))
+    calc(var(--space-6) + env(safe-area-inset-bottom)) calc(var(--space-5) + env(safe-area-inset-left));
+  animation: screen-enter var(--duration-slow) var(--ease-emphasized);
 }
 
 .call-screen__top {
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
+/* The peer's name is the most display-worthy string in the app — same serif
+   voice as .screen__title, not the nav's compact uppercase treatment. */
 .call-screen__name {
-  font-size: var(--text-lg);
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 80vw;
 }
 
+/* Mono is this system's data voice (codes, timestamps, receipts) — a running
+   call timer is exactly that, and tabular figures keep it from jittering. */
 .call-screen__status {
-  margin-top: 6px;
-  color: var(--text-dim);
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums; /* timer digits don't jitter */
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
 }
 
 .call-screen__avatar {
@@ -2427,47 +2449,93 @@ input:focus {
   justify-content: center;
 }
 
+/* The ring carries call state so no extra label has to: it breathes while
+   ringing, holds steady in "their" blue once connected, and dims while the
+   connection is being recovered. */
 .call-screen__avatar span {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 132px;
-  height: 132px;
-  border-radius: 50%;
+  width: 148px;
+  height: 148px;
+  border-radius: var(--radius-pill);
   background: var(--bg-raised);
   border: 1px solid var(--border);
+  box-shadow: 0 0 0 0 rgba(121, 192, 255, 0.35);
   color: var(--text-dim);
-  font-size: 52px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-family: var(--font-display);
+  font-size: 56px;
+  font-weight: 600;
+  transition:
+    border-color var(--duration-slow) var(--ease-standard),
+    color var(--duration-slow) var(--ease-standard);
+}
+
+.call-screen--ringing .call-screen__avatar span {
+  animation: call-pulse 2s var(--ease-standard) infinite;
+}
+
+.call-screen--connected .call-screen__avatar span {
+  border-color: var(--accent-other);
+  color: var(--accent-other);
+}
+
+.call-screen--reconnecting .call-screen__avatar span {
+  border-color: var(--muted);
+  animation: call-pulse 1.1s var(--ease-standard) infinite;
+}
+
+@keyframes call-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(121, 192, 255, 0.3);
+  }
+  70% {
+    box-shadow: 0 0 0 26px rgba(121, 192, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(121, 192, 255, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .call-screen {
+    animation: none;
+  }
+  .call-screen--ringing .call-screen__avatar span,
+  .call-screen--reconnecting .call-screen__avatar span {
+    animation: none;
+    border-color: var(--accent-other);
+  }
 }
 
 .call-screen__controls {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  gap: 28px;
-  padding: 22px 26px;
-  border-radius: 22px;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-radius: var(--radius-lg);
   background: var(--bg-raised);
   border: 1px solid var(--border);
+  box-shadow: var(--elevation-3);
 }
 
 .call-screen__control {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .call-screen__btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 58px;
-  height: 58px;
-  border-radius: 50%;
-  border: none;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
   padding: 0;
   background: var(--bg);
   color: var(--text);
@@ -2475,22 +2543,25 @@ input:focus {
 
 .call-screen__btn--active {
   background: var(--text);
+  border-color: var(--text);
   color: var(--bg);
 }
 
 .call-screen__btn--danger {
   background: var(--danger);
+  border-color: var(--danger);
   color: #fff;
 }
 
 .call-screen__btn--accept {
   background: var(--accent-you);
-  color: var(--bg);
+  border-color: var(--accent-you);
+  color: #04170a;
 }
 
 .call-screen__control-label {
-  color: var(--text-dim);
   font-size: var(--text-xs);
+  color: var(--text-dim);
 }
 
 /* Call log row in the message stream — centered, like WhatsApp's. */
@@ -2498,8 +2569,8 @@ input:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  margin: 6px 0;
+  gap: var(--space-2);
+  margin: var(--space-1) 0;
   color: var(--muted);
   font-size: var(--text-xs);
 }
