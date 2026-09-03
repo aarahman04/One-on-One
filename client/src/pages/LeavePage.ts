@@ -13,7 +13,7 @@ export const LeavePage: Page = (root, go) => {
       }
 
       const id = current.id
-      const errorHtml = `<div class="screen__subtitle" id="leave-error" style="color: var(--danger); display: none;"></div>`
+      const errorHtml = `<div class="screen__subtitle screen__error" id="leave-error"></div>`
       const showError = (msg: string): void => {
         const el = root.querySelector<HTMLDivElement>('#leave-error')!
         el.textContent = msg

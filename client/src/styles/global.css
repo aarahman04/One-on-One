@@ -270,6 +270,14 @@ input:focus {
   max-width: 320px;
 }
 
+/* Shared error line — was inlined as style="color: var(--danger);
+   display: none;" on 5 separate screens; JS still toggles it visible via
+   element.style.display, which overrides this default. */
+.screen__error {
+  color: var(--danger);
+  display: none;
+}
+
 /* Shared full-screen loading state (nickname, chat, connection request,
    export, leave) — a spinner instead of a bare line of text. */
 .screen__loading {
@@ -295,7 +303,6 @@ input:focus {
   flex-wrap: wrap;
   justify-content: center;
   gap: 10px;
-  margin-top: 8px;
 }
 
 /* Quiet secondary action under the primary button — a borderless text link so
@@ -563,6 +570,13 @@ input:focus {
 }
 
 .chat__nav-status--away::before {
+  color: var(--muted);
+}
+
+/* Still resolving presence — the dot shouldn't claim "online" before we
+   actually know. Same muted treatment as --away, cleared once the first
+   presence check lands. */
+.chat__nav-status--connecting::before {
   color: var(--muted);
 }
 

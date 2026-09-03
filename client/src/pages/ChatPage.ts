@@ -374,6 +374,7 @@ export const ChatPage: Page = (root, go) => {
     const updatePresence = (otherLastReadAt: string | null): void => {
       const active = !!otherLastReadAt && Date.now() - new Date(otherLastReadAt).getTime() < PRESENCE_WINDOW_MS
       navStatus.textContent = active ? 'in chat' : 'away'
+      navStatus.classList.remove('chat__nav-status--connecting')
       navStatus.classList.toggle('chat__nav-status--away', !active)
     }
 
@@ -2274,7 +2275,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
       <div class="chat__nav">
         <div>
           <div class="chat__nav-title" id="nav-title"></div>
-          <div class="chat__nav-status" id="nav-status">connecting…</div>
+          <div class="chat__nav-status chat__nav-status--connecting" id="nav-status">connecting…</div>
         </div>
         <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
       </div>

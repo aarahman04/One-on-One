@@ -22,7 +22,7 @@ export const NicknamePage: Page = (root, go) => {
           <div class="screen__actions">
             <button class="primary" id="save-btn">Save</button>
           </div>
-          <div class="screen__subtitle" id="error" style="color: var(--danger); display: none;"></div>
+          <div class="screen__subtitle screen__error" id="error"></div>
         </div>
       `
 
