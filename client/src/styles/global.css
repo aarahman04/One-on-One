@@ -485,10 +485,6 @@ input:focus {
   margin: 4px 0;
 }
 
-.chat__message--pending {
-  opacity: 0.5;
-}
-
 .chat__message--failed .chat__message-text::after {
   content: ' · not sent';
   color: var(--danger);
