@@ -11,6 +11,43 @@ Notes/deviations:
 
 ---
 
+## [Emergency] /alarm command — 2026-09-02
+Status: done. PR #40 merged to `main` (3 commits: message type/validation/push
+plumbing, controller + confirm dialog + slash wiring, renderer + live
+trigger + glow + ack flow). Migration 027 applied to the live DB.
+What shipped: dedicated `alarm` message type (raise = empty payload; an
+acknowledgement is a separate reply-linked alarm message with `{ack:<id>}` —
+same raise/reply shape as `/ask` and `/thisorthat`, no message-mutation path).
+Confirm-before-send dialog; per-user 3min cooldown on raises (acks exempt).
+In-app alert while the tab is open: looping synthesized siren
+(`client/public/alarm.wav`) + repeating `navigator.vibrate` + a pulsing red
+inset glow on the chat screen (`.chat--alarm`). Hybrid clear: focusing/
+opening the chat stops the sound/vibration; the glow persists until the
+recipient taps Acknowledge or a 2min no-ack auto-clear. Reopening the chat
+with the most recent alarm-type message still an unacknowledged raise resumes
+the glow (and sound, if it's the other side's). Push fallback for a closed/
+backgrounded app sets `requireInteraction`+`vibrate`+`renotify` on Android via
+an `urgent` flag threaded through `syncDelivery` → `PushPayload` → `sw.js`.
+Notes/deviations: **No platform lets a PWA bypass OS Do Not Disturb** —
+`urgent` push is still an ordinary, OS-mediated notification. **iOS PWA push
+ignores `vibrate` and cannot play a custom sound at all** (same restriction as
+the pre-existing iOS notification-parity gap above); Android push vibration
+is OS-driven from the notification's `vibrate` option, not app JS. **The
+custom alarm sound is reliable only while the tab is open and foregrounded —
+confirmed, not fixable within web-platform limits.** Investigated a report of
+the sound "sometimes" not playing when the recipient's phone was
+backgrounded/locked: root cause is mobile browsers throttling or fully
+suspending a hidden tab's timers/audio and potentially dropping its WebSocket
+during that window, combined with autoplay engagement policy — none of which
+a web page can query or override, and none of which affects vibration/glow
+(vibration felt while backgrounded is the OS-driven push `vibrate`, not the
+in-page controller; the glow is only ever seen once the app is reopened,
+whether via the live socket path or the history-resume-on-load scan). No
+code fix exists for this; `audio.play()` rejections are now logged
+(`console.warn`) so a future *regression* stays distinguishable from this
+expected inconsistency. This was investigated via code/platform-behavior
+analysis, not reproduced on a physical backgrounded device.
+
 ## [Security] Message encryption at rest (Option C) — 2026-09-02
 Status: code complete on branch `feat/message-encryption-at-rest` (4 commits);
 all `tsc` clean, crypto/wiring/backfill logic verified with throwaway scripts.

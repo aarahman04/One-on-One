@@ -83,8 +83,16 @@ export function createAlarmController(): AlarmController {
   const start = (opts: { silent?: boolean } = {}): void => {
     stopAll()
     if (!opts.silent) {
-      void audio.play().catch(() => {
-        /* blocked (no prior gesture this session) — vibration + red glow still fire */
+      // Whether this actually makes sound is out of the app's control once
+      // the tab is backgrounded: mobile browsers throttle or fully suspend a
+      // hidden tab's timers/audio, may drop the WebSocket during that window
+      // (so this call never even fires until the tab wakes), and autoplay
+      // engagement can lapse independently of the priming above. That's a
+      // platform restriction, not a bug — see docs/PROGRESS.md. Logged (not
+      // surfaced to the user) so a real regression is still distinguishable
+      // from this expected inconsistency.
+      void audio.play().catch((err) => {
+        console.warn('alarm: audio.play() blocked', err)
       })
       if (navigator.vibrate) {
         navigator.vibrate(VIBRATE_PATTERN)
