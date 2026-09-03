@@ -2325,7 +2325,9 @@ function renderChat(root: HTMLElement, displayName: string): void {
           <div class="chat__nav-title" id="nav-title"></div>
           <div class="chat__nav-status chat__nav-status--connecting" id="nav-status">connecting…</div>
         </div>
-        <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
+        <div class="chat__nav-actions" id="nav-actions">
+          <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
+        </div>
       </div>
       <div class="chat__search" id="chat-search" style="display: none;">
         <input id="search-input" placeholder="Search messages…" autocomplete="off" />
