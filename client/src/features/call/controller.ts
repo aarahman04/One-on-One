@@ -126,9 +126,19 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     )
   }
 
+  // The avatar ring reads call state on its own (breathing while ringing,
+  // steady in "their" blue once connected), so the status line never has to
+  // repeat what the ring already says.
+  const applyStateClass = (): void => {
+    screen.classList.toggle('call-screen--ringing', state === 'ringing-in' || state === 'ringing-out')
+    screen.classList.toggle('call-screen--connected', state === 'in-call')
+    screen.classList.toggle('call-screen--reconnecting', state === 'reconnecting')
+  }
+
   const show = (status: string): void => {
     screen.hidden = false
     statusEl.textContent = status
+    applyStateClass()
     renderControls()
   }
 
@@ -145,6 +155,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     remoteAudio?.remove()
     remoteAudio = null
     screen.hidden = true
+    applyStateClass()
     controlsEl.innerHTML = ''
   }
 
@@ -190,6 +201,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           const wasReconnecting = state === 'reconnecting'
           state = 'in-call'
           screen.hidden = false
+          applyStateClass()
           // Keep counting through a blip rather than restarting the clock.
           if (!wasReconnecting || !timerId) startTimer()
           renderControls()
