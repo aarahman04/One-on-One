@@ -1,5 +1,7 @@
 import type { CallTransport, IceServer, IncomingCall } from '../../services/transport/CallTransport'
 import { formatCallDuration } from '../../utils/formatTime'
+import { showToast } from '../../components/Toast'
+import { callingSupported } from './media'
 import { CallSession } from './session'
 import {
   CALL_HANGUP_ICON,
@@ -20,6 +22,12 @@ type CallState = 'idle' | 'ringing-out' | 'ringing-in' | 'in-call' | 'reconnecti
 // something rather than lying about it (see the plan's Android notes).
 function speakerControlSupported(): boolean {
   return typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype
+}
+
+function callErrorMessage(err: Error): string {
+  if (err.name === 'NotAllowedError') return 'Microphone access was denied'
+  if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') return 'No microphone found'
+  return 'Call failed'
 }
 
 export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerName: string): () => void {
@@ -205,6 +213,8 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     renderControls()
   }
 
+  // May throw synchronously (e.g. `new RTCPeerConnection` in a browser that
+  // lacks it despite passing callingSupported()'s check) — callers wrap it.
   const startSession = (callId: string, iceServers: IceServer[], role: 'caller' | 'callee'): void => {
     session = new CallSession(transport, callId, iceServers, {
       onRemoteStream: (stream) => {
@@ -233,6 +243,14 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           void hangup()
         }
       },
+      // Setup failure (mic permission/device) — the server already thinks
+      // this call is live at this point, so tell it to end rather than just
+      // vanishing locally and leaving its registry stuck.
+      onError: (err) => {
+        console.error('CallSession setup failed', err)
+        show(callErrorMessage(err))
+        setTimeout(() => void hangup(), 2000)
+      },
     })
     activeCallId = callId
     if (role === 'caller') void session.startAsCaller()
@@ -242,13 +260,28 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   const acceptCall = async (): Promise<void> => {
     const callId = activeCallId
     if (!callId) return
-    try {
-      const { iceServers } = await transport.accept(callId)
-      state = 'in-call'
-      show('Connecting…')
-      startSession(callId, iceServers, 'callee')
-    } catch {
+    if (!callingSupported()) {
+      showToast("Calls aren't supported in this browser")
+      void transport.decline(callId)
       reset()
+      return
+    }
+    let accepted: { iceServers: IceServer[] }
+    try {
+      accepted = await transport.accept(callId)
+    } catch {
+      // The server never registered the accept — a plain local reset is correct.
+      reset()
+      return
+    }
+    state = 'in-call'
+    show('Connecting…')
+    try {
+      startSession(callId, accepted.iceServers, 'callee')
+    } catch (err) {
+      // The accept DID register server-side — tell it to end, not just reset.
+      show(err instanceof Error ? callErrorMessage(err) : 'Call failed')
+      setTimeout(() => void hangup(), 2000)
     }
   }
 
@@ -265,6 +298,10 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
 
   callBtn.onclick = () => {
     if (state !== 'idle') return
+    if (!callingSupported()) {
+      showToast("Calls aren't supported in this browser")
+      return
+    }
     void (async () => {
       try {
         const { callId, iceServers } = await transport.invite('audio')
@@ -278,7 +315,12 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           pendingAcceptedUnsub = null
           state = 'in-call'
           show('Connecting…')
-          startSession(acceptedId, iceServers, 'caller')
+          try {
+            startSession(acceptedId, iceServers, 'caller')
+          } catch (err) {
+            show(err instanceof Error ? callErrorMessage(err) : 'Call failed')
+            setTimeout(() => void hangup(), 2000)
+          }
         })
       } catch (err) {
         state = 'ringing-out'

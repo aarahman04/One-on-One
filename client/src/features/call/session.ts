@@ -13,6 +13,11 @@ const RECONNECT_GRACE_MS = 20_000
 export interface CallSessionHandlers {
   onRemoteStream?: (stream: MediaStream) => void
   onStateChange?: (state: CallSessionState) => void
+  // Setup failure (mic permission denied, no device, or the offer/answer
+  // exchange itself throwing) — startAsCaller/startAsCallee are always
+  // invoked as `void session.startAsX()`, so without this an error there is
+  // an unhandled rejection and the UI sits frozen on "Connecting..." forever.
+  onError?: (err: Error) => void
 }
 
 interface SignalPayload {
@@ -77,18 +82,26 @@ export class CallSession {
   }
 
   async startAsCaller(): Promise<void> {
-    this.isOfferer = true
-    await this.attachLocalTracks()
-    const offer = await this.pc.createOffer()
-    await this.pc.setLocalDescription(offer)
-    await this.transport.sendSignal(this.callId, { sdp: offer })
+    try {
+      this.isOfferer = true
+      await this.attachLocalTracks()
+      const offer = await this.pc.createOffer()
+      await this.pc.setLocalDescription(offer)
+      await this.transport.sendSignal(this.callId, { sdp: offer })
+    } catch (err) {
+      this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)))
+    }
   }
 
   // Attaches local tracks only; the caller's offer arrives separately via
   // call:signal and is handled by handleSignal (constructor already
   // subscribed by the time this resolves).
   async startAsCallee(): Promise<void> {
-    await this.attachLocalTracks()
+    try {
+      await this.attachLocalTracks()
+    } catch (err) {
+      this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)))
+    }
   }
 
   private async attachLocalTracks(): Promise<void> {

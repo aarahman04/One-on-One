@@ -1,6 +1,6 @@
 import webPush from 'web-push'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
-import { ConnectionError } from './connectionService.js'
+import { ConnectionError } from '../utils/connectionError.js'
 
 // A push endpoint is a URL the server will POST to on every message. Without a
 // check, a client can point it at an internal address (169.254.169.254,

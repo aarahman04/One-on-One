@@ -4,6 +4,7 @@ import { RAISE_EXCEPTION } from '../utils/pgErrors.js'
 import { getConnectionForMember, memberOrFilter } from './connectionAccess.js'
 import { ConnectionError } from '../utils/connectionError.js'
 import { deleteConnectionAttachments } from './attachmentService.js'
+import { forceEndCall } from './callService.js'
 
 // Re-exported for the many call sites that import it from here.
 export { ConnectionError }
@@ -275,6 +276,14 @@ async function getMemberLeaveRows(connectionId: string, userIds: string[]): Prom
 // participants (they can export first). connection_members + messages cascade
 // off the connection FK (on delete cascade), so one delete clears everything.
 async function terminate(connectionId: string): Promise<void> {
+  // The connection is the app's authorization unit (spec §20) — a live call
+  // has no basis to keep running once it's gone, so end it before the delete
+  // rather than leave two peers mid-call on a connection that no longer
+  // exists. The messages FK cascades on delete, so any call-log row this
+  // writes is gone a moment later regardless — matches "termination deletes
+  // the whole conversation" below.
+  forceEndCall(connectionId)
+
   const { error } = await supabaseAdmin.from('connections').delete().eq('id', connectionId)
   if (error) throw error
 

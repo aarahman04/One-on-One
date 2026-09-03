@@ -9,7 +9,17 @@ import { signAttachments, isAttachmentKind } from '../services/attachmentService
 import { addReaction, removeReaction } from '../services/reactionService.js'
 import { sendToUser } from '../services/pushService.js'
 import { otherMemberId, room } from '../utils/connections.js'
-import { acceptCall, declineCall, endCall, inviteAllowed, inviteCall, relaySignal, type CallKind } from '../services/callService.js'
+import {
+  acceptCall,
+  declineCall,
+  endCall,
+  getRingingCallForCallee,
+  inviteAllowed,
+  inviteCall,
+  relaySignal,
+  setIo,
+  type CallKind,
+} from '../services/callService.js'
 import { getIceServers } from '../services/turnService.js'
 
 interface SocketData {
@@ -107,6 +117,7 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
 export function createSocketServer(httpServer: HttpServer, allowedOrigins: string[]): Server {
   const io = new Server(httpServer, { cors: { origin: allowedOrigins } })
   ioRef = io
+  setIo(io) // lets callService.forceEndCall run from outside the socket layer
 
   // Auth handshake: verify the Supabase JWT and resolve the app user. The
   // client never gets to name its own connection or sender (spec §20); the
@@ -136,6 +147,10 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
       // reached this member's device — flips the sender's tick(s) to
       // delivered without waiting for a message:send round-trip.
       void markDelivered(connectionId, userId)
+      // A socket that reconnects mid-ring (brief network blip) never got the
+      // original call:incoming — replay it so the ring isn't silently missed.
+      const ringing = getRingingCallForCallee(connectionId, userId)
+      if (ringing) socket.emit('call:incoming', ringing)
     }
 
     // Per-socket flood guard: a legit client sends a handful of events a
