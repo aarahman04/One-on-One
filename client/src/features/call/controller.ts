@@ -8,6 +8,7 @@ import {
   CALL_PHONE_ICON,
   CALL_SPEAKER_ICON,
   CALL_SPEAKER_OFF_ICON,
+  CALL_VIDEO_ICON,
 } from './icons'
 
 type CallState = 'idle' | 'ringing-out' | 'ringing-in' | 'in-call' | 'reconnecting'
@@ -22,15 +23,31 @@ function speakerControlSupported(): boolean {
 }
 
 export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerName: string): () => void {
-  // --- Header call button (immediately left of the ••• menu) ---------------
+  // --- Header buttons: video, phone, then the ••• menu (WhatsApp's order) ---
+  // They go inside .chat__nav-actions so the nav's space-between sees one
+  // actions child and keeps the whole group pinned right.
+  const actions = nav.querySelector('.chat__nav-actions')
+  const menuBtn = nav.querySelector('.chat__menu-btn')
+
+  const videoBtn = document.createElement('button')
+  videoBtn.type = 'button'
+  videoBtn.className = 'chat__call-btn'
+  videoBtn.disabled = true // video calling isn't built yet — see PROGRESS.md
+  videoBtn.title = 'Video call — not available yet'
+  videoBtn.setAttribute('aria-label', 'Video call (not available yet)')
+  videoBtn.innerHTML = CALL_VIDEO_ICON
+
   const callBtn = document.createElement('button')
   callBtn.type = 'button'
   callBtn.className = 'chat__call-btn'
   callBtn.title = 'Audio call'
   callBtn.setAttribute('aria-label', 'Start audio call')
   callBtn.innerHTML = CALL_PHONE_ICON
-  const menuBtn = nav.querySelector('.chat__menu-btn')
+
+  if (menuBtn) menuBtn.insertAdjacentElement('beforebegin', videoBtn)
+  else actions?.append(videoBtn)
   if (menuBtn) menuBtn.insertAdjacentElement('beforebegin', callBtn)
+  else actions?.append(callBtn)
 
   // --- Full-screen call surface (built once, shown per state) --------------
   const screen = document.createElement('div')
@@ -293,5 +310,6 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     remoteAudio?.remove()
     screen.remove()
     callBtn.remove()
+    videoBtn.remove()
   }
 }

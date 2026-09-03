@@ -404,6 +404,17 @@ input:focus {
   min-width: 0; /* let the title truncate instead of shoving the menu button off-screen */
 }
 
+/* Keeps every nav action in ONE flex child, so .chat__nav's space-between has
+   exactly two children (title block | actions) and pins the actions right.
+   With the buttons as loose siblings, space-between parked the middle one
+   dead centre. */
+.chat__nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 .chat__nav-title {
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -2395,6 +2406,17 @@ input:focus {
 .chat__call-btn:hover {
   color: var(--text);
   background: var(--bg-raised);
+}
+
+.chat__call-btn:disabled {
+  color: var(--muted);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chat__call-btn:disabled:hover {
+  background: transparent;
+  color: var(--muted);
 }
 
 .call-screen {
