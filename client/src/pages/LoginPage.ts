@@ -28,7 +28,7 @@ export const LoginPage: Page = (root) => {
         <button class="primary" id="login-btn">Continue with Google</button>
       </div>
       ${hasSignedInBefore ? '<button type="button" class="screen__alt" id="switch-account-btn">Use a different account</button>' : ''}
-      <div class="screen__subtitle" id="login-error" style="color: var(--danger); display: none;"></div>
+      <div class="screen__subtitle screen__error" id="login-error"></div>
     </div>
   `
 

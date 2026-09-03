@@ -15,7 +15,7 @@ export const ConnectionIdPage: Page = (root, go) => {
         <button id="copy-btn" disabled>Copy</button>
         <button id="new-id-btn" disabled>Get a new ID</button>
       </div>
-      <div class="screen__subtitle" id="subtitle">Loading...</div>
+      <div class="screen__subtitle" id="subtitle">Loading…</div>
       <div class="screen__actions">
         <button class="primary" id="continue-btn">I have an ID to connect with</button>
       </div>

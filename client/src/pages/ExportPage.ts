@@ -2,6 +2,7 @@ import type { Page } from '../state/router'
 import { getCurrentConnection, getMessages, type HistoryMessage } from '../services/connectionsApi'
 import { formatFullTimestamp } from '../utils/formatTime'
 import { downloadFile, escapeHtml } from '../utils/download'
+import { loadingScreenHtml } from '../utils/loadingScreen'
 
 function letterMeta(m: HistoryMessage): { to: string; from: string } {
   const p = (m.payload ?? {}) as { to?: string; from?: string }
@@ -9,7 +10,7 @@ function letterMeta(m: HistoryMessage): { to: string; from: string } {
 }
 
 export const ExportPage: Page = (root, go) => {
-  root.innerHTML = `<div class="screen"><div class="screen__subtitle">Loading...</div></div>`
+  root.innerHTML = loadingScreenHtml()
 
   ;(async () => {
     const current = await getCurrentConnection()
