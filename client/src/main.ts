@@ -83,6 +83,14 @@ async function resolveInitialScreen(): Promise<Screen> {
   const session = await getSession()
   if (!session) return 'login'
 
+  // Mark this device as having signed in before, so the login screen knows
+  // to offer "Use a different account" next time (e.g. after signing out).
+  try {
+    localStorage.setItem('hasSignedInBefore', '1')
+  } catch {
+    /* private mode — the switch-account link just won't show next time */
+  }
+
   const current = await getCurrentConnection()
   if (!current) return 'connection-id'
   return nextScreenFor(current)
