@@ -11,6 +11,70 @@ Notes/deviations:
 
 ---
 
+## [UI fixes + polish pass] Pending-bubble darken, account-switch gate, screen-by-screen consistency — 2026-09-03
+Status: items 1-2 done, PR #44 merged to `main` (2 commits). Item 3 (polish,
+3 batches) code complete on PR #45, open pending merge (3 commits, includes a
+merge-conflict resolution against #44 — both touched `LoginPage.ts`).
+`tsc`/`vite build` (client) clean after every batch. No schema changes, no
+migrations, client-only across all 5 pieces.
+What shipped:
+- **Pending-message bubble darken (bugfix).** `.chat__message--pending`
+  applied `opacity: 0.5` to the whole optimistic-send row; against the app's
+  dark chat log a half-opacity saturated bubble reads as a *darker* shade,
+  then snaps (not fades — `opacity` wasn't in the row's `transition` list)
+  back to full color the instant the server confirms and the class is
+  removed. Removed the rule outright — it was global, not per-theme, so the
+  fix covers the default palette and every wallpaper (light/Love/Samurai) in
+  one edit. The receipt-tick's own separate pending dim (a legitimate "still
+  sending" signal) is untouched.
+- **"Use a different account" gating (bugfix).** The login screen's
+  account-switch link (`LoginPage.ts`) rendered unconditionally, including
+  for a device that had never logged in. Login only ever renders when
+  there's no live session, so "already logged in" can't gate it directly —
+  instead a `hasSignedInBefore` flag is set in `localStorage` once
+  `resolveInitialScreen()` confirms a session (`main.ts`), and the link now
+  only renders when that flag is present. New device: hidden. Returning
+  device (e.g. after sign-out): shown.
+- **Batch 3 — focus/hover states (a11y).** No element in the app had a
+  keyboard focus indicator. One global `:focus-visible` rule (2px
+  accent-other outline) now covers every button, `.menu__item`, and the
+  appearance/mood/pick option groups. `.chat__menu-btn` (nav •••),
+  `.chat__reply-bar-cancel`, and `.modal-close` were transparent/borderless,
+  so the shared `button:hover{border-color}` rule was a no-op on them — each
+  now gets a real hover background tinted against its actual surrounding bg.
+- **Batch 4 — copy & loaders.** New `utils/loadingScreen.ts`
+  (`loadingScreenHtml`) replaces 5 duplicated plain-text "Loading..."
+  skeletons (Nickname, Chat, ConnectionRequest, Export, Leave) with one
+  shared spinner + "Loading…" markup, reusing the existing `chat-icon-spin`
+  keyframe via a new `.screen__spinner` class. Normalized stray ASCII `...`
+  to the real `…` already used elsewhere (chat composer placeholder,
+  connection-id loading subtitle). `ConnectPage`'s title was just restating
+  its own eyebrow ("Connection ID" under "CONNECT") with no instruction;
+  changed to "Enter their connection ID" to match the instruction/question
+  voice `NicknamePage`/`LeavePage` already use. Login's lowercase tagline
+  ("one connection. nothing else.") is a deliberate brand voice and was left
+  alone.
+- **Batch 5 — layout & dedupe.** New `.screen__error` class replaces the
+  same inline `style="color: var(--danger); display: none;"` duplicated
+  across 5 pages (Login, Connect, Nickname, ConnectionRequest, Leave).
+  `.screen__actions` had a redundant `margin-top: 8px` stacking on top of
+  the parent `.screen`'s own flex `gap: 20px` — invisible with one actions
+  block, but `ConnectionIdPage` stacks three of them and the doubled gap
+  read as uneven; removed the redundant margin (the fix applies everywhere
+  the class is used, not just that screen). Removed an inline
+  `font-size: 24px` override on `ConnectionRequestPage`'s code chip so it
+  matches `ConnectionIdPage`'s. The chat nav status dot showed green
+  ("online") while its text still said "connecting…" — added a neutral
+  `--connecting` dot state, cleared the moment the first real presence check
+  lands.
+Notes/deviations: verification for all 5 pieces was build-only (`tsc`/`vite
+build` clean) plus code-level reasoning about each CSS/JS mechanism — **not
+a live click-through**, since the app's only auth path is real Google OAuth
+against this project's own Supabase, which isn't something to drive
+unattended. Worth a real device/browser pass before considering this fully
+closed, same caveat several of the earlier UX-smoothness-pass batches
+carried. Planned in `~/.claude/plans/planning-phase-first-vast-bachman.md`.
+
 ## [Performance] Message/image delivery speed — 2026-09-03
 Status: done. PR #42 merged to `main` (3 commits). No schema changes —
 runtime-only across all 3 chunks. `tsc`/`vite build` (client) and
