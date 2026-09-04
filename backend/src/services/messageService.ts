@@ -192,7 +192,7 @@ function validateAlarmPayload(payload: unknown): { ack?: string } {
 }
 
 const CALL_KINDS = ['audio', 'video']
-const CALL_OUTCOMES = ['missed', 'declined', 'cancelled', 'completed', 'failed']
+const CALL_OUTCOMES = ['missed', 'declined', 'cancelled', 'completed', 'failed', 'unreachable']
 
 // Call log rows are server-authored only (callService.ts, at call resolution)
 // — never accepted from message:send (see socketServer's explicit reject) —

@@ -2388,7 +2388,7 @@ input:focus {
 }
 
 /* --- Calling ------------------------------------------------------------
-   Header call button, full-screen call surface, and the call-log row that
+   Header call button, full-screen call surface, and the call-log card that
    lands in the message stream after a call resolves. */
 
 .chat__call-btn {
@@ -2479,15 +2479,15 @@ input:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 148px;
-  height: 148px;
+  width: min(168px, 44vw);
+  height: min(168px, 44vw);
   border-radius: var(--radius-pill);
   background: var(--bg-raised);
   border: 1px solid var(--border);
   box-shadow: 0 0 0 0 rgba(121, 192, 255, 0.35);
   color: var(--text-dim);
   font-family: var(--font-display);
-  font-size: 56px;
+  font-size: clamp(48px, 18vw, 64px);
   font-weight: 600;
   transition:
     border-color var(--duration-slow) var(--ease-standard),
@@ -2531,12 +2531,17 @@ input:focus {
   }
 }
 
-.call-screen__controls {
+/* An anchored panel at the foot of the screen, WhatsApp-style — spans the
+   width (capped on desktop) rather than shrinking to its buttons. */
+.call-screen__controls:not(:empty) {
   display: flex;
   align-items: flex-start;
-  justify-content: center;
-  gap: var(--space-5);
-  padding: var(--space-5) var(--space-5) var(--space-4);
+  justify-content: space-evenly;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 400px;
+  margin-inline: auto;
+  padding: var(--space-6) var(--space-5) var(--space-5);
   border-radius: var(--radius-lg);
   background: var(--bg-raised);
   border: 1px solid var(--border);
@@ -2554,13 +2559,16 @@ input:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 60px;
-  height: 60px;
+  width: 62px;
+  height: 62px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   padding: 0;
   background: var(--bg);
   color: var(--text);
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
 }
 
 .call-screen__btn--active {
@@ -2586,21 +2594,114 @@ input:focus {
   color: var(--text-dim);
 }
 
-/* Call log row in the message stream — centered, like WhatsApp's. */
-.chat__call-log {
+/* Call-log card in the message stream — a real left/right bubble like
+   WhatsApp's, not a centered system line. It renders THROUGH the normal
+   message pipeline (buildMessageRow → .chat__message-body), so the two hard
+   parts come for free: left/right alignment from [data-mine], and a
+   wallpaper-correct surface from --bubble-*-bg.
+
+   Colour rule — the card introduces NO new token. Only --bubble-* (the four
+   properties every wallpaper re-tunes) and translucent scrims are painted:
+   - surface + text: inherited from the bubble
+   - disc: rgba(0,0,0,.18) — a scrim that darkens whatever bubble is behind
+     it, so it works on blue / charcoal / near-white / steel / crimson / gold
+   - glyph: currentColor
+   The missed-call red is the one exception, and it's safe structurally: a
+   "Missed" card only ever renders on the CALLEE's side, where the call is
+   not-mine → --bubble-other-bg, which is NEVER a red surface in any
+   wallpaper (#26262a / #e9e9eb / #6f8fa3 / #232323). The caller's side of the
+   same call reads "No answer", keeping currentColor. So var(--danger) is
+   only ever drawn on a neutral surface. Do NOT tint the whole card red — on
+   Samurai it fights the crimson artwork, on Love the gold bubble. */
+.call-log {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: fit-content;
+  max-width: 100%;
+  text-align: left;
+  /* Line mode (no .chat--bubbles): a self-contained bordered row on a fixed
+     surface, matching how the keepsake cards behave in line mode. */
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.call-log__disc {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
-  margin: var(--space-1) 0;
-  color: var(--muted);
-  font-size: var(--text-xs);
-}
-
-.chat__call-log svg {
   flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-pill);
+  /* Line mode: a bordered disc a shade off the card's --bg-raised, legible in
+     both themes (a translucent scrim would vanish on the white light card). */
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: inherit;
 }
 
-.chat__call-log--missed {
+.call-log__disc svg {
+  width: 19px;
+  height: 19px;
+}
+
+.call-log__info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.call-log__title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.call-log__sub {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.call-log--missed .call-log__disc {
   color: var(--danger);
+}
+
+.call-log--action {
+  cursor: pointer;
+}
+
+.call-log--action:focus-visible {
+  outline: 2px solid var(--accent-other);
+  outline-offset: 2px;
+}
+
+/* Bubble mode: flatten onto the message bubble's own surface (same as
+   .voice-bubble / .file-card), so the card rides --bubble-*-bg/-text and
+   stays legible on every wallpaper. */
+.chat--bubbles .chat__message[data-type='call'] .call-log {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* Shrink the bubble to the card + its own timestamp rather than letting the
+   footer row stretch it — WhatsApp's call bubbles hug their content. */
+.chat--bubbles .chat__message[data-type='call'] .chat__message-body {
+  width: fit-content;
+}
+
+.chat--bubbles .call-log__disc {
+  background: rgba(0, 0, 0, 0.18); /* scrim, not a colour — darkens any bubble */
+  border: none;
+}
+
+.chat--bubbles .call-log__sub {
+  color: inherit;
+  opacity: 0.7;
 }
