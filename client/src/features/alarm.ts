@@ -36,10 +36,9 @@ export interface AlarmController {
    *  need alerting to something you just sent) but still runs the
    *  auto-clear timer. */
   start: (opts?: { silent?: boolean }) => void
-  /** Stop sound + vibration only — call when the chat becomes visible/focused.
-   *  The visual glow/card persist until acknowledged or auto-cleared. */
-  stopSound: () => void
-  /** Full stop (acknowledged or auto-cleared). */
+  /** Full stop — sound, vibration and the auto-clear timer (acknowledged or
+   *  auto-cleared). Sound/vibration run until one of those two things; being
+   *  visible/focused no longer silences them. */
   stopAll: () => void
   /** Fires once if nobody acknowledges within the auto-clear window. */
   onAutoClear: (cb: () => void) => void
@@ -108,7 +107,6 @@ export function createAlarmController(): AlarmController {
 
   return {
     start,
-    stopSound,
     stopAll,
     onAutoClear: (cb) => {
       autoClearCb = cb
