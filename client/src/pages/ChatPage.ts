@@ -401,15 +401,15 @@ export const ChatPage: Page = (root, go) => {
     // after `transport` is populated by connectMessaging().
     const reactionsByMessage = new Map<string, ReactionSummary[]>()
 
-    // Instagram-DM style: a small badge overlapping the bubble's bottom
-    // corner (not inline with the message content). One reaction per user
+    // Plain emoji, no badge box — sits below the bubble as its own line in
+    // the message row (a child of `row`, NOT `.chat__message-body`, so it's
+    // never drawn over the bubble's own background). One reaction per user
     // per message, so a 1:1 chat needs at most two emoji here (me + other).
     const renderReactionChips = (messageId: string): void => {
       const row = log.querySelector<HTMLElement>(`[data-id="${cssEsc(messageId)}"]`)
-      const body = row?.querySelector<HTMLElement>('.chat__message-body')
-      if (!body) return
+      if (!row) return
       const list = reactionsByMessage.get(messageId) ?? []
-      let badge = body.querySelector<HTMLElement>('.chat__reaction-badge')
+      let badge = row.querySelector<HTMLElement>('.chat__reaction-badge')
       if (!list.length) {
         badge?.remove()
         return
@@ -417,13 +417,13 @@ export const ChatPage: Page = (root, go) => {
       if (!badge) {
         badge = document.createElement('div')
         badge.className = 'chat__reaction-badge'
-        body.append(badge)
+        row.append(badge)
       }
       badge.innerHTML = ''
       for (const r of list) {
         const chip = document.createElement('button')
         chip.type = 'button'
-        chip.className = 'chat__reaction-chip' + (r.userIds.includes(myUserId) ? ' chat__reaction-chip--mine' : '')
+        chip.className = 'chat__reaction-chip'
         chip.textContent = r.emoji
         chip.addEventListener('click', (e) => {
           e.stopPropagation()
