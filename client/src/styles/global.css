@@ -599,6 +599,7 @@ input:focus {
 
 .chat__message {
   display: flex;
+  flex-wrap: wrap; /* lets .chat__reaction-badge fall onto its own line, below the bubble */
   gap: 10px;
   cursor: default;
   transition: transform 0.15s ease;
@@ -790,46 +791,34 @@ input:focus {
   background: var(--bg);
 }
 
-/* Reaction badge: a small pill overlapping the bubble's bottom corner
-   (Instagram-DM style) instead of rendering inline with the message content.
-   One reaction per user per message caps a 1:1 chat at two chips (me +
-   other), so no wrapping/counting is needed. .chat__message-body is the
-   positioning parent — see its position: relative below. */
-.chat__message-body {
-  position: relative;
-}
-
+/* Reaction badge: plain emoji, no box — sits below the bubble as its own
+   line in the message row, not overlapping the bubble it reacts to. It's a
+   child of .chat__message (the row), NOT .chat__message-body (the bubble) —
+   that's what "below the bubble" requires: the row is a flex container, so
+   flex-wrap here (see .chat__message below) lets the badge fall onto its own
+   line under everything else, in normal flow rather than absolutely
+   positioned over the bubble's own background. One reaction per user per
+   message caps a 1:1 chat at two chips (me + other), so no counting is
+   needed. */
 .chat__reaction-badge {
-  position: absolute;
-  bottom: -8px;
   display: flex;
-  gap: 2px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 1px 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  gap: 6px;
+  width: 100%;
 }
 
-.chat__message[data-mine='1'] .chat__reaction-badge {
-  right: 6px;
-}
-
-.chat__message:not([data-mine='1']) .chat__reaction-badge {
-  left: 6px;
+/* Line mode has no bubbles/sides to mirror — both senders' text already
+   starts at the same left edge, so the reaction does too. Bubble mode is
+   where "my message, my reaction" earns a right-aligned line to match. */
+.chat--bubbles .chat__message[data-mine='1'] .chat__reaction-badge {
+  justify-content: flex-end;
 }
 
 .chat__reaction-chip {
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
-  padding: 0 1px;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.chat__reaction-chip--mine {
-  border-bottom-color: var(--accent-other); /* marks "this one's mine" — tappable to remove */
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .chat__message-time {
@@ -1733,9 +1722,19 @@ input:focus {
   gap: 8px;
 }
 
+/* Centred on BOTH axes, not just via text-align: "Get Directions" sits right
+   at the wrap threshold for the button width a 75%-max-width bubble allows,
+   so it wraps to two lines on some devices and not others (iOS wrapped where
+   Android didn't). With the flex default align-items: stretch, both buttons
+   then share the taller height and "View"'s single line rode the top of its
+   box — reading as off-centre. Centring the content removes the asymmetry
+   itself rather than the platform quirk that tips it over. */
 .location-card__action {
   flex: 1;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center; /* still centres the second line when it does wrap */
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
