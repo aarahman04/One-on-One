@@ -57,10 +57,11 @@ function mediaNoticeFor(message: Message): string {
       return 'sent you a voice message'
     case 'file':
       return 'sent you a file'
-    case 'alarm':
-      return (message.payload as { ack?: string } | null)?.ack
-        ? 'acknowledged the alarm'
-        : '🚨 sent an emergency alarm'
+    case 'alarm': {
+      const alarmPayload = message.payload as { ack?: string; cancelled?: boolean } | null
+      if (!alarmPayload?.ack) return '🚨 sent an emergency alarm'
+      return alarmPayload.cancelled ? 'cancelled the alarm' : 'acknowledged the alarm'
+    }
     case 'location':
       // Never the raw coordinates — those would land on an OS lock-screen
       // push notification, which is a privacy leak worse than the message

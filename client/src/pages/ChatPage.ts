@@ -833,17 +833,20 @@ export const ChatPage: Page = (root, go) => {
     // glow are triggered separately in sendMessage/onIncoming below; this
     // only builds the static card.
     const alarmCard = (message: ChatMessage): HTMLElement => {
-      const ack = (message.payload as { ack?: string } | null)?.ack
+      const payload = message.payload as { ack?: string; cancelled?: boolean } | null
+      const ack = payload?.ack
       const isMine = message.senderId === myUserId
 
       if (ack) {
+        const cancelled = payload?.cancelled === true
         const card = document.createElement('div')
         card.className = 'alarm-card alarm-card--ack'
         const icon = document.createElement('span')
         icon.className = 'alarm-card__icon'
-        icon.textContent = '✅'
+        icon.textContent = cancelled ? '⛔' : '✅'
         const label = document.createElement('span')
-        label.textContent = isMine ? 'You acknowledged the alarm' : `${otherName} acknowledged the alarm`
+        const who = isMine ? 'You' : otherName
+        label.textContent = cancelled ? `${who} cancelled the alarm` : `${who} acknowledged the alarm`
         card.append(icon, label)
         return card
       }
@@ -861,21 +864,26 @@ export const ChatPage: Page = (root, go) => {
       title.textContent = 'Emergency alarm'
       const hint = document.createElement('div')
       hint.className = 'alarm-card__hint'
-      hint.textContent = isMine ? `waiting for ${otherName.toLowerCase()} to acknowledge` : 'tap to acknowledge'
+      hint.textContent = isMine ? 'tap to cancel' : 'tap to acknowledge'
       body.append(title, hint)
       card.append(icon, body)
 
-      if (isMine) {
-        card.disabled = true // nothing to tap on your own raise
-      } else {
-        card.addEventListener('click', (e) => {
-          e.stopPropagation() // don't also toggle the row's timestamp
-          if (card.disabled) return
-          card.disabled = true
+      // Both branches send the same reply-linked {ack} shape (see
+      // validateAlarmPayload) — a raiser's cancel just adds cancelled:true so
+      // it renders and pushes differently, but clears the live alert on the
+      // exact same payload.ack check every consumer already runs.
+      card.addEventListener('click', (e) => {
+        e.stopPropagation() // don't also toggle the row's timestamp
+        if (card.disabled) return
+        card.disabled = true
+        if (isMine) {
+          hint.textContent = 'cancelled'
+          sendMessage('', 'alarm', { ack: message.id, cancelled: true }, message.id ?? null)
+        } else {
           hint.textContent = 'acknowledged'
           sendMessage('', 'alarm', { ack: message.id }, message.id ?? null)
-        })
-      }
+        }
+      })
       return card
     }
 

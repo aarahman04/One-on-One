@@ -600,7 +600,12 @@ input:focus {
 .chat__message {
   display: flex;
   flex-wrap: wrap; /* lets .chat__reaction-badge fall onto its own line, below the bubble */
-  gap: 10px;
+  /* Column gap only — the 42px .chat__message-time gutter still needs it in line
+     mode, but a row gap would push the wrapped reaction line away from the
+     bubble. The badge is the only child that ever wraps, so row-gap: 0 costs
+     nothing else; the badge's own margin does the tucking. */
+  column-gap: 10px;
+  row-gap: 0;
   cursor: default;
   transition: transform 0.15s ease;
 }
@@ -804,6 +809,14 @@ input:focus {
   display: flex;
   gap: 6px;
   width: 100%;
+  /* Tucked against the bubble's bottom edge, WhatsApp-style, so it reads as
+     part of the message rather than a detached row. The -3px lands inside the
+     bubble's 8px bottom padding — strictly below the text baseline and below
+     the inline .chat__meta time/ticks — so it never covers content the way the
+     old absolutely-positioned badge did. The inline padding mirrors WhatsApp's
+     ~10px inset from the bubble's outer edge. */
+  margin-top: -3px;
+  padding: 0 10px;
 }
 
 /* Line mode has no bubbles/sides to mirror — both senders' text already
