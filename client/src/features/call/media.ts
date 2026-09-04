@@ -13,6 +13,15 @@ export function callingSupported(): boolean {
 
 export type CameraFacing = 'user' | 'environment'
 
+// Explicit rather than relying on a UA's default — echo cancellation, noise
+// suppression, and auto gain are what makes the far side actually audible on
+// a phone speakerphone instead of picking up room echo/hum.
+const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+}
+
 // `facing` only applies to video calls; audio calls ignore it. `facingMode`
 // is a plain preference (not `exact`), so a laptop with one non-facing webcam
 // still gets a stream instead of an OverconstrainedError. `withAudio: false`
@@ -24,7 +33,9 @@ export async function acquireLocalStream(
   withAudio = true,
 ): Promise<MediaStream> {
   const constraints: MediaStreamConstraints =
-    kind === 'video' ? { audio: withAudio, video: { facingMode: facing } } : { audio: true, video: false }
+    kind === 'video'
+      ? { audio: withAudio ? AUDIO_CONSTRAINTS : false, video: { facingMode: facing } }
+      : { audio: AUDIO_CONSTRAINTS, video: false }
   return navigator.mediaDevices.getUserMedia(constraints)
 }
 
