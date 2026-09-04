@@ -15,6 +15,13 @@ import {
 
 type CallState = 'idle' | 'ringing-out' | 'ringing-in' | 'in-call' | 'reconnecting'
 
+export interface CallBarHandle {
+  dispose(): void
+  // Start an outgoing audio call — same entry point as the header phone
+  // button, exposed so a "tap to call back" on a missed-call row can reuse it.
+  startAudioCall(): void
+}
+
 // Speaker/earpiece routing is not controllable from a web page on Android —
 // there is no API for it, and the browser routes WebRTC audio to the
 // loudspeaker by default. setSinkId is the only related API and exists on
@@ -30,7 +37,7 @@ function callErrorMessage(err: Error): string {
   return 'Call failed'
 }
 
-export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerName: string): () => void {
+export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerName: string): CallBarHandle {
   // --- Header buttons: video, phone, then the ••• menu (WhatsApp's order) ---
   // They go inside .chat__nav-actions so the nav's space-between sees one
   // actions child and keeps the whole group pinned right.
@@ -296,7 +303,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     }
   }
 
-  callBtn.onclick = () => {
+  const startAudioCall = (): void => {
     if (state !== 'idle') return
     if (!callingSupported()) {
       showToast("Calls aren't supported in this browser")
@@ -330,6 +337,8 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     })()
   }
 
+  callBtn.onclick = startAudioCall
+
   const incomingUnsub = transport.onIncoming((call: IncomingCall) => {
     if (state !== 'idle') return // one call at a time — server also enforces this
     activeCallId = call.callId
@@ -343,15 +352,18 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     reset()
   })
 
-  return () => {
-    incomingUnsub()
-    endedUnsub()
-    pendingAcceptedUnsub?.()
-    stopTimer()
-    session?.close()
-    remoteAudio?.remove()
-    screen.remove()
-    callBtn.remove()
-    videoBtn.remove()
+  return {
+    startAudioCall,
+    dispose: () => {
+      incomingUnsub()
+      endedUnsub()
+      pendingAcceptedUnsub?.()
+      stopTimer()
+      session?.close()
+      remoteAudio?.remove()
+      screen.remove()
+      callBtn.remove()
+      videoBtn.remove()
+    },
   }
 }

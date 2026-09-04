@@ -11,6 +11,69 @@ Notes/deviations:
 
 ---
 
+## [Feature] Call polish — WhatsApp-style call log, unreachable calls, in-call screen — 2026-09-04
+Status: done, client + backend build clean (`tsc` / `vite build`).
+**Runtime-verified by static render only** — a 12-cell theme-matrix screenshot
+(bubbles/line × light/dark × no-wallpaper/love/samurai); a real two-account,
+two-device pass is still owed. No schema change (the new `call` outcome is a
+payload value, migration 028's `messages_type_chk` already allows `type='call'`).
+What shipped:
+- **Call-log rows are now real chat bubbles.** `callLogRow` (a bare centered
+  `.chat__call-log` div that bypassed the message pipeline) is replaced by
+  `callLogCard`, plugged into `buildMessageRow`'s content chain like
+  `voiceBubble`/`fileCard`. So it now gets left/right alignment from
+  `[data-mine]` (caller = mine = right) and a wallpaper-correct surface from
+  `--bubble-*-bg` for free. DOM mirrors `.file-card`: `.call-log` → disc +
+  title + subtitle ("Voice call" / "2 min"; "Missed voice call" / "Tap to
+  call back"). Directional glyphs (`CALL_LOG_{OUT,IN,VIDEO_OUT,VIDEO_IN}_ICON`
+  — handset/camera + ↗/↙ arrow) replace the single `CALL_LOG_ICON`.
+- **Colour rule (see the `.call-log` CSS comment):** the card paints **no new
+  token** — only `--bubble-*` (the four properties every wallpaper re-tunes)
+  and translucent scrims. The missed-call red is the one `var(--danger)` use,
+  and it's structurally safe: a "Missed" card only ever renders on the
+  *callee's* side, where the call is not-mine → `--bubble-other-bg`, which is
+  never a red surface in any wallpaper. The caller's side reads "No answer" /
+  "Not answered" and keeps `currentColor`. The whole-bubble red tint (old
+  `--missed` rule) is gone — it fought the Samurai/Love art.
+- **Line mode:** a self-contained bordered row on `--bg-raised` with a
+  bordered disc — same fixed-surface tradeoff the keepsake cards already make
+  in line mode.
+- **"Tap to call back":** missed/unreachable rows are `role="button"` and
+  redial via `callBar.startAudioCall()`. `mountCallBar` now returns
+  `{ dispose, startAudioCall }` (`CallBarHandle`) instead of a bare disposer;
+  `callBtn.onclick` and the row share the one `startAudioCall` path, so the
+  `callingSupported()` gate, 5s invite cooldown and call-screen error
+  handling aren't duplicated.
+- **Unreachable calls leave a trace.** New `CallOutcome` value `'unreachable'`
+  (added to `callService.CallOutcome` + `messageService.CALL_OUTCOMES`; a
+  missing whitelist entry would have made `validateCallPayload` reject the row
+  and only `console.error` it). When `inviteCall` finds the callee has **no
+  live socket at all** (app fully closed), it now writes an `'unreachable'`
+  call row (both sides) and fires the missed-call push **before** throwing —
+  the caller previously just got a bare "peer is not reachable" toast and no
+  history. The row-write + broadcast was factored out of `resolveCall` into a
+  shared `writeCallLog` helper; `notifyMissedCall` now takes plain ids so the
+  no-`CallRecord` path can reuse it.
+- **`forceEndCall` no longer pushes.** `connectionService.terminate()` →
+  `forceEndCall` was writing a `'cancelled'` row **and** pushing "Missed
+  call" to someone whose connection (and that very row) was about to be
+  deleted. `resolveCall` gained a `notify` param; `forceEndCall` passes
+  `false`.
+- **In-call screen** nudged toward the WhatsApp reference (`whatsapp call
+  examples/IMG_1002.png`): larger avatar (`min(168px, 44vw)`), the control
+  card now an anchored full-width-capped panel (`:not(:empty)`, so nothing
+  renders at idle) with more breathing room, slightly larger control
+  buttons + a hover transition. Structure, `controlBtn` and the
+  `renderControls` state map (Speaker where `setSinkId` exists / Mute / End)
+  are unchanged — no dead buttons, no minimize affordance (deferred).
+Notes/deviations:
+- Minimize / "return to call" bar was in the plan as optional and is **not**
+  built — a follow-up if wanted.
+- `issue/unnamed.jpg` (deployed chat showing the idle call surface) was
+  already fixed on `main` (the global `[hidden]{display:none!important}` from
+  PR #49); the screenshot was a stale deploy. Not touched.
+- Video calling is still plan Batch 7 — untouched.
+
 ## [Feature] Audio calling — batches 1–6 (signaling → plumbing → UI → history → hardening → docs) — 2026-09-04
 Status: audio calling shipped. Batches 1–5 merged to `main` across PRs #46
 (signaling backbone), #47 (client plumbing + minimal call), #48 (real call

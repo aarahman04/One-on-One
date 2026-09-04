@@ -19,7 +19,10 @@ import { saveMessage } from './messageService.js'
 import { sendToUser } from './pushService.js'
 
 export type CallKind = 'audio' | 'video'
-export type CallOutcome = 'missed' | 'declined' | 'cancelled' | 'completed' | 'failed'
+// 'unreachable' = the callee had no live socket at all when the invite came
+// in (their app is fully closed) — distinct from 'missed', where it rang and
+// they didn't pick up. Both show as a missed call to the callee.
+export type CallOutcome = 'missed' | 'declined' | 'cancelled' | 'completed' | 'failed' | 'unreachable'
 
 // Set once by createSocketServer at startup — mirrors socketServer.ts's own
 // ioRef (emitConnectionEnded). Lets server-initiated code outside the socket
@@ -64,46 +67,64 @@ function socketUserId(s: { data: unknown }): string {
   return (s.data as { userId: string }).userId
 }
 
-// The single resolution path for every outcome — and so the one place the
-// call gets written into chat history. Server-authored: senderId is always the
-// CALLER, and the client renders incoming/outgoing framing by comparing that
-// to its own user id (message:send refuses a client-sent 'call' type).
-// Fire-and-forget: a failed log write must never block tearing the call down.
-function resolveCall(io: Server, record: CallRecord, outcome: CallOutcome): void {
+// Writes the server-authored call row into chat history and broadcasts it
+// like any other message so both sides render it live. Server-authored:
+// senderId is always the CALLER, and the client derives incoming/outgoing
+// framing by comparing that to its own user id (message:send refuses a
+// client-sent 'call' type). Fire-and-forget — a failed log write must never
+// block tearing the call down. Also used by inviteCall's no-record
+// unreachable path, which has no CallRecord to resolve.
+function writeCallLog(
+  io: Server,
+  connectionId: string,
+  callerId: string,
+  kind: CallKind,
+  outcome: CallOutcome,
+  durationSec: number,
+): void {
+  void saveMessage({ id: connectionId }, callerId, '', 'call', { kind, outcome, durationSec })
+    .then((message) => io.to(room(connectionId)).emit('message:new', message))
+    .catch((err) => console.error('callService: failed to write call to chat history', err))
+}
+
+// The single resolution path for every outcome of a live call.
+// `notify` is false only when the CONNECTION itself is being torn down
+// (forceEndCall) — pushing "missed call" to someone whose connection is
+// being deleted a moment later is noise.
+function resolveCall(io: Server, record: CallRecord, outcome: CallOutcome, notify = true): void {
   clearTimeout(record.ringTimer)
   activeCalls.delete(record.connectionId)
   const durationSec = record.connectedAt ? Math.round((Date.now() - record.connectedAt) / 1000) : 0
-  void saveMessage({ id: record.connectionId }, record.callerId, '', 'call', {
-    kind: record.kind,
-    outcome,
-    durationSec,
-  })
-    // Broadcast like any other message so both sides render the row live
-    // instead of only seeing it after a reload.
-    .then((message) => io.to(room(record.connectionId)).emit('message:new', message))
-    .catch((err) => console.error('callService: failed to write call to chat history', err))
+  writeCallLog(io, record.connectionId, record.callerId, record.kind, outcome, durationSec)
 
   // 'missed'/'cancelled' both mean the callee never actually engaged (ring
   // timed out, or the caller hung up before they answered) — the one case a
   // nudge helps, the same way a phone rings a missed-call notification
   // whether or not the Phone app was open. 'declined' needs no push (they
   // were right there); 'completed' obviously doesn't either.
-  if (outcome === 'missed' || outcome === 'cancelled') void notifyMissedCall(record)
+  if (notify && (outcome === 'missed' || outcome === 'cancelled')) {
+    void notifyMissedCall(record.connectionId, record.callerId, record.calleeId, record.kind)
+  }
 }
 
-async function notifyMissedCall(record: CallRecord): Promise<void> {
+async function notifyMissedCall(
+  connectionId: string,
+  callerId: string,
+  calleeId: string,
+  kind: CallKind,
+): Promise<void> {
   try {
     // Nicknames live on the OTHER member's row (spec §11) — same lookup
     // syncDelivery uses in socketServer.ts for the equivalent text-message push.
     const { data: callerMember } = await supabaseAdmin
       .from('connection_members')
       .select('nickname')
-      .eq('connection_id', record.connectionId)
-      .eq('user_id', record.callerId)
+      .eq('connection_id', connectionId)
+      .eq('user_id', callerId)
       .maybeSingle()
     const title = callerMember?.nickname ?? 'Missed call'
-    const body = record.kind === 'video' ? 'Missed video call' : 'Missed voice call'
-    await sendToUser(record.calleeId, { title, body })
+    const body = kind === 'video' ? 'Missed video call' : 'Missed voice call'
+    await sendToUser(calleeId, { title, body })
   } catch {
     /* best-effort — never fail call teardown because push failed */
   }
@@ -130,13 +151,17 @@ export function forceEndCall(connectionId: string, reason: CallOutcome = 'cancel
   const record = activeCalls.get(connectionId)
   if (!record) return
   ioRef.to(room(connectionId)).emit('call:ended', { callId: record.id, reason })
-  resolveCall(ioRef, record, reason)
+  // notify=false: the connection is being deleted, so the call row cascades
+  // away with it and a "missed call" push would land moments before the
+  // whole conversation vanishes.
+  resolveCall(ioRef, record, reason, false)
 }
 
 // Caller invites the connection's other member. Resolves once call:incoming
-// has been delivered to at least one of the callee's live sockets; throws if
-// the callee has no live socket at all (nothing to ring) or a call is already
-// active on this connection.
+// has been delivered to at least one of the callee's live sockets. Throws if
+// a call is already active on this connection, or if the callee has no live
+// socket at all — but that last case still logs an 'unreachable' call row and
+// pushes first, so the attempt isn't silent.
 export async function inviteCall(
   io: Server,
   connection: MemberConnection,
@@ -150,7 +175,12 @@ export async function inviteCall(
   const sockets = await io.in(room(connection.id)).fetchSockets()
   const calleeSockets = sockets.filter((s) => socketUserId(s) === calleeId)
   if (calleeSockets.length === 0) {
-    throw new ConnectionError(409, 'peer is not reachable right now')
+    // Their app is fully closed — nothing to ring. Still leave a trace, the
+    // way a phone logs a call to someone who was unreachable: a call row on
+    // both sides + a push so they see it when they next open the app.
+    writeCallLog(io, connection.id, callerId, kind, 'unreachable', 0)
+    void notifyMissedCall(connection.id, callerId, calleeId, kind)
+    throw new ConnectionError(409, "They're not reachable right now — they'll see that you called")
   }
 
   const id = randomUUID()

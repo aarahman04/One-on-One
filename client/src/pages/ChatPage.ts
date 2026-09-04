@@ -39,8 +39,13 @@ import {
   type ReactionUpdate,
   type Transport,
 } from '../services/messageService'
-import { mountCallBar } from '../features/call/controller'
-import { CALL_LOG_ICON } from '../features/call/icons'
+import { mountCallBar, type CallBarHandle } from '../features/call/controller'
+import {
+  CALL_LOG_IN_ICON,
+  CALL_LOG_OUT_ICON,
+  CALL_LOG_VIDEO_IN_ICON,
+  CALL_LOG_VIDEO_OUT_ICON,
+} from '../features/call/icons'
 import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
 import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
 import { linkifyInto } from '../utils/linkify'
@@ -159,15 +164,15 @@ export const ChatPage: Page = (root, go) => {
   const overlays = new Set<() => void>()
   let disposeMenuDropdown: (() => void) | null = null
   let disposePopover: (() => void) | null = null
-  let disposeCallBar: (() => void) | null = null
+  let callBar: CallBarHandle | null = null
 
   const cleanup = (): void => {
     if (disposed) return
     disposed = true
     disposePopover?.()
     disposeMenuDropdown?.()
-    disposeCallBar?.()
-    disposeCallBar = null
+    callBar?.dispose()
+    callBar = null
     closeAppearance()
     for (const dispose of overlays) dispose()
     overlays.clear()
@@ -1037,38 +1042,81 @@ export const ChatPage: Page = (root, go) => {
       return sep
     }
 
-    // Call log rows: server-authored, centered in the stream like WhatsApp's,
-    // with no sender label, bubble, receipt, reaction or reply affordance.
-    // senderId is always the caller, so "mine" means I placed the call.
-    const callLogRow = (message: ChatMessage, at: Date): HTMLElement => {
+    // Call-log card — server-authored. Rides the normal message pipeline
+    // (buildMessageRow wraps it in .chat__message), so it gets the same bubble
+    // surface, left/right alignment and per-wallpaper palette as every other
+    // message. senderId is always the caller, so "mine" = I placed the call.
+    // No receipt, reaction or reply — those are gated out in buildMessageRow /
+    // registerMessageRow by data-type='call'.
+    const callLogCard = (message: ChatMessage): HTMLElement => {
       const p = (message.payload ?? {}) as { kind?: string; outcome?: string; durationSec?: number }
       const iMadeTheCall = message.senderId === myUserId
-      const kindWord = p.kind === 'video' ? 'video call' : 'voice call'
-      const missed = p.outcome === 'missed' || p.outcome === 'declined' || p.outcome === 'cancelled'
+      const video = p.kind === 'video'
+      const noun = video ? 'Video call' : 'Voice call'
+      const lower = video ? 'video call' : 'voice call'
+      // An unanswered call: "missed" framing (red glyph + tap-to-call-back)
+      // only ever shows on the callee's side; the caller's own side reads a
+      // plain status ("No answer" / "Not answered").
+      const unanswered = p.outcome === 'missed' || p.outcome === 'cancelled' || p.outcome === 'unreachable'
+      const missed = unanswered && !iMadeTheCall
 
-      let label: string
+      let title = noun
+      let sub: string
       if (p.outcome === 'completed') {
-        label = `${iMadeTheCall ? 'Outgoing' : 'Incoming'} ${kindWord} · ${formatCallDuration(p.durationSec ?? 0)}`
+        sub = formatCallDuration(p.durationSec ?? 0)
+      } else if (missed) {
+        title = `Missed ${lower}`
+        sub = 'Tap to call back'
+      } else if (unanswered) {
+        sub = p.outcome === 'unreachable' ? 'Not answered' : p.outcome === 'cancelled' ? 'Cancelled' : 'No answer'
       } else if (p.outcome === 'declined') {
-        label = iMadeTheCall ? `${kindWord} declined` : `You declined a ${kindWord}`
-      } else if (p.outcome === 'cancelled') {
-        label = iMadeTheCall ? `You cancelled a ${kindWord}` : `Missed ${kindWord}`
-      } else if (p.outcome === 'missed') {
-        label = iMadeTheCall ? `No answer · ${kindWord}` : `Missed ${kindWord}`
+        sub = iMadeTheCall ? 'Declined' : 'You declined'
       } else {
-        label = `${kindWord} failed`
+        sub = 'Failed'
       }
 
-      const row = document.createElement('div')
-      row.className = 'chat__call-log' + (missed && !iMadeTheCall ? ' chat__call-log--missed' : '')
-      row.dataset.at = message.createdAt
-      row.dataset.type = message.type
-      if (message.id) row.dataset.id = message.id
-      row.innerHTML = CALL_LOG_ICON
-      const text = document.createElement('span')
-      text.textContent = `${label} · ${formatClock(at)}`
-      row.append(text)
-      return row
+      const card = document.createElement('div')
+      card.className = 'call-log' + (missed ? ' call-log--missed' : '')
+
+      const disc = document.createElement('span')
+      disc.className = 'call-log__disc'
+      disc.innerHTML = video
+        ? iMadeTheCall
+          ? CALL_LOG_VIDEO_OUT_ICON
+          : CALL_LOG_VIDEO_IN_ICON
+        : iMadeTheCall
+          ? CALL_LOG_OUT_ICON
+          : CALL_LOG_IN_ICON
+
+      const info = document.createElement('span')
+      info.className = 'call-log__info'
+      const titleEl = document.createElement('span')
+      titleEl.className = 'call-log__title'
+      titleEl.textContent = title
+      const subEl = document.createElement('span')
+      subEl.className = 'call-log__sub'
+      subEl.textContent = sub
+      info.append(titleEl, subEl)
+
+      card.append(disc, info)
+
+      if (missed) {
+        card.classList.add('call-log--action')
+        card.setAttribute('role', 'button')
+        card.tabIndex = 0
+        const redial = (e: Event): void => {
+          e.stopImmediatePropagation() // don't also toggle the row's expand-timestamp
+          callBar?.startAudioCall()
+        }
+        card.addEventListener('click', redial)
+        card.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            redial(e)
+          }
+        })
+      }
+      return card
     }
 
     // Pure row build (no DOM insertion, no side effects) so both the forward
@@ -1076,7 +1124,6 @@ export const ChatPage: Page = (root, go) => {
     const buildMessageRow = (message: ChatMessage, pending: boolean): HTMLElement => {
       const at = new Date(message.createdAt)
       const isMine = message.senderId === myUserId
-      if (message.type === 'call') return callLogRow(message, at)
       const row = document.createElement('div')
       row.className = 'chat__message' + (pending ? ' chat__message--pending' : '')
       row.dataset.at = message.createdAt
@@ -1133,22 +1180,28 @@ export const ChatPage: Page = (root, go) => {
                         ? thisorthatCard(message)
                         : message.type === 'alarm'
                           ? alarmCard(message)
-                          : text
+                          : message.type === 'call'
+                            ? callLogCard(message)
+                            : text
 
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
       body.append(content)
       if (isMine) {
         row.dataset.mine = '1' // keyed by the bubble-mode preview
-        if (!pending) row.dataset.delivered = '1'
-        const receipt = document.createElement('span')
-        receipt.className = 'chat__receipt'
-        // WhatsApp-shaped tick glyph (line mode ignores this and renders its
-        // own dot via .chat__receipt's background — see applyReceipt).
-        const ticks = document.createElement('span')
-        ticks.className = 'chat__receipt-ticks'
-        receipt.append(ticks)
-        meta.append(receipt)
+        // Call rows carry no receipt (they're server-authored, not "sent") —
+        // just the alignment.
+        if (message.type !== 'call') {
+          if (!pending) row.dataset.delivered = '1'
+          const receipt = document.createElement('span')
+          receipt.className = 'chat__receipt'
+          // WhatsApp-shaped tick glyph (line mode ignores this and renders its
+          // own dot via .chat__receipt's background — see applyReceipt).
+          const ticks = document.createElement('span')
+          ticks.className = 'chat__receipt-ticks'
+          receipt.append(ticks)
+          meta.append(receipt)
+        }
       }
       // Text bubbles: float the footer INSIDE the text's own inline flow
       // (WhatsApp's actual technique) so it hugs the end of the last line
@@ -2239,7 +2292,7 @@ export const ChatPage: Page = (root, go) => {
       void markRead(connectionId).catch(() => {})
       // Mount once — ensureConnected can call attachTransport again on a
       // later successful reconnect after an earlier attempt failed.
-      if (!disposeCallBar) disposeCallBar = mountCallBar(nav, getCallTransport(), otherName)
+      if (!callBar) callBar = mountCallBar(nav, getCallTransport(), otherName)
     }
     const ensureConnected = async (): Promise<void> => {
       if (transport || connecting || disposed) return
