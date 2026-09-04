@@ -11,6 +11,37 @@ Notes/deviations:
 
 ---
 
+## [Bug fixes] /alarm sound persistence + /thisorthat pick labels — 2026-09-04
+Status: done, client builds clean (`tsc` / `vite build`). Not runtime-verified
+by the author — user is merging the PR and testing it themselves.
+What shipped:
+- **`/thisorthat` reveal showed swapped names.** The revealed card is the
+  *recipient's* reply message, so `message.senderId` is `pickRecipient`'s, not
+  `pickSender`'s — but `thisorthatCard` derived both names from that one id
+  (`isMine ? 'You' : otherName` for the sender, the inverse for the recipient),
+  so every revealed card attributed each pick to the wrong person on both
+  screens. Fixed to resolve the poll author from the original message it
+  replies to (`messagesById.get(message.replyTo)`), exactly as `askCard`
+  already does; `recipientName` stays `isMine ? 'You' : otherName` (the reply's
+  own sender). `client/src/pages/ChatPage.ts` only.
+- **`/alarm` siren cut out / felt inconsistent.** Not a looping bug —
+  `audio.loop = true` + one `play()` loops natively and reliably. Root cause:
+  the "hybrid clear" silenced the sound whenever the chat was visible/focused,
+  so `focusHandler` and every 4s `poll()` tick called `alarmController.stopSound()`
+  — a raise that arrived while you were on the tab (or right as a backgrounded
+  tab woke) got ~0–4s of siren then silence, never restarting. Removed both
+  `stopSound()` call sites; sound + vibration now run until the recipient taps
+  Acknowledge or the 2min no-ack auto-clear (`stopAll`), matching the glow.
+  `stopSound` is no longer part of the `AlarmController` public interface
+  (still used internally by `stopAll`). `client/src/features/alarm.ts` +
+  `ChatPage.ts`.
+- **Delayed delivery** to a backgrounded/locked recipient is the same
+  web-platform limit documented in the 2026-09-02 entry (hidden-tab timer/audio
+  throttling, possible WebSocket drop) — no code bug in the foreground path
+  (socket → `onIncoming` → `start()` is immediate). The `stopSound` removal
+  does help the *perceived* case where a woken tab killed the siren 4s in.
+Notes/deviations: no schema change, backend untouched.
+
 ## [Feature] Call polish — WhatsApp-style call log, unreachable calls, in-call screen — 2026-09-04
 Status: done, client + backend build clean (`tsc` / `vite build`).
 **Runtime-verified by static render only** — a 12-cell theme-matrix screenshot

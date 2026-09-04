@@ -320,8 +320,9 @@ export const ChatPage: Page = (root, go) => {
     // --- Alarm: pulsing red glow while an emergency alert is active. The
     // controller owns sound/vibration/the no-ack auto-clear timer; this page
     // owns the glow and when to (not) call it (see onIncoming/sendMessage/
-    // history-resume below, and the hybrid clear model in the plan: opening
-    // the chat stops the sound, the glow persists until acknowledged).
+    // history-resume below). Sound + glow both persist until the recipient
+    // taps Acknowledge or the 2min auto-clear fires — focus/visibility no
+    // longer silences the sound.
     alarmController = createAlarmController()
     const setAlarmGlow = (active: boolean): void => {
       chatEl.classList.toggle('chat--alarm', active)
@@ -658,8 +659,12 @@ export const ChatPage: Page = (root, go) => {
       const isMine = message.senderId === myUserId
 
       if (p.pickRecipient) {
-        const senderName = isMine ? 'You' : otherName
-        const recipientName = isMine ? otherName : 'You'
+        // The revealed card is the recipient's reply message, so its senderId
+        // is pickRecipient's, not pickSender's — resolve the poll author from
+        // the original message it replies to (same as askCard above).
+        const original = message.replyTo ? messagesById.get(message.replyTo) : undefined
+        const senderName = original ? (original.senderId === myUserId ? 'You' : otherName) : otherName
+        const recipientName = isMine ? 'You' : otherName
         const picksFor = (opt: 'a' | 'b'): string => {
           const names: string[] = []
           if (p.pickSender === opt) names.push(senderName)
@@ -2312,12 +2317,12 @@ export const ChatPage: Page = (root, go) => {
     }
     void ensureConnected()
 
-    // Hybrid alarm clear: focusing/opening the chat silences the sound and
-    // vibration right away; the red glow + card persist until acknowledged
-    // (or the auto-clear timeout) — see setAlarmGlow call sites above.
+    // An emergency alarm's sound/vibration run until the recipient actually
+    // taps Acknowledge (or the 2min no-ack auto-clear) — opening or focusing
+    // the chat no longer silences it, so a raise can't be missed by glancing
+    // at the tab.
     focusHandler = () => {
       void markRead(connectionId).catch(() => {})
-      alarmController?.stopSound()
     }
     window.addEventListener('focus', focusHandler)
 
@@ -2351,7 +2356,6 @@ export const ChatPage: Page = (root, go) => {
       // other side's "seen" tick reliable even if a discrete event was missed.
       if (document.visibilityState === 'visible') {
         void markRead(connectionId).catch(() => {})
-        alarmController?.stopSound()
       }
     }
 
