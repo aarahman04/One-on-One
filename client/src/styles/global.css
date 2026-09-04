@@ -2531,6 +2531,85 @@ input:focus {
   }
 }
 
+/* --- Video call -------------------------------------------------------------
+   The two <video> elements are always in the DOM but only paint for a video
+   call, so an audio call's avatar layout is unchanged. Remote fills the
+   screen once frames actually arrive (--remote-live); until then the avatar
+   still shows so "Connecting…" isn't a black rectangle. */
+.call-screen__remote,
+.call-screen__local {
+  display: none;
+}
+
+.call-screen--video .call-screen__remote {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  z-index: 0;
+}
+
+.call-screen--video.call-screen--remote-live .call-screen__avatar {
+  display: none;
+}
+
+/* Local preview — a small rounded tile, top-right under the safe area,
+   draggable (JS sets --local-x / --local-y). Mirrored like every camera
+   app's self-view. */
+.call-screen--video .call-screen__local {
+  display: block;
+  position: absolute;
+  top: calc(var(--space-4) + env(safe-area-inset-top));
+  right: calc(var(--space-4) + env(safe-area-inset-right));
+  translate: var(--local-x, 0) var(--local-y, 0);
+  width: min(112px, 28vw);
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: #000;
+  transform: scaleX(-1);
+  z-index: 3;
+  cursor: grab;
+  touch-action: none;
+}
+
+.call-screen--video.call-screen--cam-off .call-screen__local {
+  display: none;
+}
+
+/* Name + controls have to clear the full-bleed remote video. */
+.call-screen--video .call-screen__top,
+.call-screen--video .call-screen__controls {
+  position: relative;
+  z-index: 2;
+}
+
+.call-screen--video.call-screen--remote-live .call-screen__name {
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+
+.call-screen--video.call-screen--remote-live .call-screen__status {
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+
+/* Landscape (phone turned for a video call): the controls panel would eat
+   too much height, so let it shrink to its buttons and hug the bottom. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .call-screen--video .call-screen__controls:not(:empty) {
+    width: auto;
+    padding: var(--space-3) var(--space-4);
+  }
+  .call-screen--video .call-screen__local {
+    width: min(96px, 16vw);
+  }
+}
+
 /* An anchored panel at the foot of the screen, WhatsApp-style — spans the
    width (capped on desktop) rather than shrinking to its buttons. */
 .call-screen__controls:not(:empty) {

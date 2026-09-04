@@ -11,6 +11,52 @@ Notes/deviations:
 
 ---
 
+## [Feature] Batch 7 — video calling — 2026-09-04
+Status: done, client builds clean (`tsc` / `vite build`). **Not runtime-verified**
+— needs a two-account, two-device pass (video both directions, camera toggle
+mid-call, flip, audio-only calls unaffected).
+Client-only — no schema, no backend change. `kind: 'video'` was already
+threaded through `call:invite` → `CallRecord` → `writeCallLog` →
+`notifyMissedCall` in the audio batches; the call-log card already rendered
+`kind === 'video'` (noun + directional camera glyphs). So Batch 7 is purely
+the call UI + media layer.
+What shipped (7 files, client):
+- **`features/call/media.ts`** — `acquireLocalStream(kind, facing)` now takes a
+  `CameraFacing` ('user' | 'environment'); video constraints are
+  `{ audio, video: { facingMode } }` (plain, not `exact`, so a single-camera
+  laptop still gets a stream). New `hasMultipleCameras()` (enumerateDevices)
+  gates the Flip button.
+- **`features/call/session.ts`** — `CallSession` takes `kind`; acquires video
+  for `'video'` calls and fires `onLocalStream` (once on start, again after a
+  flip). `setCameraEnabled()` = `videoTrack.enabled` — **no renegotiation**, so
+  audio is never touched. `switchCamera()` = fresh `getUserMedia` +
+  `RTCRtpSender.replaceTrack` — also renegotiation-free.
+- **`features/call/wakeLock.ts`** (new) — `screen` wake lock for the life of a
+  video call; no-op where unsupported (iOS Safari). Re-acquired on
+  `visibilitychange` (OS drops it when the tab hides).
+- **`features/call/controller.ts`** — header video button enabled +
+  `startVideoCall`; `CallBarHandle` gains `startVideoCall()`. Full-screen
+  surface gains a full-bleed remote `<video>` (painted only once frames arrive
+  — `.call-screen--remote-live`, avatar shows until then) and a draggable,
+  mirrored local-preview `<video>`. In-call controls add Camera (on/off) and
+  Flip (when >1 camera) for video calls. Incoming screen shows "Incoming video
+  call". Audio-call path is byte-for-byte unchanged (`<audio>` element, avatar
+  layout, no `--video` class).
+- **`features/call/icons.ts`** — `CALL_CAM_ICON` / `CALL_CAM_OFF_ICON` /
+  `CALL_FLIP_CAM_ICON`; dropped the "not built yet" note on `CALL_VIDEO_ICON`.
+- **`styles/global.css`** — `.call-screen--video` block: remote `object-fit:
+  cover` fill, local PiP tile (safe-area anchored, `translate` vars for drag),
+  name/status/controls lifted above the video with a text scrim, a landscape
+  (`max-height: 500px`) rule that shrinks the controls panel.
+- **`pages/ChatPage.ts`** — missed-**video**-call row redials with
+  `startVideoCall()` instead of always audio.
+Notes/deviations: camera toggle is `track.enabled` (peer sees a frozen/black
+frame), not track-remove + renegotiate — simplest thing that keeps audio
+alive, which is the batch's verify criterion. Speaker button (desktop
+`setSinkId` only) now targets the remote `<video>` for video calls. Pre-existing
+dead CSS noticed, not touched: `.chat__call-btn:disabled` has no live call site
+now that the video button ships enabled.
+
 ## [Bug fixes] /alarm sound persistence + /thisorthat pick labels — 2026-09-04
 Status: done, client builds clean (`tsc` / `vite build`). Not runtime-verified
 by the author — user is merging the PR and testing it themselves.
@@ -103,7 +149,7 @@ Notes/deviations:
 - `issue/unnamed.jpg` (deployed chat showing the idle call surface) was
   already fixed on `main` (the global `[hidden]{display:none!important}` from
   PR #49); the screenshot was a stale deploy. Not touched.
-- Video calling is still plan Batch 7 — untouched.
+- Video calling is plan Batch 7 — shipped 2026-09-04, see the entry above.
 
 ## [Feature] Audio calling — batches 1–6 (signaling → plumbing → UI → history → hardening → docs) — 2026-09-04
 Status: audio calling shipped. Batches 1–5 merged to `main` across PRs #46

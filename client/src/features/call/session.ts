@@ -1,5 +1,5 @@
-import type { CallTransport, IceServer } from '../../services/transport/CallTransport'
-import { acquireLocalStream, stopStream } from './media'
+import type { CallKind, CallTransport, IceServer } from '../../services/transport/CallTransport'
+import { acquireLocalStream, stopStream, type CameraFacing } from './media'
 
 export type CallSessionState = 'connected' | 'reconnecting' | 'ended'
 
@@ -12,6 +12,9 @@ const RECONNECT_GRACE_MS = 20_000
 
 export interface CallSessionHandlers {
   onRemoteStream?: (stream: MediaStream) => void
+  // Fires once local capture succeeds, and again after a front/back switch —
+  // the UI binds the local preview <video> to whatever stream this hands it.
+  onLocalStream?: (stream: MediaStream) => void
   onStateChange?: (state: CallSessionState) => void
   // Setup failure (mic permission denied, no device, or the offer/answer
   // exchange itself throwing) — startAsCaller/startAsCallee are always
@@ -36,9 +39,12 @@ interface SignalPayload {
 export class CallSession {
   private transport: CallTransport
   private callId: string
+  private kind: CallKind
   private handlers: CallSessionHandlers
   private pc: RTCPeerConnection
   private localStream: MediaStream | null = null
+  private facing: CameraFacing = 'user'
+  private switchInFlight = false
   private unsubSignal: () => void
   // Only the original offerer drives renegotiation, so both sides can't race
   // to ICE-restart the same call (classic offer glare).
@@ -47,9 +53,16 @@ export class CallSession {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private ended = false
 
-  constructor(transport: CallTransport, callId: string, iceServers: IceServer[], handlers: CallSessionHandlers = {}) {
+  constructor(
+    transport: CallTransport,
+    callId: string,
+    kind: CallKind,
+    iceServers: IceServer[],
+    handlers: CallSessionHandlers = {},
+  ) {
     this.transport = transport
     this.callId = callId
+    this.kind = kind
     this.handlers = handlers
     this.pc = new RTCPeerConnection({ iceServers })
 
@@ -105,8 +118,46 @@ export class CallSession {
   }
 
   private async attachLocalTracks(): Promise<void> {
-    this.localStream = await acquireLocalStream('audio')
+    this.localStream = await acquireLocalStream(this.kind === 'video' ? 'video' : 'audio', this.facing)
     for (const track of this.localStream.getTracks()) this.pc.addTrack(track, this.localStream)
+    this.handlers.onLocalStream?.(this.localStream)
+  }
+
+  // Camera on/off is track.enabled, never a renegotiation: the video m-line
+  // stays in the SDP, so the peer keeps rendering a frozen last frame / black
+  // and — crucially — audio is untouched.
+  setCameraEnabled(enabled: boolean): void {
+    this.localStream?.getVideoTracks().forEach((track) => {
+      track.enabled = enabled
+    })
+  }
+
+  // Front/back swap. replaceTrack on the existing sender means no SDP
+  // renegotiation and no ICE churn — the far side just sees the new frames.
+  async switchCamera(): Promise<void> {
+    if (this.kind !== 'video' || this.ended || this.switchInFlight || !this.localStream) return
+    this.switchInFlight = true
+    const next: CameraFacing = this.facing === 'user' ? 'environment' : 'user'
+    try {
+      const fresh = await acquireLocalStream('video', next, false)
+      const newTrack = fresh.getVideoTracks()[0]
+      if (!newTrack) return
+      const oldTrack = this.localStream.getVideoTracks()[0]
+      newTrack.enabled = oldTrack?.enabled ?? true
+      const sender = this.pc.getSenders().find((s) => s.track?.kind === 'video')
+      await sender?.replaceTrack(newTrack)
+      if (oldTrack) {
+        this.localStream.removeTrack(oldTrack)
+        oldTrack.stop()
+      }
+      this.localStream.addTrack(newTrack)
+      this.facing = next
+      this.handlers.onLocalStream?.(this.localStream)
+    } catch (err) {
+      console.error('CallSession: camera switch failed', err)
+    } finally {
+      this.switchInFlight = false
+    }
   }
 
   private clearReconnectTimer(): void {

@@ -22,6 +22,17 @@ export const CALL_SPEAKER_ICON =
 export const CALL_SPEAKER_OFF_ICON =
   '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>'
 
+// In-call camera controls (video calls only).
+export const CALL_CAM_ICON =
+  '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>'
+
+export const CALL_CAM_OFF_ICON =
+  '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2m4 0h4a2 2 0 0 1 2 2v4l4-3v8"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+
+// Flip front/back camera — a camera glyph with a circular-arrow hint.
+export const CALL_FLIP_CAM_ICON =
+  '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><path d="M9.5 13a2.5 2.5 0 0 1 4.9-.7M14.5 13a2.5 2.5 0 0 1-4.9.7"/><polyline points="9 15.5 9.6 13 12 13.6"/><polyline points="15 10.5 14.4 13 12 12.4"/></svg>'
+
 // Call-log disc glyphs — modality (phone / camera) sitting low-left, plus a
 // corner arrow for direction (↗ outgoing, ↙ incoming) the way WhatsApp's call
 // rows read. The modality glyph is scaled to ~65% into the lower-left so the
@@ -41,7 +52,6 @@ export const CALL_LOG_IN_ICON = logIcon(LOG_PHONE_PATH, ARROW_IN)
 export const CALL_LOG_VIDEO_OUT_ICON = logIcon(LOG_VIDEO_PATH, ARROW_OUT)
 export const CALL_LOG_VIDEO_IN_ICON = logIcon(LOG_VIDEO_PATH, ARROW_IN)
 
-// Header video-call button. Video calling itself is not built yet — the
-// button ships disabled so the header's final shape is settled now.
+// Header video-call button.
 export const CALL_VIDEO_ICON =
   '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>'

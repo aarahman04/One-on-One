@@ -1,9 +1,13 @@
-import type { CallTransport, IceServer, IncomingCall } from '../../services/transport/CallTransport'
+import type { CallKind, CallTransport, IceServer, IncomingCall } from '../../services/transport/CallTransport'
 import { formatCallDuration } from '../../utils/formatTime'
 import { showToast } from '../../components/Toast'
-import { callingSupported } from './media'
+import { callingSupported, hasMultipleCameras } from './media'
 import { CallSession } from './session'
+import * as wakeLock from './wakeLock'
 import {
+  CALL_CAM_ICON,
+  CALL_CAM_OFF_ICON,
+  CALL_FLIP_CAM_ICON,
   CALL_HANGUP_ICON,
   CALL_MIC_ICON,
   CALL_MIC_OFF_ICON,
@@ -17,9 +21,11 @@ type CallState = 'idle' | 'ringing-out' | 'ringing-in' | 'in-call' | 'reconnecti
 
 export interface CallBarHandle {
   dispose(): void
-  // Start an outgoing audio call — same entry point as the header phone
-  // button, exposed so a "tap to call back" on a missed-call row can reuse it.
+  // Start an outgoing call — same entry points as the header buttons, exposed
+  // so a "tap to call back" on a missed-call row can reuse them (audio vs
+  // video picked from the missed call's own kind).
   startAudioCall(): void
+  startVideoCall(): void
 }
 
 // Speaker/earpiece routing is not controllable from a web page on Android —
@@ -32,8 +38,8 @@ function speakerControlSupported(): boolean {
 }
 
 function callErrorMessage(err: Error): string {
-  if (err.name === 'NotAllowedError') return 'Microphone access was denied'
-  if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') return 'No microphone found'
+  if (err.name === 'NotAllowedError') return 'Camera or microphone access was denied'
+  if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') return 'No camera or microphone found'
   return 'Call failed'
 }
 
@@ -47,9 +53,8 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   const videoBtn = document.createElement('button')
   videoBtn.type = 'button'
   videoBtn.className = 'chat__call-btn'
-  videoBtn.disabled = true // video calling isn't built yet — see PROGRESS.md
-  videoBtn.title = 'Video call — not available yet'
-  videoBtn.setAttribute('aria-label', 'Video call (not available yet)')
+  videoBtn.title = 'Video call'
+  videoBtn.setAttribute('aria-label', 'Start video call')
   videoBtn.innerHTML = CALL_VIDEO_ICON
 
   const callBtn = document.createElement('button')
@@ -65,10 +70,15 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   else actions?.append(callBtn)
 
   // --- Full-screen call surface (built once, shown per state) --------------
+  // Remote/local <video> sit behind the name+controls; they stay empty (and
+  // .call-screen--video stays off) for audio calls, so the avatar layout is
+  // byte-for-byte what it was before video.
   const screen = document.createElement('div')
   screen.className = 'call-screen'
   screen.hidden = true
   screen.innerHTML = `
+    <video class="call-screen__remote" playsinline autoplay></video>
+    <video class="call-screen__local" playsinline autoplay muted></video>
     <div class="call-screen__top">
       <div class="call-screen__name"></div>
       <div class="call-screen__status"></div>
@@ -78,6 +88,9 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   `
   document.body.append(screen)
 
+  const remoteVideo = screen.querySelector<HTMLVideoElement>('.call-screen__remote')!
+  const localVideo = screen.querySelector<HTMLVideoElement>('.call-screen__local')!
+  localVideo.muted = true // never echo your own mic through the preview
   const nameEl = screen.querySelector<HTMLElement>('.call-screen__name')!
   const statusEl = screen.querySelector<HTMLElement>('.call-screen__status')!
   const avatarEl = screen.querySelector<HTMLElement>('.call-screen__avatar span')!
@@ -86,13 +99,46 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   nameEl.textContent = peerName
   avatarEl.textContent = peerName.trim().charAt(0).toUpperCase() || '?'
 
+  // Drag the local preview anywhere on screen (offset from its top-right
+  // anchor via CSS custom properties). Cleared on reset().
+  let dragX = 0
+  let dragY = 0
+  const resetLocalDrag = (): void => {
+    dragX = 0
+    dragY = 0
+    localVideo.style.setProperty('--local-x', '0px')
+    localVideo.style.setProperty('--local-y', '0px')
+  }
+  localVideo.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    localVideo.setPointerCapture(e.pointerId)
+    const startX = e.clientX - dragX
+    const startY = e.clientY - dragY
+    const onMove = (m: PointerEvent): void => {
+      // Keep it on screen with a rough margin — the tile is <=112px wide.
+      dragX = Math.min(0, Math.max(-(window.innerWidth - 140), m.clientX - startX))
+      dragY = Math.min(window.innerHeight - 200, Math.max(0, m.clientY - startY))
+      localVideo.style.setProperty('--local-x', `${dragX}px`)
+      localVideo.style.setProperty('--local-y', `${dragY}px`)
+    }
+    const onUp = (): void => {
+      localVideo.removeEventListener('pointermove', onMove)
+      localVideo.removeEventListener('pointerup', onUp)
+    }
+    localVideo.addEventListener('pointermove', onMove)
+    localVideo.addEventListener('pointerup', onUp)
+  })
+
   let state: CallState = 'idle'
+  let activeKind: CallKind = 'audio'
   let session: CallSession | null = null
   let activeCallId: string | null = null
   let remoteAudio: HTMLAudioElement | null = null
   let pendingAcceptedUnsub: (() => void) | null = null
   let muted = false
   let speakerOn = true
+  let cameraOn = true
+  let canFlipCamera = false
   let connectedAt = 0
   let timerId: ReturnType<typeof setInterval> | null = null
 
@@ -132,7 +178,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           if (activeCallId) void transport.decline(activeCallId)
           reset()
         }),
-        controlBtn('Accept', CALL_PHONE_ICON, 'accept', () => void acceptCall()),
+        controlBtn('Accept', activeKind === 'video' ? CALL_CAM_ICON : CALL_PHONE_ICON, 'accept', () => void acceptCall()),
       )
       return
     }
@@ -140,7 +186,8 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       controlsEl.append(controlBtn('Cancel', CALL_HANGUP_ICON, 'danger', () => void hangup()))
       return
     }
-    // in-call / reconnecting: speaker (where supported), mute, end.
+    // in-call / reconnecting: speaker (where supported), camera + flip (video
+    // only), mute, end.
     if (speakerControlSupported()) {
       controlsEl.append(
         controlBtn(
@@ -151,6 +198,14 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           speakerOn,
         ),
       )
+    }
+    if (activeKind === 'video') {
+      controlsEl.append(
+        controlBtn('Camera', cameraOn ? CALL_CAM_ICON : CALL_CAM_OFF_ICON, 'neutral', () => toggleCamera(), !cameraOn),
+      )
+      if (canFlipCamera) {
+        controlsEl.append(controlBtn('Flip', CALL_FLIP_CAM_ICON, 'neutral', () => void flipCamera()))
+      }
     }
     controlsEl.append(
       controlBtn('Mute', muted ? CALL_MIC_OFF_ICON : CALL_MIC_ICON, 'neutral', () => toggleMute(), muted),
@@ -165,6 +220,10 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     screen.classList.toggle('call-screen--ringing', state === 'ringing-in' || state === 'ringing-out')
     screen.classList.toggle('call-screen--connected', state === 'in-call')
     screen.classList.toggle('call-screen--reconnecting', state === 'reconnecting')
+    screen.classList.toggle('call-screen--video', activeKind === 'video')
+    // Only paint the remote video once frames are actually arriving — before
+    // that the <video> is a black rectangle over the avatar.
+    screen.classList.toggle('call-screen--remote-live', !!remoteVideo.srcObject && activeKind === 'video')
   }
 
   const show = (status: string): void => {
@@ -176,16 +235,24 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
 
   const reset = (): void => {
     state = 'idle'
+    activeKind = 'audio'
     activeCallId = null
     muted = false
+    cameraOn = true
+    canFlipCamera = false
     connectedAt = 0
     stopTimer()
+    wakeLock.release()
     pendingAcceptedUnsub?.()
     pendingAcceptedUnsub = null
     session?.close()
     session = null
     remoteAudio?.remove()
     remoteAudio = null
+    remoteVideo.srcObject = null
+    localVideo.srcObject = null
+    resetLocalDrag()
+    screen.classList.remove('call-screen--cam-off')
     screen.hidden = true
     applyStateClass()
     controlsEl.innerHTML = ''
@@ -207,9 +274,22 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     renderControls()
   }
 
+  const toggleCamera = (): void => {
+    cameraOn = !cameraOn
+    session?.setCameraEnabled(cameraOn)
+    screen.classList.toggle('call-screen--cam-off', !cameraOn)
+    renderControls()
+  }
+
+  const flipCamera = async (): Promise<void> => {
+    await session?.switchCamera()
+  }
+
   const toggleSpeaker = async (): Promise<void> => {
     speakerOn = !speakerOn
-    const el = remoteAudio as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
+    const el = (activeKind === 'video' ? remoteVideo : remoteAudio) as
+      | (HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> })
+      | null
     try {
       // '' is the system default output; 'communications' is the earpiece-ish
       // device where the platform exposes one.
@@ -222,19 +302,35 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
 
   // May throw synchronously (e.g. `new RTCPeerConnection` in a browser that
   // lacks it despite passing callingSupported()'s check) — callers wrap it.
-  const startSession = (callId: string, iceServers: IceServer[], role: 'caller' | 'callee'): void => {
-    session = new CallSession(transport, callId, iceServers, {
+  const startSession = (callId: string, kind: CallKind, iceServers: IceServer[], role: 'caller' | 'callee'): void => {
+    session = new CallSession(transport, callId, kind, iceServers, {
       onRemoteStream: (stream) => {
-        remoteAudio = document.createElement('audio')
-        remoteAudio.autoplay = true
-        remoteAudio.srcObject = stream
-        document.body.append(remoteAudio)
+        if (kind === 'video') {
+          remoteVideo.srcObject = stream
+          void remoteVideo.play().catch(() => {})
+          applyStateClass()
+        } else {
+          remoteAudio = document.createElement('audio')
+          remoteAudio.autoplay = true
+          remoteAudio.srcObject = stream
+          document.body.append(remoteAudio)
+        }
+      },
+      onLocalStream: (stream) => {
+        if (kind !== 'video') return
+        localVideo.srcObject = stream
+        void localVideo.play().catch(() => {})
+        void hasMultipleCameras().then((multi) => {
+          canFlipCamera = multi
+          if (state === 'in-call') renderControls()
+        })
       },
       onStateChange: (s) => {
         if (s === 'connected') {
           const wasReconnecting = state === 'reconnecting'
           state = 'in-call'
           screen.hidden = false
+          if (kind === 'video') void wakeLock.hold()
           applyStateClass()
           // Keep counting through a blip rather than restarting the clock.
           if (!wasReconnecting || !timerId) startTimer()
@@ -250,9 +346,9 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           void hangup()
         }
       },
-      // Setup failure (mic permission/device) — the server already thinks
-      // this call is live at this point, so tell it to end rather than just
-      // vanishing locally and leaving its registry stuck.
+      // Setup failure (camera/mic permission/device) — the server already
+      // thinks this call is live at this point, so tell it to end rather than
+      // just vanishing locally and leaving its registry stuck.
       onError: (err) => {
         console.error('CallSession setup failed', err)
         show(callErrorMessage(err))
@@ -273,6 +369,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       reset()
       return
     }
+    const kind = activeKind
     let accepted: { iceServers: IceServer[] }
     try {
       accepted = await transport.accept(callId)
@@ -284,7 +381,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     state = 'in-call'
     show('Connecting…')
     try {
-      startSession(callId, accepted.iceServers, 'callee')
+      startSession(callId, kind, accepted.iceServers, 'callee')
     } catch (err) {
       // The accept DID register server-side — tell it to end, not just reset.
       show(err instanceof Error ? callErrorMessage(err) : 'Call failed')
@@ -303,18 +400,19 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     }
   }
 
-  const startAudioCall = (): void => {
+  const startCall = (kind: CallKind): void => {
     if (state !== 'idle') return
     if (!callingSupported()) {
       showToast("Calls aren't supported in this browser")
       return
     }
+    activeKind = kind
     void (async () => {
       try {
-        const { callId, iceServers } = await transport.invite('audio')
+        const { callId, iceServers } = await transport.invite(kind)
         activeCallId = callId
         state = 'ringing-out'
-        show('Calling…')
+        show(kind === 'video' ? 'Video call…' : 'Calling…')
         // The offer is only created once they actually answer — see session.ts.
         pendingAcceptedUnsub = transport.onAccepted((acceptedId) => {
           if (acceptedId !== callId) return
@@ -323,7 +421,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           state = 'in-call'
           show('Connecting…')
           try {
-            startSession(acceptedId, iceServers, 'caller')
+            startSession(acceptedId, kind, iceServers, 'caller')
           } catch (err) {
             show(err instanceof Error ? callErrorMessage(err) : 'Call failed')
             setTimeout(() => void hangup(), 2000)
@@ -337,13 +435,18 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     })()
   }
 
+  const startAudioCall = (): void => startCall('audio')
+  const startVideoCall = (): void => startCall('video')
+
   callBtn.onclick = startAudioCall
+  videoBtn.onclick = startVideoCall
 
   const incomingUnsub = transport.onIncoming((call: IncomingCall) => {
     if (state !== 'idle') return // one call at a time — server also enforces this
     activeCallId = call.callId
+    activeKind = call.kind
     state = 'ringing-in'
-    show('Incoming call')
+    show(call.kind === 'video' ? 'Incoming video call' : 'Incoming call')
     if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400])
   })
 
@@ -352,13 +455,25 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     reset()
   })
 
+  // The OS drops the screen wake lock when the tab is hidden; take it back
+  // when a video call is still on screen.
+  const visibilityHandler = (): void => {
+    if (document.visibilityState === 'visible' && activeKind === 'video' && (state === 'in-call' || state === 'reconnecting')) {
+      void wakeLock.hold()
+    }
+  }
+  document.addEventListener('visibilitychange', visibilityHandler)
+
   return {
     startAudioCall,
+    startVideoCall,
     dispose: () => {
       incomingUnsub()
       endedUnsub()
+      document.removeEventListener('visibilitychange', visibilityHandler)
       pendingAcceptedUnsub?.()
       stopTimer()
+      wakeLock.release()
       session?.close()
       remoteAudio?.remove()
       screen.remove()
