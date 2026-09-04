@@ -182,13 +182,19 @@ function validateThisOrThatPayload(
 // An alarm raise carries no payload; an acknowledgement is a follow-up alarm
 // message reply-linked (via replyTo) to the original, with payload {ack:<id>}
 // naming the raise it clears. No message-mutation path exists (see thisorthat),
-// so ack is a new message, not an edit of the original.
-function validateAlarmPayload(payload: unknown): { ack?: string } {
+// so ack is a new message, not an edit of the original. The sender's own
+// stand-down (misfire, emergency resolved) reuses the same shape with
+// cancelled:true so it clears the alert on the same {ack} branch every
+// consumer already checks, just labelled differently in the UI/push text.
+function validateAlarmPayload(payload: unknown): { ack?: string; cancelled?: true } {
   const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
-  if (p.ack === undefined || p.ack === null) return {}
+  if (p.ack === undefined || p.ack === null) {
+    if (p.cancelled !== undefined) throw new ConnectionError(400, 'invalid alarm acknowledgement')
+    return {}
+  }
   const ack = String(p.ack).trim()
   if (ack.length < 1) throw new ConnectionError(400, 'invalid alarm acknowledgement')
-  return { ack }
+  return p.cancelled === true ? { ack, cancelled: true } : { ack }
 }
 
 const CALL_KINDS = ['audio', 'video']

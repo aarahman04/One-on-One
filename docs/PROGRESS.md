@@ -11,6 +11,35 @@ Notes/deviations:
 
 ---
 
+## [Fixes] Reaction spacing, video call-log icon, /alarm sender-cancel — 2026-09-04
+Status: done. Both sides type-check clean; client `vite build` passes.
+What shipped: (1) Reaction badge now tucks against the bubble's bottom edge
+(`.chat__message` split its `gap` into `column-gap`/`row-gap: 0`;
+`.chat__reaction-badge` got `margin-top: -3px; padding: 0 10px`) instead of
+sitting a full 10px below it — stays a bare emoji (no pill), and stays strictly
+below the bubble's own text/timestamp since it lands inside the bubble's
+bottom padding, so the earlier absolute-positioning-overlap bug isn't
+reintroduced. (2) Video call-log disc: `LOG_VIDEO_PATH`'s transform was
+overlapping the direction arrow and clipping the camera's left edge — retuned
+the glyph transform and added a video-only arrow offset (`shiftOut()` in
+`icons.ts`) so camera and arrow read as two distinct, ungrouped-but-clear
+shapes; voice call-log icons untouched. (3) `/alarm`: the raiser can now tap
+their own card to cancel a live alarm (previously only the recipient's
+Acknowledge could clear it) — reuses the existing reply-linked `{ack:<id>}`
+shape with an added `cancelled: true` flag rather than a new payload/message
+type, so every consumer that already keys off `payload.ack` (stop sound/
+vibration/glow, resume-on-reopen, the raise rate-limit) picks it up for free.
+`alarmCard` renders it as "⛔ … cancelled the alarm" instead of "✅ …
+acknowledged"; push preview text follows the same split.
+Notes/deviations: Two design docs referenced in the request (a reaction
+spacing analysis and a call-icon design-feedback doc) were not present in
+`Design fixes/` — only the two reaction reference JPEGs were there; the
+call-icon diagnosis came from `whatsapp calls/` references + SVG geometry
+instead. Not runtime-verified on-device yet (build-clean only) — see plan's
+verification section for the manual check list.
+
+---
+
 ## [Feature + fixes] /location card, linkify rewrite, call button overflow, call audio — 2026-09-04
 Status: done, both sides build clean (`tsc` / `vite build`). Chunk C (call
 audio) and Chunk D's live-device Maps behavior are **not runtime-verified** —

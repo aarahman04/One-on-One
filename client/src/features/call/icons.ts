@@ -41,16 +41,22 @@ export const CALL_FLIP_CAM_ICON =
 const LOG_PHONE_PATH =
   '<g transform="translate(-2 4.5) scale(0.66)" stroke-width="3"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></g>'
 const LOG_VIDEO_PATH =
-  '<g transform="translate(-1.5 5) scale(0.64)" stroke-width="3.1"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></g>'
+  '<g transform="translate(0.6 8.6) scale(0.60)" stroke-width="3.2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></g>'
 const ARROW_OUT = '<line x1="14" y1="10" x2="21" y2="3"/><polyline points="15 3 21 3 21 9"/>'
 const ARROW_IN = '<line x1="21" y1="3" x2="14" y2="10"/><polyline points="14 4 14 10 20 10"/>'
+// The video glyph's own transform (above) sits lower-left in the disc than the
+// phone glyph's, so the shared arrow anchor at (14, 10) lands right on top of
+// the camera's near corner and reads as one merged shape. Nudge the arrow up
+// and out for the video variants only — the voice icons keep the original
+// anchor untouched.
+const shiftOut = (arrow: string): string => `<g transform="translate(1 -1)">${arrow}</g>`
 const logIcon = (glyph: string, arrow: string): string =>
   `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${glyph}${arrow}</svg>`
 
 export const CALL_LOG_OUT_ICON = logIcon(LOG_PHONE_PATH, ARROW_OUT)
 export const CALL_LOG_IN_ICON = logIcon(LOG_PHONE_PATH, ARROW_IN)
-export const CALL_LOG_VIDEO_OUT_ICON = logIcon(LOG_VIDEO_PATH, ARROW_OUT)
-export const CALL_LOG_VIDEO_IN_ICON = logIcon(LOG_VIDEO_PATH, ARROW_IN)
+export const CALL_LOG_VIDEO_OUT_ICON = logIcon(LOG_VIDEO_PATH, shiftOut(ARROW_OUT))
+export const CALL_LOG_VIDEO_IN_ICON = logIcon(LOG_VIDEO_PATH, shiftOut(ARROW_IN))
 
 // Header video-call button.
 export const CALL_VIDEO_ICON =
