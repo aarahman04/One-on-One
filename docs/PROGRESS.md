@@ -11,6 +11,30 @@ Notes/deviations:
 
 ---
 
+## [Review pass] Calling robustness — 4 small fixes — 2026-09-04
+Status: done, both sides build clean (`tsc` / `vite build`). Not runtime-verified.
+A graph-guided read of the calling subsystem (the recently-changed hub) turned
+up four regular fixes, no behaviour redesign:
+- **`call:signal` had its own flood-guard bucket added** (`socketServer.ts`).
+  The shared guard is 60 events / 10s; WebRTC trickle ICE is one `call:signal`
+  per candidate and a peer on VPN + wifi + cellular with an ICE restart or two
+  can legitimately emit dozens in the first seconds — enough to trip the guard
+  and silently drop candidates mid-setup. `call:signal` now uses a separate
+  250 / 10s bucket (`relaySignal` already checks the sender is a participant).
+- **`turnService.getIceServers()` caches the minted set for 30s.** It runs on
+  every `call:invite` *and* `call:accept`, so a plain call hit Cloudflare twice
+  from a latency-sensitive path; a credential served at the end of the 30s
+  window still has 90s of validity (TTL 120s), ample for ICE gathering.
+- **`wakeLock.ts` guards the end-during-request race.** A call ending while
+  `navigator.wakeLock.request()` was still in flight left an orphaned lock that
+  never released — screen stays awake. A `wanted` flag now releases a
+  late-resolving sentinel.
+- **`CallSession.switchCamera()` hands the preview a fresh `MediaStream`.**
+  Mutating the existing stream in place and re-assigning it to
+  `<video>.srcObject` is a no-op in some browsers, so the local preview kept
+  showing the old camera after a front/back flip. The far side was always fine
+  (`replaceTrack`).
+
 ## [Feature] Batch 7 — video calling — 2026-09-04
 Status: done, client builds clean (`tsc` / `vite build`). **Not runtime-verified**
 — needs a two-account, two-device pass (video both directions, camera toggle

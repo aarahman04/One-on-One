@@ -7,12 +7,21 @@
 // re-acquire on visibilitychange — hold() is safe to call repeatedly.
 
 let sentinel: WakeLockSentinel | null = null
+// True between hold() and release(). Guards the gap where a call ends while a
+// request() is still in flight — without it that late-resolving lock would
+// never be released and the screen would stay awake.
+let wanted = false
 
 export async function hold(): Promise<void> {
+  wanted = true
   if (sentinel || !('wakeLock' in navigator)) return
   try {
-    sentinel = await navigator.wakeLock.request('screen')
-    // A lock the OS released on its own (tab hidden) should not look held.
+    const s = await navigator.wakeLock.request('screen')
+    if (!wanted) {
+      void s.release()
+      return
+    }
+    sentinel = s
     sentinel.addEventListener('release', () => {
       sentinel = null
     })
@@ -22,6 +31,7 @@ export async function hold(): Promise<void> {
 }
 
 export function release(): void {
+  wanted = false
   void sentinel?.release()
   sentinel = null
 }

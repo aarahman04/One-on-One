@@ -164,6 +164,20 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
       return true
     }
 
+    // call:signal carries WebRTC trickle ICE — one event per candidate, and a
+    // peer on VPN + wifi + cellular plus an ICE restart or two can legitimately
+    // emit dozens in the first few seconds. It gets its own, looser bucket so
+    // call setup never trips the general guard (relaySignal already checks the
+    // sender is a participant of the named call).
+    const recentSignals: number[] = []
+    const withinSignalRateLimit = (): boolean => {
+      const now = Date.now()
+      while (recentSignals.length && now - recentSignals[0] > 10_000) recentSignals.shift()
+      if (recentSignals.length >= 250) return false
+      recentSignals.push(now)
+      return true
+    }
+
     socket.on(
       'message:send',
       async (
@@ -332,7 +346,7 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
       'call:signal',
       async (msg: { callId?: unknown; data?: unknown }, ack?: (res: unknown) => void) => {
         try {
-          if (!withinRateLimit()) return ack?.({ error: 'slow down' })
+          if (!withinSignalRateLimit()) return ack?.({ error: 'slow down' })
           const { userId } = socket.data as SocketData
           const connection = await getLiveConnectionForUser(userId)
           if (!connection) return ack?.({ error: 'no active connection' })
