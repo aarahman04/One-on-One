@@ -146,11 +146,11 @@ export class CallSession {
       newTrack.enabled = oldTrack?.enabled ?? true
       const sender = this.pc.getSenders().find((s) => s.track?.kind === 'video')
       await sender?.replaceTrack(newTrack)
-      if (oldTrack) {
-        this.localStream.removeTrack(oldTrack)
-        oldTrack.stop()
-      }
-      this.localStream.addTrack(newTrack)
+      oldTrack?.stop()
+      // A fresh MediaStream (not mutating the old one in place): assigning the
+      // same object back to a <video>.srcObject is a no-op in some browsers,
+      // so the preview would keep showing the old camera.
+      this.localStream = new MediaStream([...this.localStream.getAudioTracks(), newTrack])
       this.facing = next
       this.handlers.onLocalStream?.(this.localStream)
     } catch (err) {

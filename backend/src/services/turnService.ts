@@ -21,12 +21,21 @@ const TURN_API_TOKEN = process.env.TURN_API_TOKEN
 // enough that a leaked credential is useless within minutes.
 const CREDENTIAL_TTL_SECONDS = 120
 
+// getIceServers runs on every call:invite AND call:accept, so a straight call
+// hits Cloudflare twice per call from a cold path. Cache the minted set
+// briefly — a credential served at the end of this window still has 90s of
+// validity left, plenty for ICE gathering, and the Cloudflare round-trip
+// drops out of the call:accept path whenever a call happened recently.
+const CACHE_TTL_MS = 30_000
+let cached: { servers: IceServer[]; at: number } | null = null
+
 if (!TURN_KEY_ID || !TURN_API_TOKEN) {
   console.warn('TURN_KEY_ID/TURN_API_TOKEN not set — calls will use STUN only (no relay across strict NAT)')
 }
 
 export async function getIceServers(): Promise<IceServer[]> {
   if (!TURN_KEY_ID || !TURN_API_TOKEN) return STUN_SERVERS
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.servers
 
   try {
     const res = await fetch(
@@ -46,7 +55,9 @@ export async function getIceServers(): Promise<IceServer[]> {
     }
     const data = (await res.json()) as { iceServers?: IceServer | IceServer[] }
     const servers = data.iceServers ? (Array.isArray(data.iceServers) ? data.iceServers : [data.iceServers]) : []
-    return servers.length ? servers : STUN_SERVERS
+    if (!servers.length) return STUN_SERVERS
+    cached = { servers, at: Date.now() }
+    return servers
   } catch (err) {
     // Best-effort, same stance as pushService/syncDelivery: never fail the
     // call because the TURN vendor is unreachable — degrade to STUN.
