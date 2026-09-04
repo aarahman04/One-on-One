@@ -95,8 +95,12 @@ points at it.
 backend-side post-decrypt. This is documented, not silently changed.**
 
 - `socketServer.ts` `mediaNoticeFor(message)` builds the push `body`:
-  - `letter` / `image` / `voice` / `file` → generic notice ("sent you a
-    photo", …) — **no content**.
+  - `letter` / `image` / `voice` / `file` / `alarm` / `call` / `location` →
+    generic notice ("sent you a photo", "shared their location", …) — **no
+    content**. (`location` deliberately joins this group rather than the
+    default below — the coordinates would otherwise sit in plaintext on an OS
+    lock-screen notification, which is a worse leak than the encrypted-at-rest
+    message itself.)
   - **default (text, ask, countdown, checkin, thisorthat) → `message.content.slice(0, 120)`** — up to 120 chars of the **plaintext** message.
 - The `message` object here is the in-memory decrypted `Message` returned by
   `saveMessage`, so the preview is plaintext by construction.
@@ -111,6 +115,34 @@ It does **not** cover notification previews in transit to/through push services
 core UX). A future opt-out ("hide message text in notifications") is possible
 but **out of scope** for this work; flagged here so it is a known, deliberate
 gap rather than an oversight.
+
+---
+
+## Open decision 3 — `/location` map tile requests (third-party leak, independent of at-rest encryption)
+
+**Confirmed, user-chosen trade-off. Not a gap introduced silently.**
+
+The `/location` card renders a single OpenStreetMap tile
+(`tile.openstreetmap.org`) centered on the sender's coordinates, fetched
+directly by the recipient's browser — never proxied through our backend. This
+means:
+
+- The coordinates, and the viewing device's IP address, reach a third party
+  (OpenStreetMap's tile infrastructure) on every card render.
+- This is **completely independent of Option C** above — the payload is still
+  encrypted at rest in our DB; the leak is a live network request the *card
+  itself* makes when displayed, not a database exposure.
+- Mitigated, not eliminated: the tile is held behind an `IntersectionObserver`
+  in `ChatPage.ts`'s `locationCard`, so it only fetches for a card actually
+  scrolled into view — not for every location message in the entire history
+  the moment a chat opens.
+
+**Alternatives considered and rejected:** a Google Static Maps thumbnail (same
+leak, plus an API key shipped client-side and a Google Cloud billing account);
+a zero-request stylized card with coordinates as text only (no leak, but no
+visual preview). User picked the OSM tile explicitly, with this trade-off
+stated plainly beforehand — recorded here per this file's own pattern for
+Option 2's push-preview trade-off above.
 
 ---
 

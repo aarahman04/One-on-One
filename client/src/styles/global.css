@@ -1652,6 +1652,104 @@ input:focus {
   color: var(--text);
 }
 
+/* Location — same keepsake-card family, but a two-row layout (map + label,
+   then actions) instead of the single icon+text row the others use. */
+.location-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: linear-gradient(135deg, #12283a, #0e2030);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.location-card__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.location-card__map {
+  position: relative;
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.location-card__tile {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* No src until the IntersectionObserver fires, and no image at all if the
+   tile request fails — the pin alone still reads fine either way. */
+.location-card__map--failed .location-card__tile {
+  display: none;
+}
+
+.location-card__pin {
+  position: relative;
+  z-index: 1;
+  font-size: 20px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
+
+.location-card__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.location-card__title {
+  font-weight: 600;
+}
+
+.location-card__coords {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.location-card__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.location-card__action {
+  flex: 1;
+  text-align: center;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.chat--bubbles .chat__message[data-mine='1'] .location-card {
+  color: var(--text);
+}
+
 /* Ask — same keepsake-card family. Sealed (locked, tappable) and revealed
    (both answers shown) share the base look; revealed drops the button
    affordance since there's nothing left to tap. */
@@ -1857,6 +1955,12 @@ input:focus {
 }
 
 .alarm-confirm__body {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 4px 0 14px;
+}
+
+.location-confirm__body {
   color: var(--muted);
   font-size: 13px;
   margin: 4px 0 14px;
@@ -2616,19 +2720,25 @@ input:focus {
   display: flex;
   align-items: flex-start;
   justify-content: space-evenly;
-  gap: var(--space-4);
+  gap: var(--space-2);
   width: 100%;
   max-width: 400px;
   margin-inline: auto;
-  padding: var(--space-6) var(--space-5) var(--space-5);
+  padding: var(--space-6) var(--space-3) var(--space-5);
   border-radius: var(--radius-lg);
   background: var(--bg-raised);
   border: 1px solid var(--border);
   box-shadow: var(--elevation-3);
 }
 
+/* flex: 1 1 0 + min-width: 0 lets a control actually shrink below its
+   min-content width — a video call packs 5 of these (Speaker, Camera, Flip,
+   Mute, End) into one row, and without this the row simply overflows its
+   rounded panel on a narrow phone instead of fitting. */
 .call-screen__control {
   display: flex;
+  flex: 1 1 0;
+  min-width: 0;
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
@@ -2638,8 +2748,8 @@ input:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 62px;
-  height: 62px;
+  width: min(62px, 100%);
+  aspect-ratio: 1;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   padding: 0;
@@ -2671,6 +2781,10 @@ input:focus {
 .call-screen__control-label {
   font-size: var(--text-xs);
   color: var(--text-dim);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Call-log card in the message stream — a real left/right bubble like

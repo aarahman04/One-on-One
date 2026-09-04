@@ -310,10 +310,20 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           void remoteVideo.play().catch(() => {})
           applyStateClass()
         } else {
-          remoteAudio = document.createElement('audio')
-          remoteAudio.autoplay = true
+          // ontrack can fire more than once (per-track, and again after an
+          // ICE restart) — reuse the one <audio> element rather than
+          // creating and orphaning a new one each time (was: doubled/dead
+          // audio on a mid-call reconnect). And unlike the video path above,
+          // autoplay on a JS-created element was never actually started —
+          // .play() must be called explicitly, with a surfaced failure
+          // instead of silent no-audio.
+          if (!remoteAudio) {
+            remoteAudio = document.createElement('audio')
+            remoteAudio.autoplay = true
+            document.body.append(remoteAudio)
+          }
           remoteAudio.srcObject = stream
-          document.body.append(remoteAudio)
+          remoteAudio.play().catch(() => showToast("Couldn't play call audio — tap the screen and try again"))
         }
       },
       onLocalStream: (stream) => {

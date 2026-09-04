@@ -5,9 +5,9 @@ import { getReactionsForMessages, type ReactionSummary } from './reactionService
 import { isAllowedMime, maxBytesFor, type AttachmentKind } from './attachmentService.js'
 import { encrypt, decrypt, isEncrypted } from './crypto.js'
 
-export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm' | 'call'
+export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm' | 'call' | 'location'
 
-const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat', 'alarm', 'call']
+const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat', 'alarm', 'call', 'location']
 export function isMessageType(x: unknown): x is MessageType {
   return MESSAGE_TYPES.includes(x as MessageType)
 }
@@ -208,6 +208,20 @@ function validateCallPayload(payload: unknown): { kind: string; outcome: string;
   return { kind, outcome, durationSec: Math.round(durationSec) }
 }
 
+// A location is a one-shot snapshot (the /location command), not live
+// sharing — no update path exists, so this only ever runs once per message.
+function validateLocationPayload(payload: unknown): { lat: number; lng: number; accuracy?: number } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  const lat = Number(p.lat)
+  const lng = Number(p.lng)
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) throw new ConnectionError(400, 'invalid latitude')
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180) throw new ConnectionError(400, 'invalid longitude')
+  if (p.accuracy === undefined || p.accuracy === null) return { lat, lng }
+  const accuracy = Number(p.accuracy)
+  if (!Number.isFinite(accuracy) || accuracy < 0) throw new ConnectionError(400, 'invalid accuracy')
+  return { lat, lng, accuracy }
+}
+
 const HISTORY_PAGE_SIZE = 50
 
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
@@ -270,9 +284,9 @@ export async function saveMessage(
 
   // Media messages carry an optional caption, and an alarm/call carry no
   // meaningful content of their own — both can be empty. Every other type
-  // (text, letter, ask, countdown, checkin, thisorthat) still requires
-  // actual content — each one's primary display string
-  // (body / question / label / note / "optionA vs optionB").
+  // (text, letter, ask, countdown, checkin, thisorthat, location) still
+  // requires actual content — each one's primary display string
+  // (body / question / label / note / "optionA vs optionB" / "lat, lng").
   const trimmed = content.trim()
   if (isMedia || type === 'alarm' || type === 'call') {
     if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
@@ -296,7 +310,9 @@ export async function saveMessage(
                 ? validateAlarmPayload(payload)
                 : type === 'call'
                   ? validateCallPayload(payload)
-                  : null
+                  : type === 'location'
+                    ? validateLocationPayload(payload)
+                    : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 

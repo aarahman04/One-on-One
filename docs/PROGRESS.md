@@ -11,6 +11,71 @@ Notes/deviations:
 
 ---
 
+## [Feature + fixes] /location card, linkify rewrite, call button overflow, call audio — 2026-09-04
+Status: done, both sides build clean (`tsc` / `vite build`). Chunk C (call
+audio) and Chunk D's live-device Maps behavior are **not runtime-verified** —
+user is running the two-device audio test and the phone Directions/View test
+separately.
+
+**Bug fixes (root-caused before any code changed, not guessed):**
+- **Links and phone numbers weren't clickable** — `linkifyInto` (`utils/linkify.ts`)
+  was correctly wired into every text bubble; the regex itself under-matched.
+  It required a scheme (`https://`) or literal `www.` for URLs (so
+  `example.com`, `github.com/...`, `bit.ly/xyz` rendered as plain text) and a
+  leading `+` for phone numbers (so `9876543210`, `(555) 123-4567` didn't
+  dial). Rewrote the pattern: an email guard (matched first, left unlinked, so
+  `me@example.com`'s domain half never gets peeled off), bare-domain matching
+  against a curated TLD list (2-letter cc-TLDs require a path — `t.co/x` links,
+  `10.me` alone doesn't), and widened phone matching to cover
+  separator-grouped and bare-10-digit local numbers. Also fixed: trailing
+  punctuation swallowed into URL hrefs (`https://a.com,` → dead link), and
+  `target="_blank"` incorrectly set on `tel:` anchors. 29 cases verified
+  against a JS mirror of the exact logic (including a real edge case found
+  during testing: `maps.app.goo.gl/abc` was splitting into two broken links
+  because "app" is itself a valid TLD — fixed with a negative-lookahead guard
+  that lets the regex find the true, longer domain instead).
+- **End-call button overflowed the control panel** — pure CSS: 5 controls
+  (Speaker/Camera/Flip/Mute/End) at a fixed 62px each plus gaps needed 374px
+  in a 294px content box at a 390px viewport (confirmed against the user's
+  screenshot). Controls now `flex: 1 1 0; min-width: 0` and buttons scale via
+  `min(62px, 100%)` + `aspect-ratio: 1` instead of overflowing.
+- **Call audio quality** — honest split. App's fault, fixed: the remote
+  `<audio>` element's `.play()` was never called (video path did; audio path
+  didn't) — the most likely cause of "voice not coming through," since
+  autoplay on a JS-created media element needs an explicit `.play()` call, now
+  with a surfaced toast on failure; `onRemoteStream` firing more than once
+  (per-track, after an ICE restart) was creating and orphaning a new `<audio>`
+  each time — now reused; mic constraints widened from bare `audio: true` to
+  explicit `echoCancellation`/`noiseSuppression`/`autoGainControl`. NOT the
+  app's fault, documented rather than "fixed": iOS Safari routes call audio to
+  the earpiece at reduced volume whenever mic capture is active — no web API
+  exists to force the loudspeaker (Android's speaker-toggle gap was already
+  documented the same honest way). No SDP munging or codec forcing — neither
+  would touch either issue.
+
+**New: `/location` slash command.** A one-shot location snapshot (not live
+sharing — no update path), rendered as a keepsake card in the same visual
+family as `/checkin`/`/ask`/`/thisorthat`: `client/src/features/location.ts`
+(confirm-before-permission-prompt, geolocation capture rounded to 5 decimals,
+denial/failure toasts), registered through the same 5 touch points every
+message type uses — `slashCommands.ts`, client `Transport.ts`, backend
+`messageService.ts` (`validateLocationPayload`, lat/lng/accuracy bounds
+checked), migration `029_message_types_location.sql`. Card
+(`locationCard` in `ChatPage.ts`) shows a single OSM tile (zoom 15, computed
+via the standard slippy-map tile math) behind a pin, held behind an
+`IntersectionObserver` so the tile — and the coordinate leak to
+tile.openstreetmap.org that comes with it — only fires for a card actually
+scrolled into view, plus "Get Directions" / "View" buttons that open Google
+Maps (app on mobile where installed, web otherwise).
+Notes/deviations: The OSM tile privacy trade — coordinates + both users' IPs
+reach a third party on every card view, independent of the at-rest encryption
+already on the payload — is a deliberate, user-confirmed choice over a
+zero-request stylized card or a Google Static Maps key; recorded in
+`docs/DECISIONS-encryption-at-rest.md`. `mediaNoticeFor` in `socketServer.ts`
+returns "shared their location" for the push preview, never raw coordinates —
+without this a lock-screen push notification would leak exact coordinates,
+which was treated as non-negotiable, not a nice-to-have.
+
 ## [Review pass] Calling robustness — 4 small fixes — 2026-09-04
 Status: done, both sides build clean (`tsc` / `vite build`). Not runtime-verified.
 A graph-guided read of the calling subsystem (the recently-changed hub) turned

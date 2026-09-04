@@ -9,6 +9,7 @@ export interface SlashContext {
   writeAsk: () => void
   writeThisOrThat: () => void
   writeAlarm: () => void
+  writeLocation: () => void
 }
 
 interface SlashCommand {
@@ -24,6 +25,7 @@ const COMMANDS: SlashCommand[] = [
   { name: 'ask', description: 'A sealed question, revealed together', run: (ctx) => { ctx.input.value = ''; ctx.writeAsk() } },
   { name: 'thisorthat', description: 'A playful pick, revealed together', run: (ctx) => { ctx.input.value = ''; ctx.writeThisOrThat() } },
   { name: 'alarm', description: 'Emergency — alert them right now', run: (ctx) => { ctx.input.value = ''; ctx.writeAlarm() } },
+  { name: 'location', description: 'Share where you are right now', run: (ctx) => { ctx.input.value = ''; ctx.writeLocation() } },
 ]
 
 // Exact "/command" match. Backs `runIfCommand`, which ChatPage's form-submit

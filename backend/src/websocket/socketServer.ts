@@ -61,6 +61,11 @@ function mediaNoticeFor(message: Message): string {
       return (message.payload as { ack?: string } | null)?.ack
         ? 'acknowledged the alarm'
         : '🚨 sent an emergency alarm'
+    case 'location':
+      // Never the raw coordinates — those would land on an OS lock-screen
+      // push notification, which is a privacy leak worse than the message
+      // itself (that at least stays inside the app, behind auth).
+      return 'shared their location'
     default:
       return message.content.slice(0, 120)
   }

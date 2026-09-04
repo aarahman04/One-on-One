@@ -20,6 +20,7 @@ import { moodEmoji, openCheckinComposer, type CheckinPayload } from '../features
 import { openAskAnswerModal, openAskComposer, type AskPayload } from '../features/ask'
 import { openThisOrThatAnswerModal, openThisOrThatComposer, type ThisOrThatPayload } from '../features/thisorthat'
 import { confirmSendAlarm, createAlarmController, type AlarmController } from '../features/alarm'
+import { writeLocationFlow, type LocationPayload } from '../features/location'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
@@ -570,6 +571,88 @@ export const ChatPage: Page = (root, go) => {
       note.className = 'checkin-card__note'
       linkifyInto(note, p.note ?? message.content)
       card.append(icon, note)
+      return card
+    }
+
+    // A location snapshot — same keepsake-card family as check-in. The tile
+    // request reveals the coordinates (and both users' IPs) to
+    // tile.openstreetmap.org, so it's held behind an IntersectionObserver and
+    // only fetched once the card is actually scrolled into view, rather than
+    // for every location ever sent in the conversation history (see
+    // docs/DECISIONS-encryption-at-rest.md for the fuller privacy note — this
+    // is a third-party network leak independent of at-rest encryption).
+    const locationCard = (message: ChatMessage): HTMLElement => {
+      const p = (message.payload ?? {}) as Partial<LocationPayload>
+      const lat = p.lat ?? 0
+      const lng = p.lng ?? 0
+
+      const card = document.createElement('div')
+      card.className = 'location-card'
+
+      const top = document.createElement('div')
+      top.className = 'location-card__top'
+
+      const mapWrap = document.createElement('div')
+      mapWrap.className = 'location-card__map'
+      const pin = document.createElement('span')
+      pin.className = 'location-card__pin'
+      pin.textContent = '📍'
+      mapWrap.append(pin)
+
+      // zoom 15, single 256px OSM tile centred on the point — good enough to
+      // orient by, not a full slippy map (no library, no pan/zoom).
+      const zoom = 15
+      const n = 2 ** zoom
+      const x = Math.floor(((lng + 180) / 360) * n)
+      const latRad = (lat * Math.PI) / 180
+      const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n)
+      const tileUrl = `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`
+
+      const img = document.createElement('img')
+      img.className = 'location-card__tile'
+      img.alt = 'Map preview'
+      img.addEventListener('error', () => mapWrap.classList.add('location-card__map--failed'), { once: true })
+      mapWrap.prepend(img)
+
+      const observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          img.src = tileUrl
+          observer.disconnect()
+        }
+      })
+      observer.observe(card)
+
+      const info = document.createElement('div')
+      info.className = 'location-card__info'
+      const title = document.createElement('span')
+      title.className = 'location-card__title'
+      title.textContent = 'Location'
+      const coords = document.createElement('span')
+      coords.className = 'location-card__coords'
+      coords.textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+      info.append(title, coords)
+
+      const actions = document.createElement('div')
+      actions.className = 'location-card__actions'
+      const directions = document.createElement('a')
+      directions.className = 'location-card__action'
+      directions.href = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
+      directions.target = '_blank'
+      directions.rel = 'noopener noreferrer'
+      directions.textContent = 'Get Directions'
+      directions.addEventListener('click', (e) => e.stopPropagation())
+      const view = document.createElement('a')
+      view.className = 'location-card__action'
+      view.href = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+      view.target = '_blank'
+      view.rel = 'noopener noreferrer'
+      view.textContent = 'View'
+      view.addEventListener('click', (e) => e.stopPropagation())
+      actions.append(directions, view)
+
+      top.append(mapWrap, info)
+      card.append(top, actions)
       return card
     }
 
@@ -1188,7 +1271,9 @@ export const ChatPage: Page = (root, go) => {
                           ? alarmCard(message)
                           : message.type === 'call'
                             ? callLogCard(message)
-                            : text
+                            : message.type === 'location'
+                              ? locationCard(message)
+                              : text
 
       body.append(sender)
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
@@ -1888,6 +1973,13 @@ export const ChatPage: Page = (root, go) => {
       writeAlarm: () =>
         confirmSendAlarm(() => {
           sendMessage('', 'alarm', {})
+          cancelReply()
+        }),
+      // No composer either — confirm, capture, send. writeLocationFlow owns
+      // the permission-denied/failure toasts.
+      writeLocation: () =>
+        writeLocationFlow(otherName, (content, payload) => {
+          sendMessage(content, 'location', payload)
           cancelReply()
         }),
     }
