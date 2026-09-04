@@ -1111,7 +1111,8 @@ export const ChatPage: Page = (root, go) => {
         card.tabIndex = 0
         const redial = (e: Event): void => {
           e.stopImmediatePropagation() // don't also toggle the row's expand-timestamp
-          callBar?.startAudioCall()
+          if (video) callBar?.startVideoCall()
+          else callBar?.startAudioCall()
         }
         card.addEventListener('click', redial)
         card.addEventListener('keydown', (e) => {
