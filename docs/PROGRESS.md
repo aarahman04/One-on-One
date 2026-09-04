@@ -11,6 +11,128 @@ Notes/deviations:
 
 ---
 
+## [Feature] Audio calling — batches 1–6 (signaling → plumbing → UI → history → hardening → docs) — 2026-09-04
+Status: audio calling shipped. Batches 1–5 merged to `main` across PRs #46
+(signaling backbone), #47 (client plumbing + minimal call), #48 (real call
+screen + SVG icon + reconnect + call history), #49 (call-screen overlay
+bugfix), #50 (header call-button placement + video-button placeholder), #51
+(hardening). Migration 028 applied to the live DB 2026-09-03 (`'call'`
+accepted by `messages_type_chk`). This batch 6 entry is documentation only —
+no code. `tsc`/`vite build` clean on both sides through every prior batch;
+**runtime-verified only in part** (see Notes).
+
+**Overrides spec §29** (calls listed as a V1 non-goal alongside groups,
+media, stories). Same kind of deliberate, user-confirmed override as emoji
+reactions, `/letter`, and image/voice/file media — approving the calling
+plan was that sign-off. Recorded here and in `docs/ARCHITECTURE.md` next to
+those precedents so it never reads as scope creep. Plan:
+`~/.claude/plans/query-existing-graph-signaling-socket-adaptive-wren.md`.
+
+What shipped (batches 1–5):
+- **Batch 1 — signaling backbone (backend).** `services/callService.ts`: an
+  in-memory `activeCalls` Map keyed by connection id (in-memory only, like
+  `lastAlarmRaiseAt` — a dropped call just ends, nothing survives a
+  restart), server-issued UUID `callId`s, one active call per connection
+  (a second invite gets 409), server-owned 45s ring timer that resolves a
+  silent call to `missed`, `inviteAllowed()` per-user invite cooldown plus
+  the existing `withinRateLimit()` socket flood guard. Every socket handler
+  re-resolves the caller's live connection via `getLiveConnectionForUser()`
+  — a client never names its peer, connection, or role. `services/turnService.ts`
+  + `GET /api/turn-credentials` (auth-only; see Notes) mints short-TTL
+  Cloudflare Realtime TURN credentials, degrading to STUN-only with a
+  warning when `TURN_KEY_ID` / `TURN_API_TOKEN` are unset. Eight socket
+  events wired in `socketServer.ts`: `call:invite` / `call:incoming` /
+  `call:accept` / `call:accepted` / `call:decline` / `call:signal` (relayed
+  opaquely, never parsed, stored, or logged) / `call:end` / `call:ended`.
+- **Batch 2 — client plumbing + minimal audio call.**
+  `services/transport/CallTransport.ts` (interface) +
+  `InternetCallTransport.ts` (Socket.IO impl), reached only through
+  `messageService.getCallTransport()` — components never touch Socket.IO
+  (spec §22), same rule the message `Transport` follows.
+  `features/call/session.ts` (`CallSession` — `RTCPeerConnection` lifecycle,
+  offer/answer, trickle ICE), `features/call/media.ts` (the single
+  `getUserMedia` chokepoint + `callingSupported()` capability/secure-context
+  check — kept in one module so a native permission bridge is a one-file
+  change later, per the Android notes).
+- **Batch 3 — audio call UI.** `features/call/controller.ts` (`mountCallBar`)
+  + `features/call/icons.ts` (inline SVG). Header phone + video buttons in
+  `.chat__nav-actions`, immediately left of the ••• menu (WhatsApp order);
+  video button rendered but `disabled` until the video batch. Full-screen
+  call surface appended to `document.body` (torn down via `ChatPage`'s
+  existing disposer list on route change). Mute, speaker (feature-detected
+  via `setSinkId` — hidden on Android where the web platform gives no
+  earpiece/speaker control, rather than lying), end, live call timer,
+  incoming-call ringtone + vibration. Playback starts inside the Accept tap
+  handler (autoplay policy). Styling via `.call__*` in `global.css` reusing
+  the existing custom properties so wallpapers/themes keep working.
+- **Batch 4 — call history.** Migration `028_message_types_call.sql` widens
+  `messages_type_chk` to add `'call'` (idempotent drop-and-recreate, like
+  024/025/027). Call rows are **server-authored only** — written exclusively
+  by `callService.resolveCall()` at every resolution path, through the
+  normal `saveMessage()` so `content` (empty) and `payload`
+  (`{ kind, outcome, durationSec }`) get the same AES-256-GCM encryption at
+  rest as every other message. `saveMessage`'s empty-content allowance was
+  extended to `'call'` beside `'alarm'`. `message:send` explicitly rejects a
+  client-sent `type: 'call'` (`{ error: 'call messages are server-authored' }`)
+  so history can't be forged. `senderId` is always the caller; the client
+  renders incoming/outgoing framing by comparing to its own user id.
+  Rendered by `callLogRow()` in `ChatPage.ts` as a centered row
+  (`.chat__call-log`, `--missed` tint), excluded from reactions and replies
+  (`row.dataset.type === 'call'` guards). Exports/search treat it as any
+  other message.
+- **Batch 5 — hardening.** ICE restart on `connectionState`
+  `failed`/`disconnected` (`attemptIceRestart`, offerer side) with a
+  `reconnecting` UI state and a give-up timer; `getRingingCallForCallee()`
+  re-emits `call:incoming` to any socket that (re)connects mid-ring so a
+  network blip doesn't swallow the call; `forceEndCall()` invoked from
+  `connectionService.terminate()` (via a `setIo()` `ioRef` bridge, since
+  that path is outside the socket layer) so a connection deleted or a leave
+  completed mid-call tears the call down and logs it; `callingSupported()`
+  gates call initiation on WebRTC + secure context; `onError` handler on
+  `CallSession` surfaces setup failures instead of an unhandled rejection;
+  `NotAllowedError` / `NotFoundError` mapped to "Microphone access was
+  denied" / "No microphone found". Missed-call web push (`notifyMissedCall`)
+  fires on ring-timeout and caller-cancel, reusing the existing VAPID setup.
+- **Batch 6 — this entry + `docs/ARCHITECTURE.md` signaling diagram + §29
+  note.** Audio calling is documented and closed.
+
+**Setup done on the user's side:** Cloudflare account + TURN key created;
+`TURN_KEY_ID` / `TURN_API_TOKEN` set on Railway; migration 028 applied.
+
+Notes/deviations:
+- **Unreachable-peer path does not match the plan — known gap, being fixed
+  in the follow-on call-polish batch.** The plan's signaling diagram had
+  "callee has no live socket → ack unavailable **+ write a missed-call row +
+  web push**". As shipped, `inviteCall` throws `409 'peer is not reachable
+  right now'` — the caller sees a toast, but **no chat row and no push**.
+  `notifyMissedCall` only covers the callee-was-online-but-didn't-answer
+  case. So calling someone whose app is fully closed currently leaves no
+  trace. The next batch adds the "you tried to call — unreachable" chat row
+  (+ push) and reworks the call-log rows to WhatsApp's left/right-bubble
+  style (icon disc + "Voice call · 0:33" / "Missed voice call · Tap to call
+  back") instead of the current centered system row — reference images in
+  `whatsapp calls/` and `whatsapp call examples/`.
+- **`GET /api/turn-credentials` is currently unused.** `iceServers` are
+  delivered in the `call:invite` / `call:accept` socket acks instead; the
+  REST route is mounted and working but no client calls it. It's auth-only,
+  not membership-checked (deliberate — the credentials grant Cloudflare
+  relay access only, not any connection's data). Keep or drop it in the
+  next batch.
+- **No "on a call" status line.** The plan mentioned the chat status line
+  showing "on a call" while one is active; not implemented.
+- **File layout drift from the plan:** `features/call/controller.ts` +
+  `features/call/icons.ts` rather than the planned `features/call/ui.ts`
+  with icons inline in `ChatPage.ts`. No behavioural difference.
+- **Runtime verification is partial.** Trust-boundary probes and the
+  signaling round-trips were exercised with scratch socket clients; a full
+  two-device audio call across networks (and `chrome://webrtc-internals`
+  confirmation of a P2P vs `relay` candidate pair) still needs a real
+  two-account, two-device pass on the deployed URL — `getUserMedia` over a
+  LAN IP silently fails, so this can't be a `localhost` test.
+- The screenshot in `issue/unnamed.jpg` (deployed app, "ARFAH" chat
+  rendering empty with no header call buttons) is unexplained — folded into
+  the next batch's investigation.
+
 ## [UI fixes + polish pass] Pending-bubble darken, account-switch gate, screen-by-screen consistency — 2026-09-03
 Status: items 1-2 done, PR #44 merged to `main` (2 commits). Item 3 (polish,
 3 batches) code complete on PR #45, open pending merge (3 commits, includes a
