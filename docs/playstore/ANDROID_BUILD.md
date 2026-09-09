@@ -39,12 +39,14 @@ web push via notification delegation).
 | `enableNotifications` | `true` | Chrome notification delegation forwards the existing web push to the Android notification channel. Adds `POST_NOTIFICATIONS` (Android 13+). |
 | `fallbackType` | `customtabs` | If Asset Links don't verify, open in a Custom Tab (with an address bar) rather than a raw WebView. |
 | `minSdkVersion` | `21` | Android 5.0. |
+| `splashScreenFadeOutDuration` | `300` | Milliseconds. Required key in Bubblewrap's manifest schema — omitting it makes the generated `build.gradle` unparseable. |
+| `appVersion` | `1.0.0` | The schema key is `appVersion` (Bubblewrap maps it to the `appVersionName` class field / Gradle `versionName`). The CI workflow overwrites this from its `versionName` input. |
 | `signingKey.path` | `./android.keystore` | The **upload** key. Play App Signing holds the real distribution key. |
 
-`targetSdkVersion` is not pinned here — Bubblewrap sets the current default at build
-time. Google Play requires it be within one year of the latest Android release;
-verify the value Bubblewrap emits (`android/app/build.gradle`) still qualifies when
-you build.
+`targetSdkVersion` and `compileSdkVersion` are hardcoded to `36` (Android 16) in
+Bubblewrap 1.25.0's Gradle template — comfortably inside Google Play's "within one
+year of the latest release" rule. Nothing to pin here; the `Verify generated
+Gradle` CI step prints the emitted values.
 
 Manifest permissions: `INTERNET` + `POST_NOTIFICATIONS` only. Camera / mic /
 location are Chrome-mediated runtime grants, **not** app manifest permissions —
@@ -80,14 +82,12 @@ Reuses the keystore from the secrets. Inputs: `versionCode` (must strictly
 increase per Play upload) and `versionName`. Output: the `android-release`
 artifact containing `app-release-bundle.aab` → upload that to Play.
 
-### If `bubblewrap update` fails on the bare project
+### `bubblewrap update` on the bare project
 
-The workflow runs `bubblewrap update` to regenerate the Gradle project from
-`twa-manifest.json`. If a Bubblewrap version rejects that without a prior
-`init`, do Path B's init once locally (or in a Codespace) and commit the
-generated `android/` Gradle files (the `.gitignore` keeps out `app/`'s build
-output and the keystore — you may need to loosen it to commit `build.gradle` +
-the gradle wrapper). Then CI's `update` + `build` will work.
+Confirmed working — the workflow's "Generate Android project from twa-manifest.json"
+step (`bubblewrap update`) scaffolds the full Gradle project from the committed
+`twa-manifest.json` alone, no prior `init` and no committed Gradle files needed
+(run 34351166418, Bubblewrap 1.25.0).
 
 ---
 

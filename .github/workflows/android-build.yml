@@ -101,13 +101,17 @@ jobs:
             const fs = require("fs");
             const m = JSON.parse(fs.readFileSync("twa-manifest.json"));
             m.appVersionCode = Number("${{ inputs.versionCode }}");
-            m.appVersionName = "${{ inputs.versionName }}";
+            m.appVersion = "${{ inputs.versionName }}";
             fs.writeFileSync("twa-manifest.json", JSON.stringify(m, null, 2) + "\n");
           '
 
       - name: Generate Android project from twa-manifest.json
         working-directory: android
         run: bubblewrap update --skipVersionUpgrade
+
+      - name: Verify generated Gradle
+        working-directory: android
+        run: grep -nE 'versionName|versionCode|minSdkVersion|targetSdkVersion|compileSdkVersion|splashScreenFadeOutDuration' app/build.gradle
 
       - name: Build signed AAB
         working-directory: android
@@ -117,7 +121,7 @@ jobs:
         run: bubblewrap build --skipPwaValidation
 
       - name: Upload keystore (first run only)
-        if: steps.keystore.outputs.generated == 'true'
+        if: always() && steps.keystore.outputs.generated == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: android-keystore
