@@ -2,3 +2,6 @@
 *.sh text eol=lf
 .githooks/* text eol=lf
 *.env.example text eol=lf
+
+# Node version pin — CRLF can trip Vercel's .nvmrc parser.
+.nvmrc text eol=lf

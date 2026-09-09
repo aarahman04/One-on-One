@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>One on One — offline</title>
+    <meta name="theme-color" content="#0d1117" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        padding: 32px;
+        text-align: center;
+        background: #0d1117;
+        color: #e6edf3;
+        font-family: -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
+      }
+      svg {
+        width: 96px;
+        height: 96px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+      }
+      p {
+        margin: 0;
+        max-width: 32ch;
+        color: #9aa4af;
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      button {
+        margin-top: 4px;
+        padding: 10px 20px;
+        border: 1px solid #1f2630;
+        border-radius: 999px;
+        background: #12181f;
+        color: #e6edf3;
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #79c0ff;
+      }
+    </style>
+  </head>
+  <body>
+    <svg viewBox="0 0 192 192" aria-hidden="true">
+      <circle cx="76" cy="96" r="40" fill="#7ee787" />
+      <circle cx="116" cy="96" r="40" fill="#79c0ff" fill-opacity="0.85" />
+    </svg>
+    <h1>You're offline</h1>
+    <p>One on One needs a connection to send and receive messages. Check your network and try again.</p>
+    <button type="button" onclick="location.reload()">Retry</button>
+  </body>
+</html>

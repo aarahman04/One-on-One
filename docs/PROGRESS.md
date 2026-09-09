@@ -11,6 +11,81 @@ Notes/deviations:
 
 ---
 
+## [Play Store / TWA] Stage 3 — PWA manifest, icons, service worker — 2026-09-09
+Status: done. `tsc` + `vite build` clean on client; backend untouched. Branch
+`feat/playstore-stage1-compliance` (still stacking — Stages 1 + 2 PRs pending).
+**Not live-validated** — `npx @bubblewrap/cli validate` / PWABuilder / Lighthouse
+need a deployed manifest URL and a browser, neither available this session; a
+validate pass on a preview deploy is owed (same caveat as Stages 1–2). Manifest +
+assetlinks JSON-linted and criteria-checked by hand; `offline.html` is static and
+was eyeballed, not rendered network-off.
+
+Plan: `~/.claude/plans/ancient-weaving-raven.md` Part 3 Stage 3.
+
+What shipped:
+- **`client/public/manifest.webmanifest`** rewritten — `name`/`short_name` "One on
+  One", `description`, `id` + `scope` `/`, `start_url` `/?src=twa`, `display`
+  standalone, `orientation` portrait, `theme_color`/`background_color` `#0d1117`,
+  `categories` `["social","communication"]`, `lang`/`dir`. Icons: 192 + 512
+  (`purpose: any`) + 512 maskable.
+- **Icons** — `scripts/gen-icons.mjs` (`npm run gen-icons`, sharp, root devDep)
+  rasterizes `client/public/icon.svg`: web set → `client/public/icons/`
+  (`icon-192`, `icon-512`, `maskable-512` — circles re-centred into the 80% safe
+  zone on the dark field); Play listing icon (512, square) + feature graphic
+  (1024×500, mark + wordmark) → `docs/playstore/store-assets/`. First-pass
+  aesthetic — **flagged for user review** (Part 5 step 5).
+- **`client/index.html`** — dropped the three Google Fonts `<link>`s +
+  preconnects, added `<link rel="stylesheet" href="/fonts/fonts.css">`; added PNG
+  `icon` + `apple-touch-icon` links (kept the SVG favicon for desktop).
+- **Self-hosted fonts** — `scripts/vendor-fonts.mjs` fetches the Fraunces (500/
+  600) / Figtree (400/500/600/700) / JetBrains Mono (400/500/700) woff2 faces,
+  latin + latin-ext subsets, into `client/public/fonts/` and generates
+  `fonts.css` (@font-face with the original `unicode-range`s). Removes the
+  IP-on-load third party (Stage 0 resolved YES).
+- **`client/public/sw.js`** — added `install` (precache `offline.html` +
+  `icon-192`/`icon-512`), `activate` (drop stale caches), `fetch` (network-first
+  for `mode: navigate`, fall back to cached `offline.html`; everything else
+  untouched). Push + notificationclick handlers unchanged except the notification
+  `icon`/`badge` moved from `/icon.svg` to `/icons/icon-192.png` (Android
+  notifications need a raster).
+- **`client/public/offline.html`** (new) — self-contained dark fallback page,
+  system-font stack, the two-circle mark, a Retry button.
+- **`client/public/.well-known/assetlinks.json`** (new) — `app.web.oneonone`,
+  `handle_all_urls`, **placeholder** all-zero SHA-256 + a `_comment` TODO to swap
+  in the real Play App Signing fingerprint after first upload. Confirmed copied
+  verbatim into `dist/.well-known/` by the Vite build.
+- **`client/vercel.json`** (new) — SPA rewrite with a negative-lookahead source
+  excluding `/.well-known/`, `/legal/`, `/assets/`, `/fonts/`, `/icons/`;
+  `Content-Type: application/json` on `assetlinks.json`; security headers
+  (`X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, HSTS,
+  `Permissions-Policy`) + a CSP (`default-src 'self'`; `style-src` adds
+  `'unsafe-inline'` for the app's inline styles; `img-src`/`media-src` allow
+  `https:` broadly for Google avatars + OSM tiles + Supabase storage;
+  `connect-src` allows Supabase + `*.railway.app` wildcards).
+- **Node pin** — `.nvmrc` `24` at repo root **and** `client/` (Vercel reads the
+  Root-Directory one); `engines` `>=20 <25` in root + `client/package.json`.
+
+Notes/deviations:
+- **`vercel.json` lives in `client/`, not the repo root** — the Vercel project's
+  Root Directory is `client/` (that's where `package.json` + Vite are, and where
+  Stage 2's `/legal/*.html` already serve from). A repo-root `vercel.json` would
+  not be read. Same reason the node pin is duplicated into `client/`.
+- **Root `package.json` created** (was absent) — holds the `gen-icons` script +
+  the `sharp` devDep + `engines`/`.nvmrc`. Not a workspace; `client/` and
+  `backend/` stay independent.
+- **`screenshots` omitted from the manifest** — real-UI screenshots need headless
+  Chrome against a deploy (Stage 5's job, `scripts/shoot-screenshots.mjs`); faking
+  them would violate the "real functionality" rule. Add the `screenshots` array in
+  Stage 5 once they exist. Not a Bubblewrap blocker.
+- **CSP is unverified against a live browser.** `connect-src` uses `*.supabase.co`
+  / `*.railway.app` wildcards because the exact backend origin is env-driven and
+  not in the repo. Tighten it (and confirm OAuth + sockets + TURN still work) on
+  the preview deploy, and again when the custom domain lands.
+- CSP `Permissions-Policy` grants `geolocation`/`camera`/`microphone` to `self`
+  (the app uses all three via Chrome); revisit if the app is ever iframed.
+
+---
+
 ## [Play Store / TWA] Stage 2 — legal & policy pages — 2026-09-09
 Status: done. `tsc` + `vite build` clean on client; backend untouched. Branch
 `feat/playstore-stage1-compliance` (continues on the Stage 1 branch — Stage 1 PR
