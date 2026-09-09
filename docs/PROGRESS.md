@@ -11,6 +11,67 @@ Notes/deviations:
 
 ---
 
+## [Play Store / TWA] Stage 4 — TWA / Android project — 2026-09-09
+Status: done (everything that doesn't need JDK 17 / Android SDK / a live deploy).
+Branch `feat/playstore-stage1-compliance` (still stacking). **No AAB built this
+session** — this env has JDK 8 only, no Android SDK, and Bubblewrap prompts for a
+JDK install on first run. The `.aab` is produced by CI (or a local toolchain) per
+`docs/playstore/ANDROID_BUILD.md`. `bubblewrap doctor` / `validate` not run.
+
+Plan: `~/.claude/plans/ancient-weaving-raven.md` Part 3 Stage 4. Vercel prod host
+`one-on-one-mu.vercel.app` (from user). Signing: CI-generated upload keystore
+(user's choice).
+
+What shipped:
+- **`android/twa-manifest.json`** (new) — hand-authored Bubblewrap config (no
+  local `bubblewrap init`): `packageId app.web.oneonone`, `host` +
+  `fullScopeUrl` `one-on-one-mu.vercel.app`, `name`/`launcherName` "One on One",
+  `startUrl /?src=twa`, `display standalone`, `orientation portrait`, all colors
+  `#0d1117`, `enableNotifications true` (Chrome push delegation),
+  `fallbackType customtabs`, `minSdkVersion 21`, `iconUrl`/`maskableIconUrl` →
+  the Stage 3 PNGs, `signingKey` → `./android.keystore` alias `oneonone-upload`,
+  `appVersionCode 1` / `appVersionName 1.0.0`, empty `fingerprints`.
+- **`android/.gitignore`** (new) — ignores the generated Gradle project
+  (`app/`, `build.gradle`, gradle wrapper, `.gradle/`), build output, and **all**
+  signing material (`*.keystore` / `*.jks` / `*.pem` / `*.p12` /
+  `signing-key-info.txt`). `twa-manifest.json` stays tracked.
+- **`.github/workflows/android-build.yml`** (new) — `workflow_dispatch` build on
+  `ubuntu-latest`: setup-node 24 + setup-java 17 (Temurin) +
+  `android-actions/setup-android` + `npm i -g @bubblewrap/cli`; writes
+  `~/.bubblewrap/config.json` pointing at the runner JDK/SDK to skip Bubblewrap's
+  installer; keystore step restores from `ANDROID_KEYSTORE_BASE64` or, on the
+  first run with no secrets, generates one (`keytool`, random password) + prints
+  passwords to the job summary + uploads `android.keystore` as a 1-day artifact;
+  `bubblewrap update` regenerates the Gradle project from `twa-manifest.json`;
+  `bubblewrap build --skipPwaValidation` with `BUBBLEWRAP_{KEYSTORE,KEY}_PASSWORD`
+  env; uploads `app-release-bundle.aab` + `app-release-signed.apk`.
+- **`docs/playstore/ANDROID_BUILD.md`** (new) — full runbook: prerequisites
+  (Stage 3 must be deployed to `one-on-one-mu.vercel.app` first), twa-manifest
+  field rationale, Path A (CI, recommended — the keystore secret dance), Path B
+  (local Bubblewrap), the Digital Asset Links fingerprint ordering dance
+  (placeholder → first Play upload → copy Play App Signing SHA-256 into
+  `assetlinks.json` → redeploy), and the Stage 4 verify checklist.
+
+Notes/deviations:
+- **`android/` holds only `twa-manifest.json` + `.gitignore`** — not a full
+  Bubblewrap-generated Gradle project. `bubblewrap init` is interactive and
+  needs a toolchain this session doesn't have; the config file it would produce
+  is authored directly instead, and CI's `bubblewrap update` regenerates the
+  rest. If a Bubblewrap version refuses `update` on a bare project, the runbook
+  says to `init` once elsewhere and commit the Gradle files.
+- **Signing key not created this session.** CI generates the upload keystore on
+  its first run (user opted for this over a local `keytool`). Play App Signing
+  holds the distribution key.
+- **`assetlinks.json` unchanged** — the Stage 3 placeholder is correct until the
+  first Play upload yields a real fingerprint (runbook step).
+- **`targetSdkVersion` not pinned** in `twa-manifest.json` — Bubblewrap's current
+  default applies at build time; the runbook flags verifying it against Play's
+  within-one-year rule.
+- CI workflow is **unrun / untested** — first-pass. Expect to iterate on the
+  `bubblewrap update` vs `init` question and SDK licensing on the real runner.
+
+---
+
 ## [Play Store / TWA] Stage 3 — PWA manifest, icons, service worker — 2026-09-09
 Status: done. `tsc` + `vite build` clean on client; backend untouched. Branch
 `feat/playstore-stage1-compliance` (still stacking — Stages 1 + 2 PRs pending).

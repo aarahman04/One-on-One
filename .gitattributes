@@ -5,3 +5,6 @@
 
 # Node version pin — CRLF can trip Vercel's .nvmrc parser.
 .nvmrc text eol=lf
+
+# CI workflows — CRLF breaks `run:` shell blocks on Linux runners.
+.github/workflows/*.yml text eol=lf

@@ -120,12 +120,13 @@ with `legalShared.ts` by hand (cross-referenced in comments). `client/vercel.jso
 Links in: Login footer (`.screen__legal`), the age-gate consent line (Stage 1),
 and the chat `•••` menu "ABOUT" group (`MenuDropdown.ts`, new tab).
 
-## PWA / TWA packaging (V1, since 2026-09-09 — Play Store Stage 3)
+## PWA / TWA packaging (V1, since 2026-09-09 — Play Store Stages 3–4)
 
-The Android app is the deployed site wrapped as a **Trusted Web Activity** via
-Bubblewrap (plan `~/.claude/plans/ancient-weaving-raven.md` Part 1 — no native
-logic, Chrome mediates every browser API the app uses). Stage 3 makes the site
-meet the PWA bar a TWA needs:
+The Android app is the deployed site (`https://one-on-one-mu.vercel.app/`) wrapped
+as a **Trusted Web Activity** via Bubblewrap (plan
+`~/.claude/plans/ancient-weaving-raven.md` Part 1 — no native logic, Chrome
+mediates every browser API the app uses). Stage 3 makes the site meet the PWA bar
+a TWA needs:
 
 ```mermaid
 flowchart TD
@@ -151,6 +152,19 @@ flowchart TD
 - **`assetlinks.json`** ships with a placeholder fingerprint; the real Play App
   Signing SHA-256 is pasted in after the first AAB upload (plan Part 5 step 11).
 - Node pinned to 24 (`.nvmrc` + `engines`, root and `client/`).
+
+**Stage 4 — the Android project.** `android/twa-manifest.json` is the
+hand-authored Bubblewrap config (no local `bubblewrap init` was run — this env
+has no JDK 17 / Android SDK): `packageId app.web.oneonone`, `host`
+`one-on-one-mu.vercel.app`, `startUrl /?src=twa`, standalone/portrait, `#0d1117`,
+`enableNotifications` (Chrome push delegation), `fallbackType customtabs`,
+`minSdkVersion 21`. `.github/workflows/android-build.yml` builds the signed `.aab`
+on a runner (`workflow_dispatch`) — first run generates the upload keystore and
+prints its passwords to the job summary; later runs reuse it from repo secrets
+(`ANDROID_KEYSTORE_BASE64` / `_PASSWORD` / `ANDROID_KEY_PASSWORD`). Play App
+Signing holds the real distribution key. Full runbook + the Asset Links ordering
+dance: `docs/playstore/ANDROID_BUILD.md`. The generated Gradle project
+(`android/app/`), the keystore, and `*.aab` are gitignored.
 
 ## Web Push notifications (V1, since 2026-08-27 — inert until keys are set)
 
