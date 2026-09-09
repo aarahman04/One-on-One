@@ -332,6 +332,39 @@ input:focus {
   text-underline-offset: 3px;
 }
 
+/* First-run age + consent gates (features/ageGate.ts). */
+.age-gate__dob {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.age-gate__dob select {
+  font-family: inherit;
+  font-size: 16px;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+.age-gate__agree {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  max-width: 320px;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.age-gate__agree input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
 .connection-id {
   font-family: var(--font-mono);
   font-size: 32px;

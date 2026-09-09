@@ -11,6 +11,94 @@ Notes/deviations:
 
 ---
 
+## [Play Store / TWA] Stage 1 — compliance code — 2026-09-09
+Status: done. `tsc` + `vite build` clean on client; `tsc` clean on backend.
+Branch `feat/playstore-stage1-compliance` off `main`. **Migrations 030 + 031 NOT
+applied to the live DB** — same manual `npm run migrate` step as every prior
+migration; flagged here so it isn't missed. Not runtime-verified on a deploy yet
+(build-clean + code-reasoned) — a two-account preview pass is owed per the plan's
+verification list.
+
+Plan: `~/.claude/plans/ancient-weaving-raven.md` Part 3 Stage 1. Approach and
+decisions locked in Stage 0 (`docs/_playstore-inputs.md`).
+
+What shipped:
+- **1a Block** — `blocks` table (migration 030: directional, permanent, RLS,
+  backend-only). `blockService.ts` (`isBlockedBetween` / `addBlock` /
+  `listBlocks` / `removeBlock`). `connectionService.requestConnection` rejects a
+  blocked pair with the same generic enumeration-safe failure as an unknown
+  code; new `blockAndTerminate` (instant end, no 5-step countdown, block written
+  first so the safety property holds even if terminate hiccups).
+  `POST /api/connections/:id/block`, `GET`/`DELETE /api/me/blocks[/:id]`.
+  Client: `features/blockUser.ts` confirm modal, wired into the chat `•••` menu
+  and `LeavePage` ("Block & end now").
+- **1b Account deletion** — `userService.deleteAccount` → best-effort
+  `deleteConnectionAttachments` for the live connection → `supabaseAdmin.auth.
+  admin.deleteUser`; FK cascades (migration 017) + `auth.users` cascade
+  (migration 001) do the rest. `DELETE /api/me`. Client:
+  `features/deleteAccount.ts` typed-confirm ("delete") → call → `signOut()` →
+  Login. Reachable from the chat `•••` menu **and** `ConnectionIdPage` (so a
+  solo user with no connection can still delete). Public `/delete-account` page
+  is Stage 2.
+- **1c Report hardening** — migration 031: `message_reports` gains
+  `reported_user_id` (nullable, `on delete set null` — moderation evidence
+  outlives the account, like `message_id` since migration 018), `category`
+  (bucket incl. `child_safety`), and a partial unique index for person-level
+  reports. `reportService`: category + `reported_user_id` resolution;
+  `getConnectionByMessageId` now also returns `messageSenderId`; new
+  `reportConnectionUser` for person-level reports (`message_id` null).
+  `POST /api/connections/:id/report`. Client: report modal gains a category
+  `<select>` + "Report & block"; chat menu gains "Report message" / "Report
+  [name]".
+- **1d Moderation** — `backend/src/database/reviewReports.ts` +
+  `npm run reports:review` (lists newest-first, decrypts the ciphertext
+  snapshot, `--category` / `--limit` flags). `docs/MODERATION.md` — triage SLA,
+  actions (delete message row / end connection / ban via auth-user delete),
+  CSAM → preserve + NCMEC CyberTipline + child-safety POC.
+- **1e Gates & rationale** — `features/ageGate.ts`: neutral DOB `<select>` gate
+  (18+, dead-end screen under 18) then a Terms-acceptance checkbox, both stored
+  per-device in `localStorage` (`ageVerified` / `termsAcceptedAt`), run from
+  `main.ts` before `mountRouter` for any non-login initial screen. The consent
+  line links `/terms` + `/privacy` — those routes ship in Stage 2.
+  `features/permissionRationale.ts`: a shared pre-prompt modal (mirrors
+  `openLocationConfirm`) shown once per kind per session before the browser's
+  camera / mic / notification prompt — wired into voice recording, call
+  start/accept, and the Notifications toggle.
+- **1f EXIF strip** — non-GIF images are re-encoded through a `<canvas>`
+  (`reencodeImage` in `ChatPage.ts`) before upload, dropping EXIF/GPS; the
+  canvas pass also yields the dimensions. GIFs pass through unstripped (canvas
+  would flatten the animation), matching the Stage 0 decision.
+
+Notes/deviations:
+- Person-level report is a real row with `message_id` null + `reported_user_id`,
+  rather than the plan's "report the most recent message from that user" — same
+  moderation signal, no need to hunt for a message.
+- `blocks` list in Settings shows date + Unblock only (no name — the per-
+  connection nickname is gone once the connection is deleted).
+- No new `SettingsPage` screen — account deletion + block live on existing
+  surfaces (chat `•••`, `ConnectionIdPage`, `LeavePage`). A dedicated Settings
+  screen wasn't needed for Stage 1's scope; revisit if Stage 2's blocks-list UI
+  wants a home.
+
+---
+
+## [Play Store / TWA] Stage 0 — inputs — 2026-09-09
+Status: done. Inputs only — `.gitignore` + a gitignored scratch doc; no build.
+What shipped: `docs/_playstore-inputs.md` (gitignored) recording the Stage 0
+inputs for the Google Play / TWA packaging plan
+(`~/.claude/plans/ancient-weaving-raven.md`): developer legal name (Ahmed Abdul
+Rahman), contact + child-safety email (aarahman803@gmail.com), ToS jurisdiction
+(Telangana, India), Android application id (`app.web.oneonone`). Domain is a
+**placeholder** — no custom domain bought yet; the existing Vercel deploy URL
+stands in, templated as `{{DOMAIN}}` wherever genuinely swappable. Open items
+resolved: age gate stays client-side `localStorage` (no DB column), Google Fonts
+self-hosted in Stage 3, GIFs pass through EXIF-strip unstripped, `android/` at
+repo root.
+Notes/deviations: `google-play-requirements-chat-app.md` (repo root) is the
+condensed policy reference for every stage.
+
+---
+
 ## [Fixes] Reaction spacing, video call-log icon, /alarm sender-cancel — 2026-09-04
 Status: done. Both sides type-check clean; client `vite build` passes.
 What shipped: (1) Reaction badge now tucks against the bubble's bottom edge

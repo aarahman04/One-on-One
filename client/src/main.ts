@@ -13,6 +13,7 @@ import { getSession, onSignedOut, signOut } from './services/authService'
 import { setUnauthorizedHandler } from './services/apiClient'
 import { getCurrentConnection } from './services/connectionsApi'
 import { nextScreenFor } from './state/nextScreen'
+import { ensureFirstRunGates } from './features/ageGate'
 
 registerPage('login', LoginPage)
 registerPage('connection-id', ConnectionIdPage)
@@ -98,7 +99,11 @@ async function resolveInitialScreen(): Promise<Screen> {
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 try {
-  mountRouter(app, await resolveInitialScreen())
+  const initial = await resolveInitialScreen()
+  // Age (18+) + Terms acceptance before anything else — but not on the login
+  // screen itself (a signed-out visitor has nothing to gate yet).
+  if (initial !== 'login') await ensureFirstRunGates(app)
+  mountRouter(app, initial)
 } catch (err) {
   // A transient network failure on cold load must not leave a blank page.
   console.error('startup failed, falling back to login:', err)

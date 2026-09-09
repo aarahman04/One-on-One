@@ -2,6 +2,7 @@ import type { CallKind, CallTransport, IceServer, IncomingCall } from '../../ser
 import { formatCallDuration } from '../../utils/formatTime'
 import { showToast } from '../../components/Toast'
 import { callingSupported, hasMultipleCameras } from './media'
+import { ensurePermissionRationale } from '../permissionRationale'
 import { CallSession } from './session'
 import * as wakeLock from './wakeLock'
 import {
@@ -380,6 +381,11 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       return
     }
     const kind = activeKind
+    if (!(await ensurePermissionRationale(kind === 'video' ? 'camera' : 'microphone'))) {
+      void transport.decline(callId)
+      reset()
+      return
+    }
     let accepted: { iceServers: IceServer[] }
     try {
       accepted = await transport.accept(callId)
@@ -416,8 +422,10 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       showToast("Calls aren't supported in this browser")
       return
     }
-    activeKind = kind
     void (async () => {
+      // In-app rationale before the browser's camera/mic prompt (Play policy).
+      if (!(await ensurePermissionRationale(kind === 'video' ? 'camera' : 'microphone'))) return
+      activeKind = kind
       try {
         const { callId, iceServers } = await transport.invite(kind)
         activeCallId = callId

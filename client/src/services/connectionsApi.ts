@@ -64,12 +64,33 @@ export async function getMessages(connectionId: string, before?: string): Promis
   return Array.isArray(body?.messages) ? body.messages : []
 }
 
-export async function reportMessage(messageId: string, reason: string): Promise<void> {
+export interface ReportInput {
+  category: string
+  reason: string
+}
+
+export async function reportMessage(messageId: string, input: ReportInput): Promise<void> {
   const res = await authedFetch(`/api/messages/${messageId}/report`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify(input),
   })
+  await unwrap(res)
+}
+
+// Report the other member of the connection (no specific message).
+export async function reportConnectionUser(connectionId: string, input: ReportInput): Promise<void> {
+  const res = await authedFetch(`/api/connections/${connectionId}/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  await unwrap(res)
+}
+
+// "Block & end": ends the connection immediately and blocks the pair permanently.
+export async function blockAndEnd(connectionId: string): Promise<void> {
+  const res = await authedFetch(`/api/connections/${connectionId}/block`, { method: 'POST' })
   await unwrap(res)
 }
 

@@ -1,6 +1,7 @@
 import type { Page } from '../state/router'
 import { getCurrentConnection, advanceLeave, cancelLeave, confirmEndLeave } from '../services/connectionsApi'
 import { loadingScreenHtml } from '../utils/loadingScreen'
+import { openBlockConfirm } from '../features/blockUser'
 
 export const LeavePage: Page = (root, go) => {
   root.innerHTML = loadingScreenHtml()
@@ -71,12 +72,21 @@ export const LeavePage: Page = (root, go) => {
             <button id="cancel-btn">${inProgress ? 'Keep connection' : 'Cancel'}</button>
             <button id="ok-btn" class="primary">OK</button>
           </div>
+          <button type="button" class="screen__alt" id="block-btn">Block &amp; end now — if this person is harassing you</button>
           ${errorHtml}
         </div>
       `
 
       const cancelBtn = root.querySelector<HTMLButtonElement>('#cancel-btn')!
       const okBtn = root.querySelector<HTMLButtonElement>('#ok-btn')!
+
+      root.querySelector<HTMLButtonElement>('#block-btn')!.addEventListener('click', () => {
+        openBlockConfirm({
+          connectionId: id,
+          peerName: (current.otherNickname ?? 'they').toLowerCase(),
+          onBlocked: () => go('connection-id'),
+        })
+      })
 
       cancelBtn.addEventListener('click', async () => {
         cancelBtn.disabled = true
