@@ -11,6 +11,65 @@ Notes/deviations:
 
 ---
 
+## [Play Store / TWA] Stage 5 — console-ready package — 2026-09-09
+Status: done. Docs + one helper script; no code, no build change (client `tsc` +
+`vite build` re-run clean, unchanged). Branch `feat/playstore-stage1-compliance`.
+Screenshots are **not captured** — the app is fully behind Google OAuth, so the
+script is interactive and the user captures the real shots (user's call).
+
+Plan: `~/.claude/plans/ancient-weaving-raven.md` Part 3 Stage 5. Identity + host
+from `docs/_playstore-inputs.md` + the user (`one-on-one-mu.vercel.app`).
+
+What shipped (all under `docs/playstore/`):
+- **DATA_SAFETY.md** — transcribe-ready answer sheet. Overview answers (collects
+  data: yes; encrypted in transit: yes; deletion offered: yes + the URLs). Per
+  data type: Name / Email / User IDs (required), Location (`/location` only,
+  one-shot), Messages (encrypted at rest), Photos / Voice / Files / other UGC
+  (optional). Everything **Shared = No** (no ads/analytics/brokers). Explicit
+  "not collected" list (IP, device IDs, contacts, crash logs…). Notes reconciling
+  the form with the privacy policy: the OSM map tile, push previews, WebRTC TURN,
+  processors-vs-sharing, report-snapshot retention.
+- **CONTENT_RATING.md** — IARC questionnaire answers. No first-party
+  violence/sexual/substance/gambling/fear content; **Yes** to user communication
+  + location sharing + UGC; connect-by-code only (no discovery); reactive
+  moderation. Expected outcome ~Teen/PEGI-12 (normal for messaging) — separate
+  from **Target audience = 18+**.
+- **STORE_LISTING.md** — app name "One on One" [10], short description [79/80],
+  full description [~1500/4000], what's-new [~210/500], graphics table (icon +
+  feature graphic from `gen-icons.mjs`; screenshots pending), categorization
+  fields. First pass — tone to be polished by the user.
+- **REVIEWER_NOTES.md** — App access instructions. Blank demo-account credential
+  table for the user to fill; explains the OAuth wall + why two pre-paired
+  accounts are needed; first-run gates; the pair-by-Connection-ID steps; feature
+  walkthrough; exact menu paths for Block & end / Report [name] / Delete account;
+  the four public policy URLs.
+- **PUBLISH_CHECKLIST.md** — the ordered "only you can do this" list (A register
+  + verify identity → B deploy + browser-verify the web app → C build the AAB via
+  the CI workflow → D create app + Play App Signing + the assetlinks fingerprint
+  swap → E fill Data Safety / Content Rating / Target audience / Child safety /
+  App access / Store listing → F 20 testers × 14 days closed → G production → H
+  housekeeping). Records migrations 030/031 as done.
+- **screenshots/README.md** — placeholder; the suggested 6-shot set + specs +
+  the "real UI only" rule.
+- **`scripts/shoot-screenshots.mjs`** (new) — interactive Puppeteer helper
+  (headed, 1080×1920): user signs in + drives the UI, terminal keypresses
+  capture each screen to `docs/playstore/screenshots/`. Not headless (OAuth) and
+  not run this session. `puppeteer` is a suggested one-off `npm i -D`, not added
+  to any package.json.
+- **ARCHITECTURE.md** — Stage 5 note appended to the PWA / TWA packaging section
+  (the Digital Asset Links diagram already lives there from Stage 3).
+
+Notes/deviations:
+- Screenshots deferred to the user by their explicit request (OAuth wall). The
+  optional web-manifest `screenshots` array is left for after real captures.
+- `DATA_SAFETY.md` flags the OSM-tile Location question as a judgement call
+  (recommend Shared = No + rely on the privacy-policy disclosure) rather than
+  deciding the checkbox for the user.
+- Store-listing copy and the IARC answers are a first pass; the user owns final
+  wording and the actual questionnaire submission (bucket B in the plan).
+
+---
+
 ## [Play Store / TWA] Stage 4 — TWA / Android project — 2026-09-09
 Status: done (everything that doesn't need JDK 17 / Android SDK / a live deploy).
 Branch `feat/playstore-stage1-compliance` (still stacking). **No AAB built this

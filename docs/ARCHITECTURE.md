@@ -166,6 +166,13 @@ Signing holds the real distribution key. Full runbook + the Asset Links ordering
 dance: `docs/playstore/ANDROID_BUILD.md`. The generated Gradle project
 (`android/app/`), the keystore, and `*.aab` are gitignored.
 
+**Stage 5 — console-ready package.** `docs/playstore/` holds the transcribe-ready
+Play Console inputs: `DATA_SAFETY.md`, `CONTENT_RATING.md` (IARC), `STORE_LISTING.md`,
+`REVIEWER_NOTES.md` (the app is fully behind OAuth — the reviewer needs two
+pre-paired demo accounts), `PUBLISH_CHECKLIST.md` (the ordered personal-action
+list), and `screenshots/` (captured by `scripts/shoot-screenshots.mjs` —
+interactive, not headless, because of the OAuth wall).
+
 ## Web Push notifications (V1, since 2026-08-27 — inert until keys are set)
 
 ```mermaid
