@@ -11,6 +11,218 @@ Notes/deviations:
 
 ---
 
+## [Play Store / TWA] Stage 6 — handoff & PRs — 2026-09-09
+Status: done. `docs/playstore/NEW_SESSION_PROMPT.md` written (post-execution
+handoff — the plan is implemented; it lists the user's Play Console steps + the
+deferred verifications + the one fingerprint paste-back). Client `tsc` +
+`vite build` clean.
+
+PR split (all against `main`, merge in order A → B → C — GitHub reduces each
+diff as the prior merges):
+- **PR-A** `playstore/stage-1-compliance` — Stage 1 (commits e6cdeed, 5d49d83).
+- **PR-B** `playstore/stage-2-legal` — + Stage 2 (92838f5).
+- **PR-C** `playstore/stage-3-5-packaging` — + Stages 3–5 + this Stage 6 commit.
+
+All work was stacked on `feat/playstore-stage1-compliance`; the three branches
+are slices of that history.
+
+---
+
+## [Play Store / TWA] Stage 5 — console-ready package — 2026-09-09
+Status: done. Docs + one helper script; no code, no build change (client `tsc` +
+`vite build` re-run clean, unchanged). Branch `feat/playstore-stage1-compliance`.
+Screenshots are **not captured** — the app is fully behind Google OAuth, so the
+script is interactive and the user captures the real shots (user's call).
+
+Plan: `~/.claude/plans/ancient-weaving-raven.md` Part 3 Stage 5. Identity + host
+from `docs/_playstore-inputs.md` + the user (`one-on-one-mu.vercel.app`).
+
+What shipped (all under `docs/playstore/`):
+- **DATA_SAFETY.md** — transcribe-ready answer sheet. Overview answers (collects
+  data: yes; encrypted in transit: yes; deletion offered: yes + the URLs). Per
+  data type: Name / Email / User IDs (required), Location (`/location` only,
+  one-shot), Messages (encrypted at rest), Photos / Voice / Files / other UGC
+  (optional). Everything **Shared = No** (no ads/analytics/brokers). Explicit
+  "not collected" list (IP, device IDs, contacts, crash logs…). Notes reconciling
+  the form with the privacy policy: the OSM map tile, push previews, WebRTC TURN,
+  processors-vs-sharing, report-snapshot retention.
+- **CONTENT_RATING.md** — IARC questionnaire answers. No first-party
+  violence/sexual/substance/gambling/fear content; **Yes** to user communication
+  + location sharing + UGC; connect-by-code only (no discovery); reactive
+  moderation. Expected outcome ~Teen/PEGI-12 (normal for messaging) — separate
+  from **Target audience = 18+**.
+- **STORE_LISTING.md** — app name "One on One" [10], short description [79/80],
+  full description [~1500/4000], what's-new [~210/500], graphics table (icon +
+  feature graphic from `gen-icons.mjs`; screenshots pending), categorization
+  fields. First pass — tone to be polished by the user.
+- **REVIEWER_NOTES.md** — App access instructions. Blank demo-account credential
+  table for the user to fill; explains the OAuth wall + why two pre-paired
+  accounts are needed; first-run gates; the pair-by-Connection-ID steps; feature
+  walkthrough; exact menu paths for Block & end / Report [name] / Delete account;
+  the four public policy URLs.
+- **PUBLISH_CHECKLIST.md** — the ordered "only you can do this" list (A register
+  + verify identity → B deploy + browser-verify the web app → C build the AAB via
+  the CI workflow → D create app + Play App Signing + the assetlinks fingerprint
+  swap → E fill Data Safety / Content Rating / Target audience / Child safety /
+  App access / Store listing → F 20 testers × 14 days closed → G production → H
+  housekeeping). Records migrations 030/031 as done.
+- **screenshots/README.md** — placeholder; the suggested 6-shot set + specs +
+  the "real UI only" rule.
+- **`scripts/shoot-screenshots.mjs`** (new) — interactive Puppeteer helper
+  (headed, 1080×1920): user signs in + drives the UI, terminal keypresses
+  capture each screen to `docs/playstore/screenshots/`. Not headless (OAuth) and
+  not run this session. `puppeteer` is a suggested one-off `npm i -D`, not added
+  to any package.json.
+- **ARCHITECTURE.md** — Stage 5 note appended to the PWA / TWA packaging section
+  (the Digital Asset Links diagram already lives there from Stage 3).
+
+Notes/deviations:
+- Screenshots deferred to the user by their explicit request (OAuth wall). The
+  optional web-manifest `screenshots` array is left for after real captures.
+- `DATA_SAFETY.md` flags the OSM-tile Location question as a judgement call
+  (recommend Shared = No + rely on the privacy-policy disclosure) rather than
+  deciding the checkbox for the user.
+- Store-listing copy and the IARC answers are a first pass; the user owns final
+  wording and the actual questionnaire submission (bucket B in the plan).
+
+---
+
+## [Play Store / TWA] Stage 4 — TWA / Android project — 2026-09-09
+Status: done (everything that doesn't need JDK 17 / Android SDK / a live deploy).
+Branch `feat/playstore-stage1-compliance` (still stacking). **No AAB built this
+session** — this env has JDK 8 only, no Android SDK, and Bubblewrap prompts for a
+JDK install on first run. The `.aab` is produced by CI (or a local toolchain) per
+`docs/playstore/ANDROID_BUILD.md`. `bubblewrap doctor` / `validate` not run.
+
+Plan: `~/.claude/plans/ancient-weaving-raven.md` Part 3 Stage 4. Vercel prod host
+`one-on-one-mu.vercel.app` (from user). Signing: CI-generated upload keystore
+(user's choice).
+
+What shipped:
+- **`android/twa-manifest.json`** (new) — hand-authored Bubblewrap config (no
+  local `bubblewrap init`): `packageId app.web.oneonone`, `host` +
+  `fullScopeUrl` `one-on-one-mu.vercel.app`, `name`/`launcherName` "One on One",
+  `startUrl /?src=twa`, `display standalone`, `orientation portrait`, all colors
+  `#0d1117`, `enableNotifications true` (Chrome push delegation),
+  `fallbackType customtabs`, `minSdkVersion 21`, `iconUrl`/`maskableIconUrl` →
+  the Stage 3 PNGs, `signingKey` → `./android.keystore` alias `oneonone-upload`,
+  `appVersionCode 1` / `appVersionName 1.0.0`, empty `fingerprints`.
+- **`android/.gitignore`** (new) — ignores the generated Gradle project
+  (`app/`, `build.gradle`, gradle wrapper, `.gradle/`), build output, and **all**
+  signing material (`*.keystore` / `*.jks` / `*.pem` / `*.p12` /
+  `signing-key-info.txt`). `twa-manifest.json` stays tracked.
+- **`.github/workflows/android-build.yml`** (new) — `workflow_dispatch` build on
+  `ubuntu-latest`: setup-node 24 + setup-java 17 (Temurin) +
+  `android-actions/setup-android` + `npm i -g @bubblewrap/cli`; writes
+  `~/.bubblewrap/config.json` pointing at the runner JDK/SDK to skip Bubblewrap's
+  installer; keystore step restores from `ANDROID_KEYSTORE_BASE64` or, on the
+  first run with no secrets, generates one (`keytool`, random password) + prints
+  passwords to the job summary + uploads `android.keystore` as a 1-day artifact;
+  `bubblewrap update` regenerates the Gradle project from `twa-manifest.json`;
+  `bubblewrap build --skipPwaValidation` with `BUBBLEWRAP_{KEYSTORE,KEY}_PASSWORD`
+  env; uploads `app-release-bundle.aab` + `app-release-signed.apk`.
+- **`docs/playstore/ANDROID_BUILD.md`** (new) — full runbook: prerequisites
+  (Stage 3 must be deployed to `one-on-one-mu.vercel.app` first), twa-manifest
+  field rationale, Path A (CI, recommended — the keystore secret dance), Path B
+  (local Bubblewrap), the Digital Asset Links fingerprint ordering dance
+  (placeholder → first Play upload → copy Play App Signing SHA-256 into
+  `assetlinks.json` → redeploy), and the Stage 4 verify checklist.
+
+Notes/deviations:
+- **`android/` holds only `twa-manifest.json` + `.gitignore`** — not a full
+  Bubblewrap-generated Gradle project. `bubblewrap init` is interactive and
+  needs a toolchain this session doesn't have; the config file it would produce
+  is authored directly instead, and CI's `bubblewrap update` regenerates the
+  rest. If a Bubblewrap version refuses `update` on a bare project, the runbook
+  says to `init` once elsewhere and commit the Gradle files.
+- **Signing key not created this session.** CI generates the upload keystore on
+  its first run (user opted for this over a local `keytool`). Play App Signing
+  holds the distribution key.
+- **`assetlinks.json` unchanged** — the Stage 3 placeholder is correct until the
+  first Play upload yields a real fingerprint (runbook step).
+- **`targetSdkVersion` not pinned** in `twa-manifest.json` — Bubblewrap's current
+  default applies at build time; the runbook flags verifying it against Play's
+  within-one-year rule.
+- CI workflow is **unrun / untested** — first-pass. Expect to iterate on the
+  `bubblewrap update` vs `init` question and SDK licensing on the real runner.
+
+---
+
+## [Play Store / TWA] Stage 3 — PWA manifest, icons, service worker — 2026-09-09
+Status: done. `tsc` + `vite build` clean on client; backend untouched. Branch
+`feat/playstore-stage1-compliance` (still stacking — Stages 1 + 2 PRs pending).
+**Not live-validated** — `npx @bubblewrap/cli validate` / PWABuilder / Lighthouse
+need a deployed manifest URL and a browser, neither available this session; a
+validate pass on a preview deploy is owed (same caveat as Stages 1–2). Manifest +
+assetlinks JSON-linted and criteria-checked by hand; `offline.html` is static and
+was eyeballed, not rendered network-off.
+
+Plan: `~/.claude/plans/ancient-weaving-raven.md` Part 3 Stage 3.
+
+What shipped:
+- **`client/public/manifest.webmanifest`** rewritten — `name`/`short_name` "One on
+  One", `description`, `id` + `scope` `/`, `start_url` `/?src=twa`, `display`
+  standalone, `orientation` portrait, `theme_color`/`background_color` `#0d1117`,
+  `categories` `["social","communication"]`, `lang`/`dir`. Icons: 192 + 512
+  (`purpose: any`) + 512 maskable.
+- **Icons** — `scripts/gen-icons.mjs` (`npm run gen-icons`, sharp, root devDep)
+  rasterizes `client/public/icon.svg`: web set → `client/public/icons/`
+  (`icon-192`, `icon-512`, `maskable-512` — circles re-centred into the 80% safe
+  zone on the dark field); Play listing icon (512, square) + feature graphic
+  (1024×500, mark + wordmark) → `docs/playstore/store-assets/`. First-pass
+  aesthetic — **flagged for user review** (Part 5 step 5).
+- **`client/index.html`** — dropped the three Google Fonts `<link>`s +
+  preconnects, added `<link rel="stylesheet" href="/fonts/fonts.css">`; added PNG
+  `icon` + `apple-touch-icon` links (kept the SVG favicon for desktop).
+- **Self-hosted fonts** — `scripts/vendor-fonts.mjs` fetches the Fraunces (500/
+  600) / Figtree (400/500/600/700) / JetBrains Mono (400/500/700) woff2 faces,
+  latin + latin-ext subsets, into `client/public/fonts/` and generates
+  `fonts.css` (@font-face with the original `unicode-range`s). Removes the
+  IP-on-load third party (Stage 0 resolved YES).
+- **`client/public/sw.js`** — added `install` (precache `offline.html` +
+  `icon-192`/`icon-512`), `activate` (drop stale caches), `fetch` (network-first
+  for `mode: navigate`, fall back to cached `offline.html`; everything else
+  untouched). Push + notificationclick handlers unchanged except the notification
+  `icon`/`badge` moved from `/icon.svg` to `/icons/icon-192.png` (Android
+  notifications need a raster).
+- **`client/public/offline.html`** (new) — self-contained dark fallback page,
+  system-font stack, the two-circle mark, a Retry button.
+- **`client/public/.well-known/assetlinks.json`** (new) — `app.web.oneonone`,
+  `handle_all_urls`, **placeholder** all-zero SHA-256 + a `_comment` TODO to swap
+  in the real Play App Signing fingerprint after first upload. Confirmed copied
+  verbatim into `dist/.well-known/` by the Vite build.
+- **`client/vercel.json`** (new) — SPA rewrite with a negative-lookahead source
+  excluding `/.well-known/`, `/legal/`, `/assets/`, `/fonts/`, `/icons/`;
+  `Content-Type: application/json` on `assetlinks.json`; security headers
+  (`X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, HSTS,
+  `Permissions-Policy`) + a CSP (`default-src 'self'`; `style-src` adds
+  `'unsafe-inline'` for the app's inline styles; `img-src`/`media-src` allow
+  `https:` broadly for Google avatars + OSM tiles + Supabase storage;
+  `connect-src` allows Supabase + `*.railway.app` wildcards).
+- **Node pin** — `.nvmrc` `24` at repo root **and** `client/` (Vercel reads the
+  Root-Directory one); `engines` `>=20 <25` in root + `client/package.json`.
+
+Notes/deviations:
+- **`vercel.json` lives in `client/`, not the repo root** — the Vercel project's
+  Root Directory is `client/` (that's where `package.json` + Vite are, and where
+  Stage 2's `/legal/*.html` already serve from). A repo-root `vercel.json` would
+  not be read. Same reason the node pin is duplicated into `client/`.
+- **Root `package.json` created** (was absent) — holds the `gen-icons` script +
+  the `sharp` devDep + `engines`/`.nvmrc`. Not a workspace; `client/` and
+  `backend/` stay independent.
+- **`screenshots` omitted from the manifest** — real-UI screenshots need headless
+  Chrome against a deploy (Stage 5's job, `scripts/shoot-screenshots.mjs`); faking
+  them would violate the "real functionality" rule. Add the `screenshots` array in
+  Stage 5 once they exist. Not a Bubblewrap blocker.
+- **CSP is unverified against a live browser.** `connect-src` uses `*.supabase.co`
+  / `*.railway.app` wildcards because the exact backend origin is env-driven and
+  not in the repo. Tighten it (and confirm OAuth + sockets + TURN still work) on
+  the preview deploy, and again when the custom domain lands.
+- CSP `Permissions-Policy` grants `geolocation`/`camera`/`microphone` to `self`
+  (the app uses all three via Chrome); revisit if the app is ever iframed.
+
+---
+
 ## [Play Store / TWA] Stage 2 — legal & policy pages — 2026-09-09
 Status: done. `tsc` + `vite build` clean on client; backend untouched. Branch
 `feat/playstore-stage1-compliance` (continues on the Stage 1 branch — Stage 1 PR

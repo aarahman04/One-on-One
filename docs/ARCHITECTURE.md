@@ -114,11 +114,64 @@ token in the copy until a custom domain exists.
 `client/public/legal/{privacy,terms,child-safety}.html` are self-contained
 mirrors (own palette + `prefers-color-scheme`) for any external link that can't
 run the SPA — e.g. the Play Console privacy-policy URL. They must be kept in sync
-with `legalShared.ts` by hand (cross-referenced in comments). `vercel.json`
-(Stage 3) will exclude `/legal/*` and `/.well-known/*` from the SPA rewrite.
+with `legalShared.ts` by hand (cross-referenced in comments). `client/vercel.json`
+(Stage 3) excludes `/legal/*` and `/.well-known/*` from the SPA rewrite.
 
 Links in: Login footer (`.screen__legal`), the age-gate consent line (Stage 1),
 and the chat `•••` menu "ABOUT" group (`MenuDropdown.ts`, new tab).
+
+## PWA / TWA packaging (V1, since 2026-09-09 — Play Store Stages 3–4)
+
+The Android app is the deployed site (`https://one-on-one-mu.vercel.app/`) wrapped
+as a **Trusted Web Activity** via Bubblewrap (plan
+`~/.claude/plans/ancient-weaving-raven.md` Part 1 — no native logic, Chrome
+mediates every browser API the app uses). Stage 3 makes the site meet the PWA bar
+a TWA needs:
+
+```mermaid
+flowchart TD
+    twa["Android TWA shell (app.web.oneonone)"] -- "handle_all_urls" --> dal{"/.well-known/assetlinks.json<br/>SHA-256 match?"}
+    dal -- yes --> fs["site full-screen, no URL bar"]
+    dal -- "no (placeholder fingerprint)" --> ct["Custom Tab w/ address bar"]
+    fs --> manifest["manifest.webmanifest — id/scope '/', start_url '/?src=twa',<br/>standalone, portrait, #0d1117, PNG icons 192/512/maskable"]
+    fs --> sw["sw.js — precache offline.html + icons;<br/>network-first navigations fall back to offline.html;<br/>push handlers unchanged"]
+```
+
+- **Icons** are rasterized from `client/public/icon.svg` by `scripts/gen-icons.mjs`
+  (`npm run gen-icons`, sharp): web set (192, 512 any, 512 maskable padded to the
+  80% safe zone) → `client/public/icons/`; Play listing icon + feature graphic →
+  `docs/playstore/store-assets/` (not served from the site). First-pass art.
+- **Fonts** are self-hosted — `scripts/vendor-fonts.mjs` vendors the Fraunces /
+  Figtree / JetBrains Mono faces (latin + latin-ext) into `client/public/fonts/`
+  + a generated `fonts.css`; `index.html` links that instead of Google Fonts,
+  removing the IP-on-load third party.
+- **`client/vercel.json`** — SPA rewrite excluding `/.well-known/*`, `/legal/*`
+  and the static asset dirs; `application/json` on `assetlinks.json`; baseline
+  security headers + a CSP allowing self + Supabase + Railway (`connect-src`
+  wildcards — tighten to the exact backend origin once the domain is final).
+- **`assetlinks.json`** ships with a placeholder fingerprint; the real Play App
+  Signing SHA-256 is pasted in after the first AAB upload (plan Part 5 step 11).
+- Node pinned to 24 (`.nvmrc` + `engines`, root and `client/`).
+
+**Stage 4 — the Android project.** `android/twa-manifest.json` is the
+hand-authored Bubblewrap config (no local `bubblewrap init` was run — this env
+has no JDK 17 / Android SDK): `packageId app.web.oneonone`, `host`
+`one-on-one-mu.vercel.app`, `startUrl /?src=twa`, standalone/portrait, `#0d1117`,
+`enableNotifications` (Chrome push delegation), `fallbackType customtabs`,
+`minSdkVersion 21`. `.github/workflows/android-build.yml` builds the signed `.aab`
+on a runner (`workflow_dispatch`) — first run generates the upload keystore and
+prints its passwords to the job summary; later runs reuse it from repo secrets
+(`ANDROID_KEYSTORE_BASE64` / `_PASSWORD` / `ANDROID_KEY_PASSWORD`). Play App
+Signing holds the real distribution key. Full runbook + the Asset Links ordering
+dance: `docs/playstore/ANDROID_BUILD.md`. The generated Gradle project
+(`android/app/`), the keystore, and `*.aab` are gitignored.
+
+**Stage 5 — console-ready package.** `docs/playstore/` holds the transcribe-ready
+Play Console inputs: `DATA_SAFETY.md`, `CONTENT_RATING.md` (IARC), `STORE_LISTING.md`,
+`REVIEWER_NOTES.md` (the app is fully behind OAuth — the reviewer needs two
+pre-paired demo accounts), `PUBLISH_CHECKLIST.md` (the ordered personal-action
+list), and `screenshots/` (captured by `scripts/shoot-screenshots.mjs` —
+interactive, not headless, because of the OAuth wall).
 
 ## Web Push notifications (V1, since 2026-08-27 — inert until keys are set)
 

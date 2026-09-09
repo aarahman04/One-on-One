@@ -1,0 +1,134 @@
+name: android-build
+
+# Builds the signed Android App Bundle (.aab) for the Trusted Web Activity
+# wrapper, so no local JDK 17 / Android SDK is ever needed. Manual trigger.
+#
+# One-time setup (see docs/playstore/ANDROID_BUILD.md):
+#   1. Run this workflow once with NO secrets set. It generates an upload
+#      keystore, prints its passwords to the job summary, and uploads
+#      `android.keystore` as a build artifact.
+#   2. Download the artifact. base64-encode it and add three repo secrets:
+#        ANDROID_KEYSTORE_BASE64   - base64 of android.keystore
+#        ANDROID_KEYSTORE_PASSWORD - store password from the job summary
+#        ANDROID_KEY_PASSWORD      - key password from the job summary
+#   3. Every later run reuses that keystore and produces app-release-bundle.aab.
+#
+# The keystore built here is the UPLOAD key. Google Play App Signing holds the
+# real distribution key; its SHA-256 goes into
+# client/public/.well-known/assetlinks.json after the first Play upload.
+
+on:
+  workflow_dispatch:
+    inputs:
+      versionCode:
+        description: "appVersionCode (integer, must increase per upload)"
+        required: false
+        default: "1"
+      versionName:
+        description: "appVersionName (e.g. 1.0.0)"
+        required: false
+        default: "1.0.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Bubblewrap
+        run: npm install -g @bubblewrap/cli
+
+      - name: Point Bubblewrap at the runner's JDK + SDK (skip its installer)
+        run: |
+          mkdir -p "$HOME/.bubblewrap"
+          cat > "$HOME/.bubblewrap/config.json" <<EOF
+          { "jdkPath": "$JAVA_HOME", "androidSdkPath": "$ANDROID_SDK_ROOT" }
+          EOF
+
+      - name: Restore or generate the upload keystore
+        id: keystore
+        working-directory: android
+        run: |
+          set -e
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android.keystore
+            echo "store_pass=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> "$GITHUB_OUTPUT"
+            echo "key_pass=${{ secrets.ANDROID_KEY_PASSWORD }}" >> "$GITHUB_OUTPUT"
+            echo "generated=false" >> "$GITHUB_OUTPUT"
+          else
+            STORE_PASS="$(openssl rand -base64 24)"
+            KEY_PASS="$STORE_PASS"
+            keytool -genkeypair -v \
+              -keystore android.keystore \
+              -alias oneonone-upload \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -dname "CN=One on One, O=Ahmed Abdul Rahman, L=Hyderabad, ST=Telangana, C=IN"
+            echo "store_pass=$STORE_PASS" >> "$GITHUB_OUTPUT"
+            echo "key_pass=$KEY_PASS" >> "$GITHUB_OUTPUT"
+            echo "generated=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### New upload keystore generated"
+              echo ""
+              echo "Store this safely, then add it + the passwords as repo secrets:"
+              echo ""
+              echo '```'
+              echo "ANDROID_KEYSTORE_PASSWORD = $STORE_PASS"
+              echo "ANDROID_KEY_PASSWORD      = $KEY_PASS"
+              echo '```'
+              echo ""
+              echo "Download the \`android-keystore\` artifact below, then:"
+              echo '`base64 -w0 android.keystore` -> add as `ANDROID_KEYSTORE_BASE64`.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Sync twa-manifest.json version fields
+        working-directory: android
+        run: |
+          node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync("twa-manifest.json"));
+            m.appVersionCode = Number("${{ inputs.versionCode }}");
+            m.appVersionName = "${{ inputs.versionName }}";
+            fs.writeFileSync("twa-manifest.json", JSON.stringify(m, null, 2) + "\n");
+          '
+
+      - name: Generate Android project from twa-manifest.json
+        working-directory: android
+        run: bubblewrap update --skipVersionUpgrade
+
+      - name: Build signed AAB
+        working-directory: android
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ steps.keystore.outputs.store_pass }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ steps.keystore.outputs.key_pass }}
+        run: bubblewrap build --skipPwaValidation
+
+      - name: Upload keystore (first run only)
+        if: steps.keystore.outputs.generated == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-keystore
+          path: android/android.keystore
+          retention-days: 1
+
+      - name: Upload AAB + APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: |
+            android/app-release-bundle.aab
+            android/app-release-signed.apk
+          if-no-files-found: warn
