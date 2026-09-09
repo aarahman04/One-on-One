@@ -8,6 +8,12 @@ export type Screen =
   | 'chat'
   | 'export'
   | 'leave'
+  // Public legal pages — reachable signed-out (mounted by main.ts before the
+  // session lookup and the age/consent gate).
+  | 'privacy'
+  | 'terms'
+  | 'child-safety'
+  | 'delete-account'
 
 export type Cleanup = () => void
 export type Page = (root: HTMLElement, go: (screen: Screen) => void) => Cleanup | void

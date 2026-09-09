@@ -29,6 +29,11 @@ export const LoginPage: Page = (root) => {
       </div>
       ${hasSignedInBefore ? '<button type="button" class="screen__alt" id="switch-account-btn">Use a different account</button>' : ''}
       <div class="screen__subtitle screen__error" id="login-error"></div>
+      <div class="screen__legal">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/terms">Terms</a>
+        <a href="/child-safety">Child Safety</a>
+      </div>
     </div>
   `
 

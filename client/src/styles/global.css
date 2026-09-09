@@ -332,6 +332,135 @@ input:focus {
   text-underline-offset: 3px;
 }
 
+/* Footer legal links on the login screen. */
+.screen__legal {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 14px;
+  font-size: 12px;
+}
+
+.screen__legal a {
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.screen__legal a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Public legal pages (Privacy / Terms / Child Safety / Delete account) —
+   pages/legalShared.ts. Top-aligned, left-aligned reading column, unlike the
+   centred .screen layout. */
+.legal {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  animation: screen-enter 280ms var(--ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .legal {
+    animation: none;
+  }
+}
+
+.legal__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: calc(16px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) 8px
+    calc(20px + env(safe-area-inset-left));
+}
+
+.legal__back {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.legal__navlinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+}
+
+.legal__navlinks a {
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.legal__navlinks a:hover,
+.legal__doc a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.legal__doc {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 0 calc(20px + env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom))
+    calc(20px + env(safe-area-inset-left));
+  text-align: left;
+  line-height: 1.6;
+}
+
+.legal__doc h1 {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.legal__doc h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 28px 0 8px;
+}
+
+.legal__meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.legal__doc p,
+.legal__doc li {
+  color: var(--text-dim);
+}
+
+.legal__doc a {
+  color: var(--accent-other);
+  text-decoration: none;
+}
+
+.legal__doc code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+}
+
+.legal__doc input {
+  font-family: inherit;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
 /* First-run age + consent gates (features/ageGate.ts). */
 .age-gate__dob {
   display: flex;

@@ -85,6 +85,41 @@ Bubble-mode ticks: ✓ sent, ✓✓ gray delivered, ✓✓ light green (`var(--a
 
 **Wallpaper is shared, since 2026-08-27** — unlike style/theme, it's `connections.wallpaper` (migration 014), not localStorage: either member's pick applies to both. `appearancePreview.ts` takes it as a param (`applyAppearance(chat, wallpaper)`, `openAppearance(anchor, chat, wallpaper, onWallpaperChange)`) rather than owning it; `ChatPage.ts` applies it optimistically on change via `PATCH /connections/:id/wallpaper` (membership-checked) and re-syncs it off the existing 4s connection poll — no new socket event, reuses the same poll leave-state/read-receipts already ride. `wallpaper: 'love'` serves `client/public/love.jpg` and overrides the bubble palette (colors pulled from the artwork's own palette) so bubbles read against the art. Options are `off` / `love` / `samurai` — a fourth gradient-only option `'1'` was removed 2026-08-31 (migration 023 resets any connection still on it to `off`); the wallpaper system itself is otherwise unchanged.
 
+## Public routes (V1, since 2026-09-09 — Play Store Stage 2)
+
+The client router (`state/router.ts`) is a screen-name state machine with no URL
+awareness — `main.ts` calls `resolveInitialScreen()` (session + current
+connection) and mounts one screen; navigation is `go(screen)`, the path never
+changes. Google Play requires publicly reachable legal pages, so four routes are
+matched *by path* as a special case, ahead of that flow:
+
+```mermaid
+flowchart TD
+    load["page load — main.ts"] --> pathcheck{"location.pathname in LEGAL_ROUTES?"}
+    pathcheck -- "/privacy /terms /child-safety /delete-account" --> legal["mountRouter(app, legalScreen)"]
+    pathcheck -- "no" --> auth["resolveInitialScreen() — getSession + getCurrentConnection"]
+    auth --> gate["ensureFirstRunGates (age 18+ / consent) unless login"]
+    gate --> app["mountRouter(app, initial)"]
+    legal -. "no session, no gate" .-> render["PrivacyPage / TermsPage / ChildSafetyPage / DeleteAccountPage"]
+```
+
+`pages/legalShared.ts` is the single source: identity constants (developer name,
+contact + child-safety email, jurisdiction — from `docs/_playstore-inputs.md`),
+`legalShell()` chrome, `wireLegalBack()` (`history.back()` or `/`), and the three
+content bodies. `DeleteAccountPage` is the one interactive page — it calls
+`getSession()` and either runs the Stage 1 `deleteAccount()` + `signOut()` flow
+(typed-"delete" confirm) or shows a sign-in prompt. `{{DOMAIN}}` stays a literal
+token in the copy until a custom domain exists.
+
+`client/public/legal/{privacy,terms,child-safety}.html` are self-contained
+mirrors (own palette + `prefers-color-scheme`) for any external link that can't
+run the SPA — e.g. the Play Console privacy-policy URL. They must be kept in sync
+with `legalShared.ts` by hand (cross-referenced in comments). `vercel.json`
+(Stage 3) will exclude `/legal/*` and `/.well-known/*` from the SPA rewrite.
+
+Links in: Login footer (`.screen__legal`), the age-gate consent line (Stage 1),
+and the chat `•••` menu "ABOUT" group (`MenuDropdown.ts`, new tab).
+
 ## Web Push notifications (V1, since 2026-08-27 — inert until keys are set)
 
 ```mermaid
