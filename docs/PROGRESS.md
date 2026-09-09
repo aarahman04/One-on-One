@@ -11,6 +11,36 @@ Notes/deviations:
 
 ---
 
+## [Play Store / TWA] assetlinks.json — real upload-key fingerprint — 2026-09-09
+Status: done.
+
+What shipped:
+- `client/public/.well-known/assetlinks.json` — all-zero placeholder replaced
+  with the real **upload-key** SHA-256 (`oneonone-upload` alias, from
+  `keytool -list -v -keystore android.keystore`). `_comment` key removed so the
+  statement object is spec-exact (`relation` + `target` only) — the Digital
+  Asset Links spec defines no `_comment` key and is silent on unknown-key
+  handling; DAL failure is silent, so the risk was one-directional.
+- `docs/playstore/ANDROID_BUILD.md` — "ordering dance" section reworked: upload
+  key verifies **sideloaded** builds only; the Play App Signing cert is
+  **appended** (not swapped) as a second `sha256_cert_fingerprints` entry after
+  the first AAB upload. Added HTTP 200 / `application/json` / no-redirect
+  hosting constraints + Google `statements:list` parser check to the Stage 4
+  exit list.
+- `docs/ARCHITECTURE.md` — corrected the one line claiming a placeholder ships.
+
+Notes/deviations:
+- **Supersedes** the earlier Stage 3 note in this log ("assetlinks.json
+  unchanged — the Stage 3 placeholder is correct until the first Play upload").
+  The upload key gives working sideload verification now; waiting for Play was
+  unnecessary for that path.
+- Still pending: the Play App Signing SHA-256 (append after first Closed-testing
+  upload). Play-distributed builds show the address bar until then.
+- Takes effect only on a Vercel production redeploy — the file is a static
+  asset baked into `client/dist/.well-known/` at build time.
+
+---
+
 ## [Play Store / TWA] Stage 4 fix — twa-manifest.json / CI Gradle gen — 2026-09-09
 Status: done. First real `android-build.yml` run (34351166418) failed at `bubblewrap
 build` — generated `app/build.gradle:44` `splashScreenFadeOutDuration: ,` unparseable.

@@ -13,7 +13,7 @@ web push via notification delegation).
 | `android/twa-manifest.json` | Bubblewrap config — the single source of truth for the Android build. Hand-authored (no local `bubblewrap init` was run). | yes |
 | `android/.gitignore` | Ignores the generated Gradle project (`app/`), build output, and **all** signing material. | yes |
 | `.github/workflows/android-build.yml` | Builds the signed `.aab` on a GitHub runner. No local Android toolchain needed. | yes |
-| `client/public/.well-known/assetlinks.json` | Digital Asset Links — **placeholder fingerprint** until the first Play upload. | yes |
+| `client/public/.well-known/assetlinks.json` | Digital Asset Links — carries the **upload-key** SHA-256 (`oneonone-upload`). Verifies **sideloaded** builds only; the Play App Signing cert must be **appended** after the first Play upload. | yes |
 | `android/app/`, `android/android.keystore`, `*.aab` | Generated / secret — never committed. | no |
 
 ## Prerequisites
@@ -119,33 +119,54 @@ Produces `app-release-bundle.aab` (upload to Play) and `app-release-signed.apk`
 
 ## Digital Asset Links — the ordering dance
 
-The TWA only goes full-screen (no address bar) once
+The TWA only goes full-screen (no address bar) when
 `https://one-on-one-mu.vercel.app/.well-known/assetlinks.json` lists the SHA-256
-of the signing key **Play** uses. That fingerprint doesn't exist until after the
-first upload:
+of the key the installed build was **actually signed with**. There are two such
+keys and they need two entries in the `sha256_cert_fingerprints` array.
 
-1. Build the `.aab` (Path A or B) with the placeholder `assetlinks.json` still live.
+### Now: upload key (live)
+
+`assetlinks.json` currently carries the **upload key** fingerprint —
+alias `oneonone-upload` from `android/android.keystore`, extracted with:
+
+```
+keytool -list -v -keystore android.keystore -alias oneonone-upload
+```
+
+This verifies builds installed **directly** — `bubblewrap install`, ADB, or
+sideloading the signed APK. It does **not** verify anything installed from a
+Play track, because Play re-signs with its own key (below). Sideloaded builds
+open full-screen; Play-distributed builds still show the address bar until step
+4 is done.
+
+### Later: Play App Signing key (append, don't replace)
+
+1. Build the `.aab` (Path A or B) — upload key entry already live.
 2. In Play Console → create the app → **App integrity** → opt into **Play App
    Signing** → upload the `.aab` to a **Closed testing** track.
 3. Play Console → **App integrity** → **App signing key certificate** → copy the
    **SHA-256 certificate fingerprint**.
-4. Put it in `client/public/.well-known/assetlinks.json` (replace the all-zero
-   placeholder), commit, redeploy the frontend.
-5. Confirm `curl https://one-on-one-mu.vercel.app/.well-known/assetlinks.json`
-   shows the real fingerprint.
-6. Reinstall the app on a device — it now opens full-screen with no URL bar.
-   (Also add that same fingerprint under `fingerprints` in `twa-manifest.json`
-   if you want `bubblewrap` to embed it for local verification.)
-
-Interim check before step 3: `bubblewrap install` and the app opens the site in a
-Custom Tab **with** an address bar = wiring is correct, fingerprint pending.
+4. **Add** it as a second string in the `sha256_cert_fingerprints` array in
+   `client/public/.well-known/assetlinks.json` — keep the upload key entry so
+   local installs keep verifying. Commit, redeploy the frontend.
+5. Confirm `curl -i https://one-on-one-mu.vercel.app/.well-known/assetlinks.json`
+   returns `200`, `content-type: application/json`, **no redirect**, and both
+   fingerprints in the body. Cross-check with Google's parser:
+   `https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://one-on-one-mu.vercel.app&relation=delegate_permission/common.handle_all_urls`
+6. **Uninstall then reinstall** the app on a device (Chrome caches the
+   verification result per install) — it now opens full-screen with no URL bar.
+   (Optionally also add the fingerprint under `fingerprints` in
+   `twa-manifest.json` for Bubblewrap's local verification.)
 
 ## Verify (Stage 4 exit)
 
 - [ ] `android/twa-manifest.json` parses; `host` = `one-on-one-mu.vercel.app`.
 - [ ] Frontend live at that host with the Stage 3 manifest + icons + assetlinks.
+- [ ] `assetlinks.json` served as HTTP 200, `application/json`, no redirect;
+      Google's `statements:list` parser returns it with no errors.
 - [ ] CI workflow runs green through `bubblewrap build`; `android-release`
       artifact contains `app-release-bundle.aab`.
 - [ ] `bubblewrap doctor` clean (in CI logs or locally).
-- [ ] (device, optional) `bubblewrap install` → site loads; address bar present
-      until the real fingerprint is live.
+- [ ] (device, optional) `bubblewrap install` → full-screen, no address bar
+      (upload key verifies sideloaded builds). Play-track installs stay in a
+      Custom Tab until the Play App Signing cert is appended.

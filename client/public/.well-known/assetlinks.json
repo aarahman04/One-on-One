@@ -1,12 +1,11 @@
 [
   {
-    "_comment": "TODO(playstore): replace the placeholder SHA-256 below with the real fingerprint from Play Console → Setup → App integrity → App signing key certificate, AFTER the first AAB upload (plan Part 5 step 11). Then redeploy the frontend.",
     "relation": ["delegate_permission/common.handle_all_urls"],
     "target": {
       "namespace": "android_app",
       "package_name": "app.web.oneonone",
       "sha256_cert_fingerprints": [
-        "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
+        "4B:0E:07:42:D4:9B:3A:30:4F:43:C1:3F:44:1E:62:06:91:CE:98:A8:A9:D6:09:5F:E0:71:0F:30:74:C6:74:57"
       ]
     }
   }
