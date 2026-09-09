@@ -149,8 +149,9 @@ flowchart TD
   and the static asset dirs; `application/json` on `assetlinks.json`; baseline
   security headers + a CSP allowing self + Supabase + Railway (`connect-src`
   wildcards — tighten to the exact backend origin once the domain is final).
-- **`assetlinks.json`** ships with a placeholder fingerprint; the real Play App
-  Signing SHA-256 is pasted in after the first AAB upload (plan Part 5 step 11).
+- **`assetlinks.json`** carries the upload-key SHA-256 (verifies sideloaded
+  builds); the Play App Signing SHA-256 is appended as a second array entry
+  after the first AAB upload (plan Part 5 step 11).
 - Node pinned to 24 (`.nvmrc` + `engines`, root and `client/`).
 
 **Stage 4 — the Android project.** `android/twa-manifest.json` is the
