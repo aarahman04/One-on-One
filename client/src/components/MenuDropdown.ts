@@ -46,6 +46,11 @@ export function mountMenuDropdown(
       <button class="menu__item menu__item--danger" data-action="leave">Leave connection</button>
       ${onBlock ? '<button class="menu__item menu__item--danger" data-action="block">Block &amp; end</button>' : ''}
       ${onDeleteAccount ? '<button class="menu__item menu__item--danger" data-action="delete-account">Delete account</button>' : ''}
+      <div class="menu__divider"></div>
+      <div class="menu__group-label">ABOUT</div>
+      <button class="menu__item" data-action="privacy">Privacy Policy</button>
+      <button class="menu__item" data-action="terms">Terms</button>
+      <button class="menu__item" data-action="child-safety">Child Safety</button>
     `
     nav.appendChild(panel)
 
@@ -91,6 +96,15 @@ export function mountMenuDropdown(
         onDeleteAccount()
       })
     }
+    // Legal pages are public routes; open in a new tab so the conversation
+    // stays put.
+    for (const route of ['privacy', 'terms', 'child-safety'] as const) {
+      panel.querySelector(`[data-action="${route}"]`)!.addEventListener('click', () => {
+        close()
+        window.open(`/${route}`, '_blank', 'noopener')
+      })
+    }
+
     document.addEventListener('click', onOutsideClick)
   }
 

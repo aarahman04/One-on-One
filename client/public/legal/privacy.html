@@ -1,0 +1,210 @@
+<!doctype html>
+<!-- Standalone copy for external links (e.g. the Play Console privacy-policy
+     URL). Content mirrors client/src/pages/legalShared.ts (privacyBody) — keep
+     the two in sync. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy — One on One</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #0d1117;
+        --bg-raised: #12181f;
+        --border: #1f2630;
+        --text: #e6edf3;
+        --text-dim: #9aa4af;
+        --muted: #6e7681;
+        --link: #79c0ff;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f5f5f7;
+          --bg-raised: #fff;
+          --border: #d9d9dd;
+          --text: #1c1c1e;
+          --text-dim: #5b5b60;
+          --muted: #8a8a8e;
+          --link: #0969da;
+        }
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text-dim);
+        font: 15px/1.6 'Figtree', -apple-system, 'Segoe UI', system-ui, sans-serif;
+      }
+      main {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 40px 20px 64px;
+      }
+      h1, h2 {
+        font-family: Georgia, 'Iowan Old Style', serif;
+        color: var(--text);
+      }
+      h1 { font-size: 28px; margin: 0 0 4px; }
+      h2 { font-size: 16px; margin: 28px 0 8px; }
+      .meta { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+      a { color: var(--link); text-decoration: none; }
+      a:hover { text-decoration: underline; text-underline-offset: 3px; }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.9em;
+        background: var(--bg-raised);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 1px 4px;
+      }
+      nav { font-size: 12px; margin-bottom: 8px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav>
+        <a href="./privacy.html">Privacy</a> &middot;
+        <a href="./terms.html">Terms</a> &middot;
+        <a href="./child-safety.html">Child Safety</a>
+      </nav>
+      <h1>Privacy Policy</h1>
+      <p class="meta">Last updated 9 September 2026 &middot; Ahmed Abdul Rahman</p>
+
+      <p>One on One is a private one-to-one messaging app. This policy explains what
+      it collects, why, who it is shared with, how long it is kept, and how to have
+      it deleted. It covers the app in every form &mdash; the website at {{DOMAIN}}
+      and the Android app that wraps that same website.</p>
+
+      <h2>Who is responsible</h2>
+      <p>Ahmed Abdul Rahman is the data controller for One on One. Contact:
+      <a href="mailto:aarahman803@gmail.com">aarahman803@gmail.com</a>.</p>
+
+      <h2>What is collected</h2>
+      <ul>
+        <li><strong>Account</strong> &mdash; when you sign in with Google we receive
+          your email address, display name, profile photo URL and Google account
+          identifier. We also generate a short connection code for you.</li>
+        <li><strong>Messages</strong> &mdash; the text, captions, letter bodies and
+          slash-command card fields you send, plus structured payload for each
+          message type. Message content and payload are encrypted at rest.</li>
+        <li><strong>Photos, voice notes and files</strong> you send &mdash; stored as
+          files in a private bucket and served through short-lived (about one hour)
+          signed links. Before a photo is uploaded, the app re-encodes it in your
+          browser to strip embedded EXIF metadata, including any GPS location, from
+          non-animated images.</li>
+        <li><strong>Location</strong> &mdash; only when you use the
+          <code>/location</code> command. A single coordinate reading
+          (latitude, longitude, accuracy) is sent as a message and encrypted at
+          rest. The app does not track your location in the background.</li>
+        <li><strong>Call records</strong> &mdash; for each voice or video call, a row
+          recording the kind, outcome and duration, encrypted at rest. Call audio and
+          video are peer-to-peer and are never recorded, transcribed or stored.</li>
+        <li><strong>Reactions, nicknames and read / delivery timestamps</strong>
+          &mdash; stored in plain text.</li>
+        <li><strong>Push subscription</strong> &mdash; if you turn on notifications,
+          the browser push endpoint and its keys, one per device.</li>
+        <li><strong>Reports</strong> &mdash; if you report a message or a person, the
+          reason, category, your note, the reporter and reported account identifiers,
+          and an encrypted snapshot of the reported message.</li>
+        <li><strong>On your device only</strong> &mdash; whether you have signed in
+          before, appearance preferences, your age / terms acknowledgement, and your
+          sign-in token. These stay in your browser and are not sent to us as data we
+          store about you.</li>
+      </ul>
+      <p>One on One does <strong>not</strong> collect or store your IP address,
+      device fingerprint, contacts, phone number, SMS or call logs, advertising ID,
+      or any analytics or behavioural event data. There are no advertising or
+      analytics SDKs in the app.</p>
+
+      <h2>How it is used</h2>
+      <p>Data is used only to run the service: to authenticate you, to deliver
+      messages, calls, reactions and location cards between you and the one person
+      you are connected to, to send notifications you have opted into, and to review
+      safety reports. It is not used for advertising or profiling.</p>
+
+      <h2>Who it is shared with</h2>
+      <p>We do not sell personal or sensitive data and never will. Data is processed
+      by the following service providers so the app can function:</p>
+      <ul>
+        <li><strong>Supabase</strong> &mdash; database, authentication and file
+          storage for everything listed above.</li>
+        <li><strong>Vercel</strong> &mdash; website and content-delivery hosting;
+          processes request logs including your IP address in transit.</li>
+        <li><strong>Railway</strong> &mdash; backend server hosting.</li>
+        <li><strong>Cloudflare</strong> &mdash; STUN on every call and, for roughly
+          10&ndash;20% of calls behind restrictive networks, a TURN relay. When
+          relaying, Cloudflare handles the encrypted media packets and sees both
+          participants' IP addresses.</li>
+        <li><strong>Browser push services</strong> (Google, Mozilla, Apple,
+          Microsoft, depending on your browser) &mdash; deliver notifications. The
+          payload is encrypted per RFC&nbsp;8291, but the notification preview text
+          and sender nickname are visible to the push service and on your lock
+          screen. For text messages this preview can include up to about 120
+          characters of the message.</li>
+        <li><strong>OpenStreetMap</strong> &mdash; when a <code>/location</code> card
+          is visible, your browser fetches map tiles from
+          <code>tile.openstreetmap.org</code>, which receives the shared coordinates
+          and the viewing device's IP address.</li>
+        <li><strong>Google</strong> &mdash; OAuth sign-in; and Google Maps only if
+          you tap a location card's directions link (an external link, no SDK).</li>
+      </ul>
+      <p>Fonts are self-hosted, so loading the app does not disclose your IP to a
+      font provider.</p>
+
+      <h2>Security</h2>
+      <p>All traffic uses HTTPS / WSS (TLS). Message content and payload, location
+      readings and call records are additionally encrypted at rest with AES-256-GCM.
+      Uploaded file bytes rely on the storage provider's disk encryption.</p>
+      <p>One on One is <strong>not</strong> end-to-end encrypted. The server can
+      technically access message content in order to operate the service and review
+      reports. Call media is peer-to-peer (DTLS-SRTP) and is not accessible to the
+      server. Because calls are peer-to-peer, the two participants' devices exchange
+      IP addresses directly during a call.</p>
+
+      <h2>Retention</h2>
+      <p>There is no scheduled deletion. Data is kept until one of the following
+      happens:</p>
+      <ul>
+        <li>The connection ends &mdash; the entire conversation (messages, media,
+          reactions, call records) is deleted for both people.</li>
+        <li>You delete your account &mdash; your account and everything cascading
+          from it is removed.</li>
+      </ul>
+      <p>Report records are deliberately kept after a connection ends or an account
+      is deleted, as safety evidence. The link to the original message is severed
+      and the reported account identifier is cleared, but the encrypted snapshot and
+      the reason are retained.</p>
+
+      <h2>Deleting your account</h2>
+      <p>You can delete your account and its data at any time:</p>
+      <ul>
+        <li><strong>In the app</strong> &mdash; open the &bull;&bull;&bull; menu (or
+          the connection-ID screen) and choose &ldquo;Delete account&rdquo;.</li>
+        <li><strong>On the web</strong> &mdash; visit
+          <a href="/delete-account">/delete-account</a> and follow the steps there.</li>
+      </ul>
+      <p>Deletion removes your authentication record, your app profile, your
+      connection, and every message, reaction, call record, block and push
+      subscription tied to your account. Report records are retained as described
+      above. Deletion cannot be undone.</p>
+
+      <h2>Your choices</h2>
+      <p>Notifications, appearance and location sharing are all opt-in and can be
+      turned off at any time. To request access to or correction of your data, email
+      <a href="mailto:aarahman803@gmail.com">aarahman803@gmail.com</a>.</p>
+
+      <h2>Children</h2>
+      <p>One on One is for adults only. You must be 18 or older to use it. It is not
+      directed to children and we do not knowingly collect data from anyone under
+      18. See the <a href="./child-safety.html">Child Safety</a> page.</p>
+
+      <h2>Changes</h2>
+      <p>If this policy changes materially, the &ldquo;last updated&rdquo; date above
+      will change and the app will surface the update. Continued use after a change
+      means you accept the revised policy.</p>
+
+      <h2>Contact</h2>
+      <p>Privacy questions: <a href="mailto:aarahman803@gmail.com">aarahman803@gmail.com</a>.</p>
+    </main>
+  </body>
+</html>

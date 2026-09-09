@@ -11,6 +11,50 @@ Notes/deviations:
 
 ---
 
+## [Play Store / TWA] Stage 2 — legal & policy pages — 2026-09-09
+Status: done. `tsc` + `vite build` clean on client; backend untouched. Branch
+`feat/playstore-stage1-compliance` (continues on the Stage 1 branch — Stage 1 PR
+still pending, Stage 2 stacks on it). Not runtime-verified on a deploy (no
+browser available this session; build-clean + code-reasoned) — a light/dark
+render pass on a preview is owed.
+
+Plan: `~/.claude/plans/ancient-weaving-raven.md` Part 3 Stage 2. Identity tokens
+from `docs/_playstore-inputs.md`.
+
+What shipped:
+- **In-app routes** — `PrivacyPage` / `TermsPage` / `ChildSafetyPage` /
+  `DeleteAccountPage` (`client/src/pages/`), each a thin wrapper over
+  `legalShared.ts` (constants + `legalShell()` chrome + `wireLegalBack()` + the
+  three content bodies). New `Screen` union members `privacy` / `terms` /
+  `child-safety` / `delete-account` in `router.ts`.
+- **Public mounting** — `main.ts` matches `location.pathname` against
+  `LEGAL_ROUTES` *before* the session lookup and `ensureFirstRunGates`, so the
+  legal pages render signed-out and never trip the age/consent gate.
+- **`DeleteAccountPage`** — checks `getSession()`: signed in → typed-"delete"
+  confirm running the same `deleteAccount()` + `signOut()` flow as the in-app
+  dialog; signed out → what-happens explainer + "Sign in to delete".
+- **Standalone copies** — `client/public/legal/{privacy,terms,child-safety}.html`
+  (self-contained, own palette + `prefers-color-scheme`), mirrored from
+  `legalShared.ts` for any external link (e.g. the Play Console privacy URL).
+  Cross-comment in both directions to keep them in sync.
+- **Links** — Login screen footer (`.screen__legal`), the age-gate consent line
+  (already pointed at `/terms` + `/privacy` from Stage 1 — now resolves), and a
+  new "ABOUT" group in the chat `•••` menu (`MenuDropdown.ts`, opens each in a
+  new tab so the conversation stays put).
+- **CSS** — `.legal` / `.legal__doc` / `.legal__nav` reading-column layout
+  (top-aligned, left-aligned, 680px measure) + `.screen__legal` footer, all on
+  existing palette tokens so light/dark flip for free.
+
+Notes/deviations:
+- `{{DOMAIN}}` is intentionally left as a literal token in the privacy-policy
+  copy (no custom domain yet — the concrete URL is the Vercel deploy). Every
+  other identity token is filled.
+- No `vercel.json` SPA-rewrite yet (Stage 3) — on the current deploy the SPA
+  routes (`/privacy` etc.) rely on Vercel's Vite-preset catch-all; the
+  `/legal/*.html` files are real static assets and serve directly regardless.
+
+---
+
 ## [Play Store / TWA] Stage 1 — compliance code — 2026-09-09
 Status: done. `tsc` + `vite build` clean on client; `tsc` clean on backend.
 Branch `feat/playstore-stage1-compliance` off `main`. **Migrations 030 + 031 NOT

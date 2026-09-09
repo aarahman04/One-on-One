@@ -9,6 +9,10 @@ import { NicknamePage } from './pages/NicknamePage'
 import { ChatPage } from './pages/ChatPage'
 import { ExportPage } from './pages/ExportPage'
 import { LeavePage } from './pages/LeavePage'
+import { PrivacyPage } from './pages/PrivacyPage'
+import { TermsPage } from './pages/TermsPage'
+import { ChildSafetyPage } from './pages/ChildSafetyPage'
+import { DeleteAccountPage } from './pages/DeleteAccountPage'
 import { getSession, onSignedOut, signOut } from './services/authService'
 import { setUnauthorizedHandler } from './services/apiClient'
 import { getCurrentConnection } from './services/connectionsApi'
@@ -24,6 +28,19 @@ registerPage('nickname', NicknamePage)
 registerPage('chat', ChatPage)
 registerPage('export', ExportPage)
 registerPage('leave', LeavePage)
+registerPage('privacy', PrivacyPage)
+registerPage('terms', TermsPage)
+registerPage('child-safety', ChildSafetyPage)
+registerPage('delete-account', DeleteAccountPage)
+
+// Public legal routes: reachable without a session and without tripping the
+// age / consent gate. Matched by path before any auth work below.
+const LEGAL_ROUTES: Record<string, Screen> = {
+  '/privacy': 'privacy',
+  '/terms': 'terms',
+  '/child-safety': 'child-safety',
+  '/delete-account': 'delete-account',
+}
 
 // iOS Safari doesn't reflow the layout viewport when the keyboard opens — it
 // shifts the *visual* viewport instead (resizing it, and offsetting it from
@@ -98,16 +115,21 @@ async function resolveInitialScreen(): Promise<Screen> {
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')!
-try {
-  const initial = await resolveInitialScreen()
-  // Age (18+) + Terms acceptance before anything else — but not on the login
-  // screen itself (a signed-out visitor has nothing to gate yet).
-  if (initial !== 'login') await ensureFirstRunGates(app)
-  mountRouter(app, initial)
-} catch (err) {
-  // A transient network failure on cold load must not leave a blank page.
-  console.error('startup failed, falling back to login:', err)
-  mountRouter(app, 'login')
+const legalScreen = LEGAL_ROUTES[location.pathname]
+if (legalScreen) {
+  mountRouter(app, legalScreen)
+} else {
+  try {
+    const initial = await resolveInitialScreen()
+    // Age (18+) + Terms acceptance before anything else — but not on the login
+    // screen itself (a signed-out visitor has nothing to gate yet).
+    if (initial !== 'login') await ensureFirstRunGates(app)
+    mountRouter(app, initial)
+  } catch (err) {
+    // A transient network failure on cold load must not leave a blank page.
+    console.error('startup failed, falling back to login:', err)
+    mountRouter(app, 'login')
+  }
 }
 
 // Cross-tab sign-out → back to login.
