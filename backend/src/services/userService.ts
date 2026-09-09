@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { generateConnectionCode } from '../utils/connectionCode.js'
 import { UNIQUE_VIOLATION } from '../utils/pgErrors.js'
+import { getLiveConnectionForUser } from './connectionAccess.js'
+import { deleteConnectionAttachments } from './attachmentService.js'
 
 export interface AppUser {
   id: string
@@ -67,6 +69,25 @@ export async function regenerateConnectionCode(userId: string): Promise<string> 
     if (error.code !== UNIQUE_VIOLATION) throw error
     return null
   })
+}
+
+// Account deletion (Google Play "delete account" policy — in-app + web).
+// Deleting the Supabase auth user cascades: auth.users → users (migration 001)
+// → connections / messages / connection_members / reactions / push_subscriptions
+// / blocks (all reference users(id) on delete cascade). message_reports about
+// this user survive with reported_user_id nulled (migration 031) — deliberate
+// moderation evidence. Storage isn't covered by any FK cascade, so clean the
+// current connection's attachments first, best-effort.
+export async function deleteAccount(user: AppUser): Promise<void> {
+  try {
+    const live = await getLiveConnectionForUser(user.id)
+    if (live) await deleteConnectionAttachments(live.id)
+  } catch (err) {
+    console.error('deleteAccount: attachment cleanup failed (continuing)', err)
+  }
+
+  const { error } = await supabaseAdmin.auth.admin.deleteUser(user.authUserId)
+  if (error) throw error
 }
 
 function toAppUser(row: { id: string; auth_user_id: string; connection_code: string }): AppUser {

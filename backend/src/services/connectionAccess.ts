@@ -87,10 +87,10 @@ export async function getConnectionByMessageId(
   messageId: string,
   userId: string,
   opts: AccessOpts = {},
-): Promise<{ connection: MemberConnection; messageContent: string }> {
+): Promise<{ connection: MemberConnection; messageContent: string; messageSenderId: string }> {
   const { data: msg, error: msgErr } = await supabaseAdmin
     .from('messages')
-    .select('connection_id, content')
+    .select('connection_id, content, sender_id')
     .eq('id', messageId)
     .maybeSingle()
   if (msgErr) throw msgErr
@@ -108,5 +108,9 @@ export async function getConnectionByMessageId(
       : new ConnectionError(404, 'connection not found')
   }
   assertAccess(conn as MemberConnection, userId, opts)
-  return { connection: conn as MemberConnection, messageContent: msg.content as string }
+  return {
+    connection: conn as MemberConnection,
+    messageContent: msg.content as string,
+    messageSenderId: msg.sender_id as string,
+  }
 }

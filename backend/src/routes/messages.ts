@@ -17,6 +17,9 @@ messagesRouter.get('/connections/:id/messages', async (req, res) => {
 
 messagesRouter.post('/messages/:id/report', strictLimiter, async (req, res) => {
   const user = req.appUser!
-  await reportMessage(String(req.params.id), user.id, req.body?.reason)
+  await reportMessage(String(req.params.id), user.id, {
+    category: req.body?.category,
+    reason: req.body?.reason,
+  })
   res.status(204).end()
 })

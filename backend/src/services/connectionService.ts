@@ -5,6 +5,7 @@ import { getConnectionForMember, memberOrFilter } from './connectionAccess.js'
 import { ConnectionError } from '../utils/connectionError.js'
 import { deleteConnectionAttachments } from './attachmentService.js'
 import { forceEndCall } from './callService.js'
+import { addBlock, isBlockedBetween } from './blockService.js'
 
 // Re-exported for the many call sites that import it from here.
 export { ConnectionError }
@@ -52,6 +53,12 @@ export async function requestConnection(requesterUserId: string, targetCode: str
     throw cannotConnect
   }
   if (target.id === requesterUserId) throw new ConnectionError(400, "that's your own connection ID")
+  if (await isBlockedBetween(requesterUserId, target.id)) {
+    // Either direction — the blocker or the blocked user. Same generic failure
+    // as an unknown code so neither side can probe the block's existence.
+    console.warn('requestConnection: blocked pair')
+    throw cannotConnect
+  }
   if (await hasActiveOrPendingConnection(target.id)) {
     console.warn('requestConnection: target already has a live connection')
     throw cannotConnect
@@ -401,6 +408,19 @@ export async function confirmEndLeave(connectionId: string, userId: string): Pro
 
   await terminate(connectionId)
   return { status: 'terminated', myLeaveStep: mine.leave_step, daysRemaining: 0, bothLeaving: true, terminated: true }
+}
+
+// "Block & end" (Play UGC safety): end the connection immediately — no 5-step
+// countdown, no agreement from the other member — and record a permanent block
+// so the pair can never send each other a request again (checked in
+// requestConnection). The block is written first so the safety guarantee holds
+// even if the terminate step hiccups. Returns the blocked user's id.
+export async function blockAndTerminate(connectionId: string, userId: string): Promise<string> {
+  const connection = await getConnectionForMember(connectionId, userId, { requireLive: true })
+  const blockedUserId = otherMemberId(connection, userId)
+  await addBlock(userId, blockedUserId)
+  await terminate(connectionId)
+  return blockedUserId
 }
 
 const ALLOWED_WALLPAPERS = ['off', 'love', 'samurai']
