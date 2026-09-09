@@ -11,6 +11,23 @@ Notes/deviations:
 
 ---
 
+## [Play Store / TWA] Stage 6 — handoff & PRs — 2026-09-09
+Status: done. `docs/playstore/NEW_SESSION_PROMPT.md` written (post-execution
+handoff — the plan is implemented; it lists the user's Play Console steps + the
+deferred verifications + the one fingerprint paste-back). Client `tsc` +
+`vite build` clean.
+
+PR split (all against `main`, merge in order A → B → C — GitHub reduces each
+diff as the prior merges):
+- **PR-A** `playstore/stage-1-compliance` — Stage 1 (commits e6cdeed, 5d49d83).
+- **PR-B** `playstore/stage-2-legal` — + Stage 2 (92838f5).
+- **PR-C** `playstore/stage-3-5-packaging` — + Stages 3–5 + this Stage 6 commit.
+
+All work was stacked on `feat/playstore-stage1-compliance`; the three branches
+are slices of that history.
+
+---
+
 ## [Play Store / TWA] Stage 5 — console-ready package — 2026-09-09
 Status: done. Docs + one helper script; no code, no build change (client `tsc` +
 `vite build` re-run clean, unchanged). Branch `feat/playstore-stage1-compliance`.
