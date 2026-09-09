@@ -5,6 +5,7 @@ import { emitConnectionEnded } from '../websocket/socketServer.js'
 import {
   acceptConnection,
   advanceLeave,
+  blockAndTerminate,
   cancelLeave,
   cancelRequest,
   confirmEndLeave,
@@ -15,6 +16,7 @@ import {
   setNickname,
   setWallpaper,
 } from '../services/connectionService.js'
+import { reportConnectionUser } from '../services/reportService.js'
 
 export const connectionsRouter = Router()
 
@@ -87,6 +89,22 @@ connectionsRouter.post('/connections/:id/leave/confirm-end', async (req, res) =>
 connectionsRouter.patch('/connections/:id/wallpaper', async (req, res) => {
   const user = req.appUser!
   await setWallpaper(req.params.id, user.id, String(req.body?.wallpaper ?? ''))
+  res.status(204).end()
+})
+
+connectionsRouter.post('/connections/:id/block', async (req, res) => {
+  const user = req.appUser!
+  await blockAndTerminate(req.params.id, user.id)
+  emitConnectionEnded(req.params.id)
+  res.status(204).end()
+})
+
+connectionsRouter.post('/connections/:id/report', strictLimiter, async (req, res) => {
+  const user = req.appUser!
+  await reportConnectionUser(String(req.params.id), user.id, {
+    category: req.body?.category,
+    reason: req.body?.reason,
+  })
   res.status(204).end()
 })
 

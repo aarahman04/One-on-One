@@ -3,6 +3,7 @@ import { fetchMe } from '../services/apiClient'
 import { getCurrentConnection, regenerateConnectionCode } from '../services/connectionsApi'
 import { signOut } from '../services/authService'
 import { nextScreenFor } from '../state/nextScreen'
+import { openDeleteAccountDialog } from '../features/deleteAccount'
 
 const POLL_INTERVAL_MS = 3000
 
@@ -22,6 +23,7 @@ export const ConnectionIdPage: Page = (root, go) => {
       <div class="screen__actions">
         <button id="logout-btn">Log out</button>
       </div>
+      <button type="button" class="screen__alt" id="delete-account-btn">Delete account</button>
     </div>
   `
 
@@ -109,6 +111,10 @@ export const ConnectionIdPage: Page = (root, go) => {
 
   root.querySelector<HTMLButtonElement>('#logout-btn')!.addEventListener('click', () => {
     void signOut().then(() => location.assign('/'))
+  })
+
+  root.querySelector<HTMLButtonElement>('#delete-account-btn')!.addEventListener('click', () => {
+    openDeleteAccountDialog()
   })
 
   return () => clearInterval(interval)

@@ -27,11 +27,16 @@ import {
   getCurrentConnection,
   getMessages,
   markRead,
+  reportConnectionUser,
   reportMessage,
   setWallpaper,
+  blockAndEnd,
   type CurrentConnection,
   type ReactionSummary,
 } from '../services/connectionsApi'
+import { openBlockConfirm } from '../features/blockUser'
+import { openDeleteAccountDialog } from '../features/deleteAccount'
+import { ensurePermissionRationale } from '../features/permissionRationale'
 import {
   connectMessaging,
   getCallTransport,
@@ -361,6 +366,7 @@ export const ChatPage: Page = (root, go) => {
           showNotice('Notifications turned off.')
           return
         }
+        if (!(await ensurePermissionRationale('notifications'))) return
         await subscribeToPush()
         showNotice("Notifications turned on — you'll be notified when a message arrives and the app is closed.")
       } catch (err) {
@@ -379,6 +385,13 @@ export const ChatPage: Page = (root, go) => {
       },
       () => openAppearance(nav, chatEl, currentWallpaper, onWallpaperChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
+      () =>
+        openBlockConfirm({
+          connectionId,
+          peerName: otherName.toLowerCase(),
+          onBlocked: () => go('connection-id'),
+        }),
+      () => openDeleteAccountDialog(),
     )
 
     // --- Presence: the other side marks read every ~4s while the chat is on
@@ -1738,6 +1751,41 @@ export const ChatPage: Page = (root, go) => {
         img.src = url
       })
 
+    // Re-encode a picked image through a <canvas> before upload — this drops
+    // any EXIF/GPS metadata the camera baked in (privacy). Also yields the
+    // dimensions for free. GIFs skip this (canvas would flatten the animation)
+    // and upload as-is; they rarely carry location data.
+    const reencodeImage = (file: File): Promise<{ blob: Blob; width: number; height: number }> =>
+      new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file)
+        const img = new Image()
+        img.onload = () => {
+          URL.revokeObjectURL(url)
+          const width = img.naturalWidth
+          const height = img.naturalHeight
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          if (!ctx) {
+            reject(new Error('no canvas context'))
+            return
+          }
+          ctx.drawImage(img, 0, 0)
+          const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+          canvas.toBlob(
+            (blob) => (blob ? resolve({ blob, width, height }) : reject(new Error('encode failed'))),
+            type,
+            0.9,
+          )
+        }
+        img.onerror = () => {
+          URL.revokeObjectURL(url)
+          reject(new Error('could not read image'))
+        }
+        img.src = url
+      })
+
     const sendImage = async (file: File): Promise<void> => {
       if (file.size > MAX_IMAGE_BYTES) {
         showNotice('That photo is too large (max 10MB).')
@@ -1746,16 +1794,23 @@ export const ChatPage: Page = (root, go) => {
       attachBtn.disabled = true
       let row: HTMLElement | null = null
       try {
-        // Dimension read (local, no network) and the upload are independent —
-        // run them together instead of waiting on one before starting the other.
-        const dimsPromise = readImageDimensions(file)
-        const uploadPromise = uploadAttachment(connectionId, 'image', file)
+        const isGif = file.type === 'image/gif'
+        let uploadBlob: Blob = file
+        let width: number
+        let height: number
+        if (isGif) {
+          ;({ width, height } = await readImageDimensions(file))
+        } else {
+          const encoded = await reencodeImage(file)
+          uploadBlob = encoded.blob
+          width = encoded.width
+          height = encoded.height
+        }
+        const uploadPromise = uploadAttachment(connectionId, 'image', uploadBlob)
 
-        // Render at the real final size the moment dimensions are known,
-        // straight from the local file — no blank box, no waiting on the
-        // (much slower) upload to show anything.
-        const { width, height } = await dimsPromise
-        const localUrl = URL.createObjectURL(file)
+        // Render at the real final size straight from the local blob — no blank
+        // box, no waiting on the (much slower) upload to show anything.
+        const localUrl = URL.createObjectURL(uploadBlob)
         imageObjectUrls.add(localUrl)
         row = appendMessage(
           {
@@ -1875,6 +1930,7 @@ export const ChatPage: Page = (root, go) => {
 
     const beginRecording = async (): Promise<void> => {
       if (isRecording) return
+      if (!(await ensurePermissionRationale('microphone'))) return
       let handle: VoiceRecorderHandle
       try {
         handle = await startRecording()
@@ -2137,22 +2193,44 @@ export const ChatPage: Page = (root, go) => {
       return btn
     }
 
-    const openReportModal = (messageId: string): void => {
+    // Report a specific message or the other person. Both capture a category
+    // (incl. child_safety, required by the Play Child Safety policy) and an
+    // optional note; "Report & block" also ends the connection permanently.
+    const REPORT_CATEGORIES: Array<{ value: string; label: string }> = [
+      { value: 'harassment', label: 'Harassment or bullying' },
+      { value: 'hate', label: 'Hate speech' },
+      { value: 'sexual', label: 'Unwanted sexual content' },
+      { value: 'child_safety', label: 'Child safety / sexual content involving a minor' },
+      { value: 'spam', label: 'Spam' },
+      { value: 'other', label: 'Something else' },
+    ]
+
+    const openReportModal = (target: { messageId: string } | { person: true }): void => {
+      const isMessage = 'messageId' in target
       const box = document.createElement('div')
       box.className = 'notice-popup'
 
       const heading = document.createElement('div')
       heading.className = 'report-dialog__title'
-      heading.textContent = 'Report this message?'
+      heading.textContent = isMessage ? 'Report this message?' : `Report ${otherName.toLowerCase()}?`
 
       const explain = document.createElement('div')
       explain.className = 'report-dialog__text'
-      explain.textContent = "We'll review it. Add a note if you'd like (optional)."
+      explain.textContent = "We'll review it. Blocking also ends this conversation for good."
+
+      const category = document.createElement('select')
+      category.className = 'report-dialog__reason'
+      for (const c of REPORT_CATEGORIES) {
+        const opt = document.createElement('option')
+        opt.value = c.value
+        opt.textContent = c.label
+        category.append(opt)
+      }
 
       const reason = document.createElement('textarea')
       reason.className = 'report-dialog__reason'
       reason.rows = 3
-      reason.placeholder = 'What’s wrong with this message?'
+      reason.placeholder = 'Add a note (optional)'
 
       const actions = document.createElement('div')
       actions.className = 'report-dialog__actions'
@@ -2161,26 +2239,54 @@ export const ChatPage: Page = (root, go) => {
       cancelBtn.textContent = 'Cancel'
       const reportBtn = document.createElement('button')
       reportBtn.type = 'button'
-      reportBtn.className = 'primary'
       reportBtn.textContent = 'Report'
-      actions.append(cancelBtn, reportBtn)
+      const blockBtn = document.createElement('button')
+      blockBtn.type = 'button'
+      blockBtn.className = 'danger'
+      blockBtn.textContent = 'Report & block'
+      actions.append(cancelBtn, reportBtn, blockBtn)
 
-      box.append(heading, explain, reason, actions)
+      box.append(heading, explain, category, reason, actions)
       const dispose = (): void => modal.close()
       const modal = openModal(box, { onClose: () => overlays.delete(dispose) })
       overlays.add(dispose)
 
+      const sendReport = (): Promise<void> => {
+        const input = { category: category.value, reason: reason.value.trim() }
+        return isMessage
+          ? reportMessage(target.messageId, input)
+          : reportConnectionUser(connectionId, input)
+      }
+
       cancelBtn.addEventListener('click', () => modal.close())
       reportBtn.addEventListener('click', () => {
         reportBtn.disabled = true
-        void reportMessage(messageId, reason.value.trim())
+        blockBtn.disabled = true
+        void sendReport()
           .then(() => {
             modal.close()
-            showNotice('Thanks — this message has been reported.')
+            showNotice('Thanks — this has been reported.')
           })
           .catch(() => {
             reportBtn.disabled = false
+            blockBtn.disabled = false
             showNotice('Could not send the report — try again.')
+          })
+      })
+      blockBtn.addEventListener('click', () => {
+        reportBtn.disabled = true
+        blockBtn.disabled = true
+        void sendReport()
+          .catch(() => {}) // a failed report shouldn't stop the block
+          .then(() => blockAndEnd(connectionId))
+          .then(() => {
+            modal.close()
+            go('connection-id')
+          })
+          .catch(() => {
+            reportBtn.disabled = false
+            blockBtn.disabled = false
+            showNotice('Could not block — try again.')
           })
       })
     }
@@ -2212,9 +2318,13 @@ export const ChatPage: Page = (root, go) => {
         )
       }
       menu.append(
-        menuItem('Report', true, () => {
+        menuItem('Report message', true, () => {
           closeCtxMenu()
-          openReportModal(messageId)
+          openReportModal({ messageId })
+        }),
+        menuItem(`Report ${otherName.toLowerCase()}`, true, () => {
+          closeCtxMenu()
+          openReportModal({ person: true })
         }),
       )
     }

@@ -8,6 +8,8 @@ export function mountMenuDropdown(
   onSearch?: () => void,
   onAppearance?: () => void,
   onNotifications?: () => void,
+  onBlock?: () => void,
+  onDeleteAccount?: () => void,
 ): () => void {
   let panel: HTMLDivElement | null = null
 
@@ -42,6 +44,8 @@ export function mountMenuDropdown(
       ${onNotifications ? '<button class="menu__item" data-action="notifications">Notifications</button>' : ''}
       <div class="menu__divider"></div>
       <button class="menu__item menu__item--danger" data-action="leave">Leave connection</button>
+      ${onBlock ? '<button class="menu__item menu__item--danger" data-action="block">Block &amp; end</button>' : ''}
+      ${onDeleteAccount ? '<button class="menu__item menu__item--danger" data-action="delete-account">Delete account</button>' : ''}
     `
     nav.appendChild(panel)
 
@@ -75,6 +79,18 @@ export function mountMenuDropdown(
       close()
       go('leave')
     })
+    if (onBlock) {
+      panel.querySelector('[data-action="block"]')!.addEventListener('click', () => {
+        close()
+        onBlock()
+      })
+    }
+    if (onDeleteAccount) {
+      panel.querySelector('[data-action="delete-account"]')!.addEventListener('click', () => {
+        close()
+        onDeleteAccount()
+      })
+    }
     document.addEventListener('click', onOutsideClick)
   }
 
