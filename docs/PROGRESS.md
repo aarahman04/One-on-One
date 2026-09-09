@@ -11,6 +11,38 @@ Notes/deviations:
 
 ---
 
+## [Play Store / TWA] Stage 4 fix — twa-manifest.json / CI Gradle gen — 2026-09-09
+Status: done. First real `android-build.yml` run (34351166418) failed at `bubblewrap
+build` — generated `app/build.gradle:44` `splashScreenFadeOutDuration: ,` unparseable.
+
+Root cause: `android/twa-manifest.json` was hand-authored, never through
+`bubblewrap init`. Verified against `@bubblewrap/core@1.25.0` (`npm pack`):
+`splashScreenFadeOutDuration` is a **required** schema key with **no** code
+fallback and renders unquoted into Gradle. Same audit caught `"appVersionName"` —
+not a key Bubblewrap reads (schema key is `"appVersion"`); would have shipped an
+empty Gradle `versionName`.
+
+What shipped:
+- `android/twa-manifest.json` — add `"splashScreenFadeOutDuration": 300`; rename
+  `"appVersionName"` → `"appVersion"` (value unchanged). Rest of file audited
+  against the 1.25.0 template — clean.
+- `.github/workflows/android-build.yml` — sync step now writes `m.appVersion`;
+  new `Verify generated Gradle` step greps the emitted version/SDK lines;
+  keystore-upload step gated `if: always() && ...` so a build failure no longer
+  discards a freshly generated upload keystore (run 34351166418 did exactly that —
+  no secrets were ever set, so nothing lost, but the next run regenerates).
+- `docs/playstore/ANDROID_BUILD.md` — key-fields table (+`splashScreenFadeOutDuration`,
+  `appVersion` note); `targetSdkVersion`/`compileSdkVersion` are hardcoded 36 in
+  1.25.0 (was "not pinned, verify at build time"); removed the dead "if
+  `bubblewrap update` fails" escape hatch — `update` on the bare project is
+  confirmed working.
+
+Notes/deviations: no client/server code touched. `bubblewrap update` needs no
+committed Gradle project. Next CI run generates a new keystore + passwords (none
+were ever uploaded to Play — no reconciliation).
+
+---
+
 ## [Play Store / TWA] Stage 6 — handoff & PRs — 2026-09-09
 Status: done. `docs/playstore/NEW_SESSION_PROMPT.md` written (post-execution
 handoff — the plan is implemented; it lists the user's Play Console steps + the
