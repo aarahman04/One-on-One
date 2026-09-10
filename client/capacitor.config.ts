@@ -13,6 +13,18 @@ const config: CapacitorConfig = {
     // a secure context, which getUserMedia and geolocation require.
     androidScheme: 'https',
   },
+  plugins: {
+    SocialLogin: {
+      // Only Google sign-in is used. Disabling the rest keeps their native SDKs
+      // (notably the Facebook SDK) out of the APK.
+      providers: {
+        google: true,
+        facebook: false,
+        apple: false,
+        twitter: false,
+      },
+    },
+  },
 }
 
 export default config

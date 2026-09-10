@@ -7,6 +7,7 @@ build/
 !.env.example
 *.log
 .DS_Store
+.idea/
 .vercel
 graphify-out/
 Design fixes/
