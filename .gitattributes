@@ -8,3 +8,9 @@
 
 # CI workflows — CRLF breaks `run:` shell blocks on Linux runners.
 .github/workflows/*.yml text eol=lf
+
+# Gradle wrapper — `gradlew` has no .sh extension but is a POSIX shell script;
+# CRLF breaks `./gradlew` on Linux CI. The .jar must never be line-converted.
+android/gradlew text eol=lf
+android/gradlew.bat text eol=crlf
+*.jar binary
