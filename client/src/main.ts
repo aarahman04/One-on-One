@@ -1,4 +1,5 @@
 import './styles/global.css'
+import { Capacitor } from '@capacitor/core'
 import { mountRouter, registerPage, type Screen } from './state/router'
 import { LoginPage } from './pages/LoginPage'
 import { ConnectionIdPage } from './pages/ConnectionIdPage'
@@ -72,8 +73,10 @@ setUnauthorizedHandler(() => {
 
 // Registers the push-notification service worker; harmless no-op in
 // browsers that don't support it. Catch so a failed registration isn't an
-// unhandled rejection.
-if ('serviceWorker' in navigator) {
+// unhandled rejection. Skipped on the native (Capacitor) build — assets ship
+// in the APK and Android WebView SW support is unreliable; native push
+// arrives via FCM instead.
+if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
 }
 

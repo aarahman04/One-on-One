@@ -13,7 +13,12 @@ import { apiLimiter } from './middleware/rateLimit.js'
 
 const app = express()
 const port = process.env.PORT ?? 3000
-const allowedOrigins = (process.env.CLIENT_ORIGIN ?? 'http://localhost:5173').split(',')
+// `https://localhost` is the fixed origin the Capacitor Android shell serves
+// the bundled app from — always allowed, on top of the web deploy origin(s).
+const allowedOrigins = [
+  ...(process.env.CLIENT_ORIGIN ?? 'http://localhost:5173').split(','),
+  'https://localhost',
+]
 
 // Deployed behind a proxy (Railway) — trust one hop so rate-limit / req.ip
 // see the real client address, not the proxy's.
