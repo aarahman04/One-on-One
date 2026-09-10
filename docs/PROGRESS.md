@@ -11,6 +11,55 @@ Notes/deviations:
 
 ---
 
+## [Capacitor migration] Stage 2 bugfix — `[16] Account reauth failed` — 2026-09-10
+Status: code done, branch `capacitor/stage-2-fix-signing`. Not a new stage — a
+fix on top of Stage 2 (PR #66). One user action + one on-device re-test remain
+before Stage 3.
+
+Symptom: on-device Google sign-in failed every attempt with
+`Google Sign-In failed: [16] Account reauth failed`.
+
+Root cause (confirmed from device Logcat, tag `GoogleProvider`):
+```
+signingSha1=ED:02:08:A3:38:18:A4:18:40:AC:EF:D9:BD:C2:B2:0C:ED:37:55:9D
+ui=standard  filterByAuthorizedAccounts=false  autoSelectEnabled=false  nonceSet=true
+```
+The app is installed via Android Studio's Run button → **debug** variant, signed
+with `~/.android/debug.keystore` (SHA-1 `ED:02:…:9D`). The Android OAuth client is
+registered against the **`oneonone-upload`** SHA-1 (`36:A9:69:…:C6`). Mismatch →
+Credential Manager can't validate the app → reauth fails permanently. The
+plugin's built-in retry (clear state + re-prompt, PR #430 / 8.3.38) can't fix an
+unregistered cert, which is why it failed twice.
+
+Ruled out from plugin source (`@capgo/capacitor-social-login` 8.5.7,
+`GoogleProvider.java`) + the device log: `filterByAuthorizedAccounts` (default
+`false`, only settable on `style:'bottom'`, we pass no style → `GetSignInWithGoogleOption`);
+stale credential state (retry already clears it); nonce (`nonceSet=true` on the
+wire; a nonce fault would fail later at `signInWithIdToken`, not at `[16]`).
+
+Fix — two halves:
+- **Code (this branch):** `android/app/build.gradle` had **no `signingConfigs`
+  block**. Added `signingConfigs.release` + `buildTypes.release.signingConfig`,
+  both guarded on a gitignored `android/keystore.properties` existing (absent →
+  configures + builds unsigned, prior behaviour; Stage 6 CI will write the file
+  from `ANDROID_KEYSTORE_*` secrets). `android/keystore.properties.example`
+  added; `keystore.properties` gitignored. Verified with
+  `./gradlew :app:signingReport`: `release` Config `null` without the file,
+  picks up the key with it. **No `nativeGoogleAuth.ts` change** — nonce/options
+  confirmed correct on-device.
+- **User action (pending):** register the debug SHA-1
+  `ED:02:08:A3:38:18:A4:18:40:AC:EF:D9:BD:C2:B2:0C:ED:37:55:9D` as a *second*
+  Android OAuth client (package `app.web.oneonone`, project `one-on-one-508202`,
+  additive — nothing existing changes) so Run-button installs authenticate.
+
+Remaining before Stage 3 (all six must pass): debug SHA-1 registered; first-tap
+picker → signed in, no `[16]`; session survives app kill/reopen; Logcat still
+`nonceSet=true` + no Supabase nonce error; `./gradlew assembleRelease` with
+`keystore.properties` present yields an APK whose SHA-1 == `36:A9:69:…:C6`; web
+login on `one-on-one-mu.vercel.app` still fine.
+
+---
+
 ## [Capacitor migration] Stage 2 — native Google sign-in — 2026-09-10
 Status: done. Branch `capacitor/stage-2-native-auth`.
 
