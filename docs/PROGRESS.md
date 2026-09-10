@@ -11,6 +11,49 @@ Notes/deviations:
 
 ---
 
+## [Capacitor migration] Stage 1 — scaffold the Capacitor shell — 2026-09-10
+Status: done. Branch `capacitor/stage-1-scaffold`.
+
+Why: the Bubblewrap TWA runs in Chrome's process and inherits Chrome-level
+settings — a Chrome app-lock setting leaked into the wrapped app on the user's
+device, demanding a fingerprint unlock. A Capacitor shell gets its own process
+identity, data dir, and permissions. Full plan +7-stage breakdown:
+`~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
+
+What shipped:
+- `client/`: `@capacitor/core` + `@capacitor/android` (deps), `@capacitor/cli`
+  (dev) — Capacitor 8.5.1. `client/capacitor.config.ts` — appId
+  `app.web.oneonone`, `webDir: dist`, `androidScheme: https` (https://localhost
+  is a secure context; getUserMedia/geolocation need it), native path `../android`.
+- `android/`: committed Capacitor Gradle project. minSdk 24, target/compileSdk 36
+  (same as the Bubblewrap template). Capacitor's generated `.gitignore` replaces
+  the TWA one (commits the project, ignores build output); keystore-ignore lines
+  un-commented + `android.keystore` / `signing-key-info.txt` re-added.
+- `client/index.html`: CSP from `vercel.json` mirrored as a `<meta>` tag so the
+  native build (no Vercel headers) is covered. Kept in sync manually.
+- `backend/src/index.ts`: `https://localhost` added to the CORS allowlist
+  (Express + Socket.IO) — the fixed Capacitor WebView origin.
+- `client/src/main.ts`: service-worker registration skipped on native
+  (`Capacitor.isNativePlatform()`).
+- `.gitattributes`: `android/gradlew` forced to LF, `*.jar` binary.
+
+Notes/deviations:
+- Native project placed at repo-root `android/` (user pick) via
+  `capacitor.config.ts` `android.path`, not the nested `client/android/` default.
+- `twa-manifest.json` + `android-build.yml` intentionally left in place;
+  the build pipeline is rewritten for Gradle in Stage 6. `android-build.yml` is
+  `workflow_dispatch`-only, so it never auto-runs.
+- **Login is expected to be broken in the native app** (`disallowed_useragent`).
+  Native Credential Manager + `signInWithIdToken` is Stage 2.
+- Not device-tested by Claude (no Android toolchain here). User verifies:
+  `cd client && npm run build && npx cap sync`, open `android/` in Android
+  Studio, run on a device — UI renders, socket connects, messages flow.
+- `npm audit` flags a moderate `uuid` advisory transitively via
+  `@capacitor/cli` (dev-only, build tooling). `audit fix --force` would
+  downgrade the CLI — left as-is.
+
+---
+
 ## [Play Store / TWA] assetlinks.json — real upload-key fingerprint — 2026-09-09
 Status: done.
 
