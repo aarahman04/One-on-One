@@ -59,6 +59,7 @@ captures/
 *.p12
 android.keystore
 signing-key-info.txt
+keystore.properties
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild
