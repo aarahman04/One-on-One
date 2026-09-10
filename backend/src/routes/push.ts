@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/requireAuth.js'
 import { strictLimiter } from '../middleware/rateLimit.js'
-import { saveSubscription, removeSubscription } from '../services/pushService.js'
+import { saveSubscription, removeSubscription, saveToken, removeToken } from '../services/pushService.js'
 
 export const pushRouter = Router()
 
@@ -25,5 +25,28 @@ pushRouter.post('/push/unsubscribe', async (req, res) => {
     return
   }
   await removeSubscription(endpoint)
+  res.status(204).end()
+})
+
+// FCM registration token (native / Android build). An opaque token, not an
+// https URL — deliberately NOT run through assertValidPushEndpoint.
+pushRouter.post('/push/token', strictLimiter, async (req, res) => {
+  const user = req.appUser!
+  const { token } = req.body ?? {}
+  if (typeof token !== 'string' || !token) {
+    res.status(400).json({ error: 'invalid token' })
+    return
+  }
+  await saveToken(user.id, token)
+  res.status(204).end()
+})
+
+pushRouter.post('/push/token/unregister', async (req, res) => {
+  const { token } = req.body ?? {}
+  if (typeof token !== 'string' || !token) {
+    res.status(400).json({ error: 'invalid token' })
+    return
+  }
+  await removeToken(token)
   res.status(204).end()
 })

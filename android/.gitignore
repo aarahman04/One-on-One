@@ -65,8 +65,11 @@ keystore.properties
 .externalNativeBuild
 .cxx/
 
-# Google Services (e.g. APIs or Firebase)
-# google-services.json
+# Google Services (Firebase / FCM) — per-project config the user supplies, like
+# keystore.properties. app/build.gradle guards on its presence so a clone
+# without it still configures and builds (push just won't work).
+google-services.json
+app/google-services.json
 
 # Freeline
 freeline.py

@@ -39,12 +39,24 @@ account is deleted (report snapshots excepted — see notes).
 ### Not collected (answer "No" / leave unchecked)
 
 Financial info · Health & fitness · Web browsing history · App activity /
-analytics · Device or other IDs (advertising ID etc.) · Contacts · Calendar ·
-SMS or call log · Installed apps · Crash logs / diagnostics (no crash-reporting
-SDK) · Purchase history.
+analytics · Contacts · Calendar · SMS or call log · Installed apps · Crash logs /
+diagnostics (no crash-reporting SDK) · Purchase history.
+
+**Device or other IDs — needs a decision (Capacitor Stage 4, FCM).** The native
+Android build registers an **FCM registration token** with our backend
+(`push_tokens` table) so message / missed-call notifications can be delivered.
+Google's "Device or other IDs" category targets cross-app identifiers used for
+advertising/analytics (advertising ID, Android ID, IMEI); an FCM token is
+app-instance-scoped, rotates, and is used solely to route notifications, so the
+common reading is **still "No"** here and the token falls under "Messages … App
+functionality". **Flag for the developer:** if you prefer to be maximally
+conservative, declare "Device or other IDs = Yes / App functionality / not
+shared / not optional" and note it is the push token only. The web PWA's
+web-push endpoint raises the same question and has never been declared.
 
 IP address is **not** collected — `req.ip` is used only for in-memory rate
-limiting and is never persisted.
+limiting and is never persisted. (TURN relay and the OpenStreetMap tile still see
+IPs transiently — see notes 1 and 3.)
 
 ## Section 3 — Notes to keep the form consistent with the privacy policy
 
@@ -56,21 +68,47 @@ limiting and is never persisted.
    privacy-policy disclosure. If you prefer to be maximally conservative, declare
    Location as shared with "a mapping/CDN provider" for "app functionality".
 2. **Push notification previews.** For text messages, up to ~120 characters of
-   message text plus the sender nickname are included in the (RFC-8291-encrypted)
-   web-push payload and shown on the lock screen. The push service and the device
-   OS therefore see that preview. Disclosed in the privacy policy. This is part
-   of "Messages … App functionality", not separate sharing.
+   message text plus the sender nickname are included in the push payload and
+   shown on the lock screen. The push service and the device OS therefore see
+   that preview. Disclosed in the privacy policy. This is part of "Messages …
+   App functionality", not separate sharing.
+   - **Web PWA:** RFC-8291-encrypted web-push, via the browser vendor's push
+     service (Google / Mozilla / Apple / Microsoft).
+   - **Native Android (Capacitor Stage 4):** the same preview is sent through
+     **Google Firebase Cloud Messaging (FCM)** over HTTPS instead. FCM (Google)
+     sees the title + body en route to the device. Same disclosure basis.
 3. **WebRTC calls.** Audio/video call media is peer-to-peer (DTLS-SRTP) and never
    recorded or stored. For ~10–20% of calls a Cloudflare TURN relay forwards the
    already-encrypted media packets and sees both peers' IPs. No content is
    readable or retained. Not a stored data type.
 4. **Processors** (not "sharing"): Supabase (database, auth, storage), Vercel
    (frontend hosting), Railway (backend hosting), Cloudflare (STUN/TURN),
-   browser push services (Google/Mozilla/Apple/Microsoft), Google (OAuth). List
-   these in the privacy policy's "who we share with" section (already done in
-   `legalShared.ts`).
+   browser push services (Google/Mozilla/Apple/Microsoft) for the web PWA,
+   **Google Firebase Cloud Messaging (FCM) for the native Android build**
+   (Capacitor Stage 4), Google (OAuth). List these in the privacy policy's
+   "who we share with" section (`legalShared.ts` — **update it to name FCM**).
 5. **Retention.** No TTL/cron. Data persists until the connection is terminated
    (whole conversation cascade-deleted) or the account is deleted (`auth.users`
    delete cascades). **Report snapshots deliberately survive** account deletion
    as moderation evidence, with the message link nulled — call this out under
    "Data retention" and in the deletion page copy (already done).
+6. **App manifest permissions (new under Capacitor — Play Console permissions
+   review, not the Data Safety form itself).** Under the Bubblewrap TWA every
+   device capability was mediated by Chrome and the app's own `AndroidManifest`
+   declared **none** of them. The Capacitor build declares them directly, added
+   across Stages 3–4:
+   - `CAMERA`, `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS` — WebRTC audio/video
+     calls. Maps to the **Voice or sound recordings** and (call video, not
+     stored) rows. Runtime-prompted by the WebView on first call.
+   - `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` — the `/location` one-shot
+     share. Maps to the **Approximate/precise location** row (Optional). Runtime-
+     prompted on first `/location`.
+   - `POST_NOTIFICATIONS` — message / missed-call notifications (Stage 4 FCM +
+     Stage 3 call service). No new data type.
+   - `INTERNET`, `VIBRATE`, `FOREGROUND_SERVICE*`, `MANAGE_OWN_CALLS` — no data
+     collection.
+   **Flag for the developer:** none of `CAMERA` / `RECORD_AUDIO` / location is a
+   *background* or *always-on* permission, and each is only used while the user
+   is actively in the corresponding feature — the Play Console permissions
+   declaration should say exactly that. Confirm the store listing's permission
+   rationale text covers all three now that they are real manifest entries.
