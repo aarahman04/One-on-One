@@ -11,6 +11,109 @@ Notes/deviations:
 
 ---
 
+## [Capacitor migration] Stage 4 — FCM push on the native build — 2026-09-10
+Status: code done, branch `capacitor/stage-4-fcm`. Off-device verification only
+(client `tsc` + `vite build` clean, backend `tsc` clean, `cap sync` picks up the
+plugin, `:app:assembleDebug` succeeds without `google-services.json`, merged
+manifest has one `POST_NOTIFICATIONS`, the FCM `FirebaseMessagingService`, and the
+`default_notification_channel_id=messages` meta-data). On-device checklist
+pending before PR.
+
+Problem: the PWA's Web Push / VAPID path depends on a service worker, which the
+Capacitor WebView never registers (skipped since Stage 1). So the native build
+had no push at all. Replace it with FCM on native while leaving the web PWA's
+web-push path completely intact.
+
+What shipped:
+- **Both transports coexist.** `pushService.sendToUser()` now fans out to
+  `sendWebPushToUser()` (unchanged VAPID path, `push_subscriptions`) **and**
+  `sendFcmToUser()` (new, `push_tokens`). Each is independently gated by its own
+  keys — unset ⇒ warn + no-op, same stance as before. The two send call sites
+  (`socketServer.ts:117` new message, `callService.ts` missed call) and the
+  `{ title, body, urgent? }` payload shape are untouched.
+- **Backend FCM (HTTP v1, not legacy).** `FIREBASE_SERVICE_ACCOUNT` env var holds
+  the whole service-account JSON (never a repo file). `pushService.ts` mints an
+  OAuth2 access token from it via the JWT-bearer grant (hand-rolled RS256 with
+  `node:crypto` — no `googleapis` dep), caches it, and POSTs to
+  `fcm.googleapis.com/v1/projects/<id>/messages:send`. Prunes tokens FCM reports
+  `UNREGISTERED` / `INVALID_ARGUMENT` (or HTTP 404/400), mirroring the web-push
+  404/410 pruning. `urgent` maps to `notification_priority: PRIORITY_MAX`.
+- **Migration `032_push_tokens.sql`** — new `push_tokens` table (`user_id`,
+  `token` unique, `platform`), *not* nullable columns on `push_subscriptions`:
+  the two credential shapes share nothing and this leaves the live web-push
+  table + its `onConflict:'endpoint'` upsert untouched. **Apply manually in the
+  Supabase SQL Editor.**
+- **`routes/push.ts`** — added `POST /api/push/token` (with `strictLimiter`) and
+  `POST /api/push/token/unregister`. A token is opaque, so it is **not** run
+  through `assertValidPushEndpoint` (which expects an https URL).
+- **Client `features/pushNotifications.ts`** — branches on
+  `Capacitor.isNativePlatform()`. Web path is byte-for-byte unchanged. Native
+  path dynamic-imports `@capacitor/push-notifications`, requests permission,
+  creates the `messages` channel, `register()`s, reads the token off the
+  `registration` listener and POSTs it. `isPushSupported()` now returns `true` on
+  native, so the **Notifications** menu item appears on Android (it was absent —
+  `ChatPage.ts` unchanged). `unsubscribeFromPush()` unregisters + deletes the
+  server token. Foreground / tap listeners are registered but thin (live socket
+  delivery + singleTask relaunch already cover both cases).
+- **Android** — `@capacitor/push-notifications@8.1.2` added; `cap sync` wires
+  `:capacitor-push-notifications` and the FCM AAR. `AndroidManifest.xml` gained
+  one `<meta-data default_notification_channel_id="messages">`. The
+  `com.google.gms.google-services` Gradle plugin + classpath were **already**
+  present from the Capacitor 8 template, already guarded on `google-services.json`
+  the same way `app/build.gradle` guards `keystore.properties` — no change
+  needed. `google-services.json` is **gitignored** (per-project config the user
+  supplies, like `keystore.properties`; the guard lets a clone build without it).
+
+User-supplied Firebase artifacts (surfaced separately, not done here):
+1. Firebase project attached to the existing Google Cloud project.
+2. Android app registered with package `app.web.oneonone` → `google-services.json`
+   → dropped at `android/app/google-services.json`.
+3. Service-account key (JSON) → set as the `FIREBASE_SERVICE_ACCOUNT` env var on
+   Railway (single-line JSON).
+
+Decisions:
+- **Permission-prompt owner:** `@capacitor/push-notifications` owns the
+  `POST_NOTIFICATIONS` runtime prompt (fires when the user toggles Notifications
+  on). Stage 3's `CallServicePlugin` still *can* request it, but only at
+  call-start and only if not already granted, so in practice it finds the
+  permission already answered. `CallServicePlugin.java` was **not** touched
+  (frozen since Stage 3) — it self-defers.
+- **Channel:** new `messages` channel at importance HIGH (5). The existing
+  low-importance `calls` channel (owned by `CallForegroundService`) is left
+  exactly as-is — deliberately quiet because a call plays its own ringtone.
+
+Still deferred (same as Stage 3): no FCM call-wake — push-triggered ringing with
+the app closed and native incoming-call UI remain out of scope. Stage 4 delivers
+notifications for new messages and missed calls only.
+
+Notes/deviations: on-device verification is the whole point of the stage —
+a message notification arriving with the app **fully killed** is what proves FCM
+works; a backgrounded WebView notification proves nothing. Cannot be checked
+off-device.
+
+**Gotcha, cost a full on-device round:** the native build talks to the *deployed*
+Railway backend (`client/.env.production` → `VITE_API_URL`), so the Notifications
+toggle fails with `failed to save token` until the Stage 4 backend is actually
+deployed — `POST /api/push/token` 404s on any older revision. Railway's deploy
+branch is configured in its dashboard only (no `railway.json` / `nixpacks.toml` /
+`Procfile` in the repo), so testing this stage means repointing Railway at the
+branch first. Hardening added afterwards so this can't recur silently: the client
+now puts the HTTP status in the error (`failed to save token (404)`), the backend
+logs `fcm: configured for project <id>` at boot, and `sendToUser` uses
+`Promise.allSettled` with per-transport error logs (both send call sites swallow
+errors in an empty `catch`, so an FCM failure was previously invisible).
+Also hardened: the `registration` / `registrationError` listener handles are now
+awaited *before* `register()` — Capacitor doesn't buffer an event fired before
+its JS listener attaches, so the old order could lose the token.
+
+**Android testing notes (platform behaviour, not app bugs):** on MIUI/Xiaomi the
+app needs **Autostart** enabled and battery saver set to **No restrictions**, or
+the OS freezes it and FCM never lands. "Fully killed" must mean *swiped from
+recents* — **Force stop** in App info blocks all FCM delivery on every OEM until
+the app is manually relaunched.
+
+---
+
 ## [Capacitor migration] Stage 3 — call foreground service — 2026-09-10
 Status: code done, branch `capacitor/stage-3-call-foreground-service`. Off-device
 verification only (build + tsc + merged manifest). On-device checklist pending

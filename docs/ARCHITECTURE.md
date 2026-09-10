@@ -264,6 +264,41 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
     `onRemoteStream` re-binds a fresh `MediaStream` when the remote track set
     changes (the remote peer sends audio then video). Desktop Chrome never hit
     this — its media-element load algorithm re-runs on track add.
+- **Stage 4 — FCM push (branch `capacitor/stage-4-fcm`):** the PWA's Web
+  Push / VAPID path needs a service worker, which the WebView never registers, so
+  the native build had no push. FCM replaces it on native; the web PWA keeps
+  web-push. **Both transports coexist** — `pushService.sendToUser()` fans out to
+  `push_subscriptions` (web-push) *and* `push_tokens` (FCM), each gated by its own
+  keys.
+
+  ```
+  ChatPage "Notifications" toggle
+      │  isPushSupported()  → true on web (VAPID) AND on native (Capacitor)
+      ▼
+  features/pushNotifications.ts        ── isNative? ──┐
+      │ web: PushManager.subscribe                    │ native: @capacitor/push-notifications
+      │   POST /api/push/subscribe                    │   register() → token
+      │   {endpoint, keys}                            │   POST /api/push/token  {token}
+      ▼                                               ▼
+  push_subscriptions                              push_tokens  (migration 032)
+      ▲                                               ▲
+      │ web-push (VAPID)                               │ FCM HTTP v1
+      │                                               │   OAuth2 JWT-bearer from
+  pushService.sendWebPushToUser()                 pushService.sendFcmToUser()
+      │   prune 404/410                                │   prune UNREGISTERED / INVALID_ARGUMENT
+      └───────────────── sendToUser(userId, {title, body, urgent?}) ─────────────────┘
+                    (socketServer.ts new-message · callService.ts missed-call — unchanged)
+  ```
+
+  Backend auth is `FIREBASE_SERVICE_ACCOUNT` (whole service-account JSON in one
+  env var); the access token is minted with hand-rolled RS256 (`node:crypto`),
+  no `googleapis` dep. Android: `com.google.gms.google-services` Gradle plugin was
+  already in the Capacitor 8 template, guarded on `google-services.json` (gitignored,
+  user-supplied). Notification channel `messages` (importance HIGH) is separate
+  from Stage 3's low-importance `calls` channel. `@capacitor/push-notifications`
+  owns the `POST_NOTIFICATIONS` runtime prompt; `CallServicePlugin` self-defers
+  (it only asks at call-start if not already granted). **Still out of scope:** FCM
+  call-wake / native incoming-call UI — messages + missed calls only.
 
 TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
 in place until Stage 6 rewrites the build pipeline for Gradle.
@@ -292,6 +327,8 @@ sequenceDiagram
 ```
 
 A connection's Socket.IO room has exactly its two members, so "any other socket present" is a cheap proxy for "the recipient is here" — no separate presence table. `push_subscriptions` (migration 013) holds one row per device; a 404/410 from the push service prunes it. The client only subscribes when the user toggles **Notifications** in the `•••` menu (`features/pushNotifications.ts`) — never an automatic prompt. Requires `client/public/manifest.webmanifest` + `sw.js` (installable PWA — mandatory for iOS to deliver push at all) and VAPID keys set via env on both sides; unset keys make the backend no-op rather than fail sends.
+
+This diagram describes the **web PWA** path only. Since the Capacitor migration's Stage 4 the **native Android** build uses FCM instead (no service worker in the WebView) — `push_tokens` + `pushService.sendFcmToUser()`, see the Capacitor migration section above. `sendToUser()` fans out to both; both send call sites and the payload shape are shared and unchanged.
 
 ## Audio + video calling (V1, since 2026-09-04 — overrides spec §29, user-confirmed)
 

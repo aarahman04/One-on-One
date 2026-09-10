@@ -40,6 +40,14 @@
             android:name=".CallForegroundService"
             android:exported="false"
             android:foregroundServiceType="phoneCall" />
+
+        <!-- FCM: route notifications to the "messages" channel (created in
+             pushNotifications.ts) when the incoming payload doesn't already
+             name one — the app is quiet-quiet in the low-importance "calls"
+             channel otherwise. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="messages" />
     </application>
 
     <!-- Permissions -->
