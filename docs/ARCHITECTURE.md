@@ -200,6 +200,15 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
   by the OS from the APK signature, never referenced in code. The dynamic import
   keeps the plugin out of the web bundle's initial load. `main.ts` is unchanged —
   its redirect-handling code is an inert no-op on native.
+- **Stage 2 bugfix (branch `capacitor/stage-2-fix-signing`):** the plugin
+  launches Google's scope-consent screen with `Activity.startIntentSenderForResult`
+  (request codes `583892990..+128`), outside the Capacitor bridge. `MainActivity`
+  now implements `ModifiedMainActivityForSocialLoginPlugin` and forwards that
+  request-code range from `onActivityResult` to
+  `SocialLoginPlugin.handleGoogleLoginIntent`; without it the plugin's internal
+  future never completes and `login()` hangs after consent. Flow:
+  Credential Manager → consent Activity → `MainActivity.onActivityResult` →
+  `SocialLoginPlugin` → JS promise resolves → `signInWithIdToken`.
 
 TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
 in place until Stage 6 rewrites the build pipeline for Gradle.

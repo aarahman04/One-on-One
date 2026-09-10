@@ -56,7 +56,58 @@ Remaining before Stage 3 (all six must pass): debug SHA-1 registered; first-tap
 picker → signed in, no `[16]`; session survives app kill/reopen; Logcat still
 `nonceSet=true` + no Supabase nonce error; `./gradlew assembleRelease` with
 `keystore.properties` present yields an APK whose SHA-1 == `36:A9:69:…:C6`; web
-login on `one-on-one-mu.vercel.app` still fine.
+login on `one-on-one-mu.vercel.app` still fine; **after consent the app
+returns to a signed-in UI** (bugfix #2 — MainActivity forward).
+
+---
+
+## [Capacitor migration] Stage 2 bugfix #2 — sign-in hangs after consent — 2026-09-10
+Status: code done, branch `capacitor/stage-2-fix-signing`. Same fix series as
+above. On-device re-test pending.
+
+Symptom: after the debug SHA-1 was registered, the account picker and Google
+consent screen ("Agree and continue") both complete — then nothing. App never
+returns to a signed-in UI; JS promise from `signInWithGoogleNative` never
+settles.
+
+Root cause (from plugin source, `@capgo/capacitor-social-login` 8.5.7,
+`GoogleProvider.java` + `SocialLoginPlugin.java`): Credential Manager returns the
+ID token, then the plugin runs `getAuthorizationResult()` and **blocks** on
+`future.get()` (no timeout) on a background executor. Scopes aren't granted yet,
+so `authorizationResult.hasResolution()` is true and the plugin launches the
+consent screen with `activity.startIntentSenderForResult(...,
+REQUEST_AUTHORIZE_GOOGLE_MIN + i, ...)` — **directly on the Activity, outside the
+Capacitor bridge**. The result lands in `MainActivity.onActivityResult`;
+Capacitor's `BridgeActivity` only dispatches request codes it registered, so it's
+dropped. `SocialLoginPlugin.handleGoogleLoginIntent(requestCode, intent)` is
+`public` and never called anywhere in the plugin — it exists solely to be
+invoked from a modified `MainActivity`. Our `MainActivity` was bare
+(`extends BridgeActivity {}`), so the completer is never completed, `future.get()`
+blocks forever, `call.resolve()` never fires. The plugin's
+`instanceof ModifiedMainActivityForSocialLoginPlugin` guard only *enforces* the
+modification for `OFFLINE` mode, so ONLINE mode failed silently.
+
+Client-ID audit (user asked, after a foreign OAuth client ID was added somewhere
+while debugging): repo-wide grep for `apps.googleusercontent.com` / `628827083956`
+/ `clientId` / `webClientId` over `*.ts,tsx,json,gradle,xml,env,md,yml` (minus
+`node_modules`, `dist`) — exactly one web client ID referenced,
+`628827083956-au0n92v35p0un0kob10254j7rhc0tcft.apps.googleusercontent.com`
+(hardcoded fallback in `nativeGoogleAuth.ts`, `VITE_GOOGLE_WEB_CLIENT_ID` absent
+from `client/.env`). No `google-services.json`, no `default_web_client_id` in
+`strings.xml`. The foreign client ID is inert — not referenced anywhere in the
+build. Nonce handling in `nativeGoogleAuth.ts` confirmed correct against plugin
+source (plugin passes our value straight to `GoogleIdOption.setNonce`, no extra
+hashing).
+
+Fix — one file, `android/app/src/main/java/app/web/oneonone/MainActivity.java`:
+implement `ModifiedMainActivityForSocialLoginPlugin`, override `onActivityResult`
+to forward the `REQUEST_AUTHORIZE_GOOGLE_MIN.._MAX` range to
+`SocialLoginPlugin.handleGoogleLoginIntent`. No JS/TS change. Verified
+`./gradlew compileDebugJavaWithJavac` succeeds.
+
+User action (pending): confirm Supabase → Authentication → Providers → Google →
+**Authorized Client IDs** contains the web client ID above (field is separate
+from Client ID/Secret; used by `signInWithIdToken`). Remove any other entry.
 
 ---
 
