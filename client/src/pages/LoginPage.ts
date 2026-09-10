@@ -1,7 +1,8 @@
 import type { Page } from '../state/router'
 import { signInWithGoogle, signOut } from '../services/authService'
+import { goToPostSignInScreen } from '../state/boot'
 
-export const LoginPage: Page = (root) => {
+export const LoginPage: Page = (root, go) => {
   let oauthError: string | null = null
   try {
     oauthError = sessionStorage.getItem('oauthError')
@@ -43,9 +44,13 @@ export const LoginPage: Page = (root) => {
     errorEl.style.display = 'block'
   }
 
+  // signInWithGoogle resolves true only on the native path, which signs in
+  // without navigating anywhere — so nothing re-runs the boot routing and this
+  // screen has to move itself. On web it returns false mid-redirect and the
+  // reload does the routing.
   root.querySelector<HTMLButtonElement>('#login-btn')!.addEventListener('click', async () => {
     try {
-      await signInWithGoogle()
+      if (await signInWithGoogle()) await goToPostSignInScreen(root, go)
     } catch (err) {
       errorEl.textContent = err instanceof Error ? err.message : 'Sign-in failed. Try again.'
       errorEl.style.display = 'block'
@@ -58,7 +63,7 @@ export const LoginPage: Page = (root) => {
   root.querySelector<HTMLButtonElement>('#switch-account-btn')?.addEventListener('click', async () => {
     try {
       await signOut()
-      await signInWithGoogle(true)
+      if (await signInWithGoogle(true)) await goToPostSignInScreen(root, go)
     } catch (err) {
       errorEl.textContent = err instanceof Error ? err.message : 'Could not switch accounts. Try again.'
       errorEl.style.display = 'block'

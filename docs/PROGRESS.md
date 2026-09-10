@@ -63,6 +63,58 @@ loads connections/chat data from the Railway backend and stays on the real UI**
 
 ---
 
+## [Capacitor migration] Stage 2 bugfix #4 — no UI transition after native sign-in — 2026-09-10
+Status: code done, branch `capacitor/stage-2-fix-signing`. **On-device fresh
+sign-in still unverified** — must be tested from a clean install, not a relaunch
+with an existing session.
+
+Symptom: with #2 and #3 in place, native sign-in fully succeeds (Logcat shows
+idToken/accessToken/profile; a restart lands straight in the chat UI). But on the
+*first* sign-in inside a running app session, the login screen just sits there
+with no visible change. Only close-and-reopen shows the authenticated UI.
+
+Root cause: `main.ts` resolved the screen exactly once, at module top level, and
+nothing re-ran it. The web flow never needed more — `signInWithOAuth` navigates
+the browser to Google, and the redirect back is a full page load that re-executes
+the module and re-resolves the screen. The native Credential Manager flow
+navigates nowhere; `signInWithIdToken` just resolves a promise. `LoginPage.ts`
+awaited `signInWithGoogle()` and then did nothing with it, so the router was
+never told to move. The router already passes every page a `go(screen)`
+navigator (`state/router.ts:19,35`) — `LoginPage` declared `(root)` and dropped it.
+
+Fix (4 files, no behaviour change on web):
+- **`client/src/state/boot.ts` (new)** — `resolveScreenForSession()` (the
+  session → connection → screen resolution lifted verbatim out of `main.ts`) and
+  `goToPostSignInScreen(root, go)`, which re-resolves, applies
+  `ensureFirstRunGates` and calls `go(screen)`. The gate call matters: without it
+  a native first-timer would skip the 18+/Terms screen that the cold-boot path
+  enforces.
+- **`authService.signInWithGoogle()` now returns `boolean`** — true only when a
+  session exists in *this* page (native), false when the browser is mid-redirect
+  (web) or the picker was cancelled. Keeps the platform check in one place
+  instead of importing Capacitor into the login screen.
+- **`nativeGoogleAuth.signInWithGoogleNative()`** returns `true` after
+  `signInWithIdToken`, `false` on `USER_CANCELLED`.
+- **`LoginPage.ts`** takes the `go` it was already being handed and calls
+  `goToPostSignInScreen(root, go)` when sign-in returns true — on both the main
+  button and the "Use a different account" button.
+- **`main.ts`** drops its local `resolveInitialScreen()` and calls
+  `resolveScreenForSession()`, keeping the `hadOAuthError` short-circuit at the
+  call site. No duplicated routing logic.
+
+Verified off-device: `tsc` clean, `vite build` succeeds, `nativeGoogleAuth` still
+lazily chunked (plugin stays out of the web entry), bundle still carries the
+Railway URL and no localhost, `npx cap sync android` + `./gradlew installDebug`
+succeeded on device + emulator.
+
+Known adjacent issue, **not** touched (pre-existing, unchanged by this fix):
+`main.ts` `onSignedOut(() => location.assign('/'))` races the "Use a different
+account" path, which calls `signOut()` and then immediately `signInWithGoogle(true)`.
+The sign-out event can reload the page mid-flow. Flag for a follow-up if the
+device test shows the switch-account path misbehaving.
+
+---
+
 ## [Capacitor migration] Stage 2 bugfix #3 — native build pointed at localhost — 2026-09-10
 Status: code done, branch `capacitor/stage-2-fix-signing`. On-device re-test
 pending. Same fix series as below.

@@ -219,6 +219,13 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
   `services/transport/InternetTransport.ts` (Socket.IO); both origins are already
   in the `connect-src` allowlist (`https://*.up.railway.app`,
   `wss://*.up.railway.app`), and the backend CORS allowlist pins `https://localhost`.
+- **Post-sign-in routing:** web relies on the OAuth redirect reloading the page
+  to re-run `main.ts`'s boot resolution. Native has no reload, so
+  `signInWithGoogle()` reports whether a session now exists in-page and
+  `LoginPage` calls `state/boot.ts` → `goToPostSignInScreen(root, go)`, which
+  re-resolves the screen, applies the first-run age/Terms gate and drives the
+  router's existing `go()`. `resolveScreenForSession()` is shared by both paths
+  so cold boot and post-sign-in can't drift apart.
 
 TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
 in place until Stage 6 rewrites the build pipeline for Gradle.

@@ -27,7 +27,9 @@ async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-export async function signInWithGoogleNative(forceAccountChooser: boolean): Promise<void> {
+// Resolves true once Supabase has a session; false if the user dismissed the
+// account picker. Never navigates — the caller routes on true.
+export async function signInWithGoogleNative(forceAccountChooser: boolean): Promise<boolean> {
   await ensureInitialized()
 
   if (forceAccountChooser) {
@@ -46,7 +48,7 @@ export async function signInWithGoogleNative(forceAccountChooser: boolean): Prom
     idToken = 'idToken' in result ? result.idToken : null
   } catch (err) {
     // User dismissed the account picker — not an error worth surfacing.
-    if ((err as { code?: string }).code === 'USER_CANCELLED') return
+    if ((err as { code?: string }).code === 'USER_CANCELLED') return false
     throw err
   }
 
@@ -58,4 +60,5 @@ export async function signInWithGoogleNative(forceAccountChooser: boolean): Prom
     nonce: rawNonce,
   })
   if (error) throw error
+  return true
 }
