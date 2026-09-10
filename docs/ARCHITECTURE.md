@@ -174,6 +174,36 @@ pre-paired demo accounts), `PUBLISH_CHECKLIST.md` (the ordered personal-action
 list), and `screenshots/` (captured by `scripts/shoot-screenshots.mjs` —
 interactive, not headless, because of the OAuth wall).
 
+### Capacitor migration (since 2026-09-10 — supersedes the TWA)
+
+The Android wrapper is moving from the Bubblewrap TWA (which runs inside Chrome's
+process and inherits Chrome-level settings) to a **Capacitor** native WebView
+shell with its own process identity, data directory, and permissions. Plan +
+staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
+
+- **Stage 1 (PR #65):** committed Capacitor Gradle project at repo-root
+  `android/` (Capacitor 8, minSdk 24, target/compileSdk 36); `client/capacitor.config.ts`
+  (`appId app.web.oneonone`, `webDir dist`, `androidScheme https` → served from
+  `https://localhost`, a secure context). CSP mirrored from `vercel.json` into an
+  `index.html` `<meta>` (no Vercel headers on the native origin); `https://localhost`
+  added to the backend CORS allowlist (Express + Socket.IO); service-worker
+  registration skipped when `Capacitor.isNativePlatform()`.
+- **Stage 2 (PR #66):** Google sign-in. Google blocks OAuth redirects in embedded
+  WebViews, so `authService.signInWithGoogle()` branches: web keeps
+  `signInWithOAuth`; native dynamic-imports `services/nativeGoogleAuth.ts`, which
+  uses **Android Credential Manager** (`@capgo/capacitor-social-login`, Google
+  provider only) → Google ID token → `supabase.auth.signInWithIdToken`. Nonce:
+  raw `crypto.randomUUID()` to Supabase, its SHA-256 hex to Google (the ID
+  token's `nonce` claim); Supabase re-hashes and compares. The *Web* OAuth client
+  ID is the token audience even on Android (hardcoded public value, overridable
+  via `VITE_GOOGLE_WEB_CLIENT_ID`); the *Android* OAuth client is matched
+  by the OS from the APK signature, never referenced in code. The dynamic import
+  keeps the plugin out of the web bundle's initial load. `main.ts` is unchanged —
+  its redirect-handling code is an inert no-op on native.
+
+TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
+in place until Stage 6 rewrites the build pipeline for Gradle.
+
 ## Web Push notifications (V1, since 2026-08-27 — inert until keys are set)
 
 ```mermaid

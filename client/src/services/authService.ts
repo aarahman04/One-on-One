@@ -1,9 +1,19 @@
+import { Capacitor } from '@capacitor/core'
 import { supabase } from './supabaseClient'
 
 // forceAccountChooser adds Google's `prompt=select_account` so the account
 // picker always appears — used by the login screen's "Use a different account"
 // escape hatch, where Google would otherwise silently reuse the last account.
+//
+// Native (Capacitor) and web take different paths: the native build uses Android
+// Credential Manager + signInWithIdToken (Google blocks OAuth redirects inside a
+// WebView), the web build keeps the browser-redirect OAuth flow unchanged.
 export async function signInWithGoogle(forceAccountChooser = false): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    const { signInWithGoogleNative } = await import('./nativeGoogleAuth')
+    return signInWithGoogleNative(forceAccountChooser)
+  }
+
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
