@@ -226,6 +226,35 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
   re-resolves the screen, applies the first-run age/Terms gate and drives the
   router's existing `go()`. `resolveScreenForSession()` is shared by both paths
   so cold boot and post-sign-in can't drift apart.
+- **Stage 3 — call foreground service (branch
+  `capacitor/stage-3-call-foreground-service`):** the TWA kept an active call's
+  media alive by inheriting Chrome's living process; the WebView shell has no such
+  process, so a backgrounded call froze within seconds. Restored with a foreground
+  service:
+
+  ```
+  controller.ts (ringing-out / accept → in-call)
+      │  startCallService(kind) / stopCallService()  [no-op off native, errors swallowed]
+      ▼
+  client/src/services/callForegroundService.ts
+      │  Capacitor plugin bridge  ("CallService")
+      ▼
+  CallServicePlugin.java  (start / stop, idempotent; requests POST_NOTIFICATIONS on API 33+)
+      │  ContextCompat.startForegroundService / ACTION_STOP
+      ▼
+  CallForegroundService.java  (foregroundServiceType=phoneCall, START_NOT_STICKY,
+      low-importance "calls" channel, ongoing CATEGORY_CALL notification → MainActivity)
+  ```
+
+  It exists purely to keep the process + WebRTC media alive while backgrounded —
+  no ConnectionService, no native call UI. The `phoneCall` service type is
+  unlocked by declaring `MANAGE_OWN_CALLS` (normal / install-time, no runtime
+  prompt) in the manifest. `CAMERA` / `RECORD_AUDIO` / `MODIFY_AUDIO_SETTINGS`
+  declarations let Capacitor's `BridgeWebChromeClient` auto-grant the WebRTC
+  getUserMedia prompts. Started on `ringing-out` and on incoming-accept, stopped
+  in `controller.ts`'s `reset()` / `dispose()` chokepoints. Not started for
+  `ringing-in` (no media held before accept); FCM call-wake and native
+  incoming-call UI are out of scope.
 
 TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
 in place until Stage 6 rewrites the build pipeline for Gradle.

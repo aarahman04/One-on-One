@@ -4,4 +4,7 @@
     <string name="title_activity_main">One on One</string>
     <string name="package_name">app.web.oneonone</string>
     <string name="custom_url_scheme">app.web.oneonone</string>
+    <string name="call_notification_channel_name">Calls</string>
+    <string name="call_notification_text_audio">Ongoing audio call</string>
+    <string name="call_notification_text_video">Ongoing video call</string>
 </resources>

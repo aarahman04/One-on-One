@@ -5,6 +5,7 @@ import { callingSupported, hasMultipleCameras } from './media'
 import { ensurePermissionRationale } from '../permissionRationale'
 import { CallSession } from './session'
 import * as wakeLock from './wakeLock'
+import { startCallService, stopCallService } from '../../services/callForegroundService'
 import {
   CALL_CAM_ICON,
   CALL_CAM_OFF_ICON,
@@ -244,6 +245,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     connectedAt = 0
     stopTimer()
     wakeLock.release()
+    void stopCallService()
     pendingAcceptedUnsub?.()
     pendingAcceptedUnsub = null
     session?.close()
@@ -395,6 +397,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       return
     }
     state = 'in-call'
+    void startCallService(kind, peerName)
     show('Connecting…')
     try {
       startSession(callId, kind, accepted.iceServers, 'callee')
@@ -430,6 +433,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
         const { callId, iceServers } = await transport.invite(kind)
         activeCallId = callId
         state = 'ringing-out'
+        void startCallService(kind, peerName)
         show(kind === 'video' ? 'Video call…' : 'Calling…')
         // The offer is only created once they actually answer — see session.ts.
         pendingAcceptedUnsub = transport.onAccepted((acceptedId) => {
@@ -447,6 +451,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
         })
       } catch (err) {
         state = 'ringing-out'
+        void startCallService(kind, peerName)
         show(err instanceof Error ? err.message : 'Call failed')
         setTimeout(reset, 2500)
       }
@@ -492,6 +497,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       pendingAcceptedUnsub?.()
       stopTimer()
       wakeLock.release()
+      void stopCallService()
       session?.close()
       remoteAudio?.remove()
       screen.remove()
