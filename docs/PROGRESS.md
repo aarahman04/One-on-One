@@ -11,6 +11,64 @@ Notes/deviations:
 
 ---
 
+## [Capacitor migration] Stage 2 — native Google sign-in — 2026-09-10
+Status: done. Branch `capacitor/stage-2-native-auth`.
+
+Why: Google returns `disallowed_useragent` for OAuth redirects inside embedded
+WebViews, so the browser-redirect flow (`signInWithOAuth` + `redirectTo`) cannot
+work in the Capacitor shell. On the device the old flow failed with
+`Error 400: redirect_uri_mismatch` (origin is now `https://localhost`, never an
+authorized redirect URI). Confirmed the plan's prediction.
+
+What shipped:
+- `@capgo/capacitor-social-login` 8.5.7 (Capacitor 8 compatible). `capacitor.config.ts`
+  `plugins.SocialLogin.providers` enables Google only — keeps the Facebook /
+  Twitter / Apple native SDKs out of the APK (`cap sync` confirmed the trim).
+- `client/src/services/nativeGoogleAuth.ts` (new): `SocialLogin.initialize({ google: { webClientId } })`
+  (memoized) → `SocialLogin.login({ provider: 'google', options: { nonce } })` →
+  `supabase.auth.signInWithIdToken({ provider: 'google', token: idToken, nonce })`.
+  Nonce handling verified against Supabase + Capgo current docs: **raw** nonce
+  (`crypto.randomUUID()`) → Supabase; **SHA-256 hex** of it → Google (lands in
+  the ID token `nonce` claim; Supabase re-hashes and compares). `USER_CANCELLED`
+  (picker dismissed) is swallowed.
+- `client/src/services/authService.ts`: `signInWithGoogle()` branches on
+  `Capacitor.isNativePlatform()`. Native path is a **dynamic import**, so the
+  plugin stays out of the web bundle's initial load (verified: eager JS size
+  unchanged, `nativeGoogleAuth`/`web`/`twitter-provider` split into lazy chunks).
+- `client/.env.example`: optional `VITE_GOOGLE_WEB_CLIENT_ID` documented. Falls
+  back to the hardcoded Web client ID for Google Cloud project `one-on-one-508202`
+  (`628827083956-au0n92v35p0un0kob10254j7rhc0tcft`) — public value (ID token `aud`).
+- `.gitignore`: added `.idea/` (Android Studio project metadata).
+
+Verified against real docs/source (not assumed):
+- `@capgo/capacitor-social-login` definitions (`npm pack`): `login()` returns
+  `{ provider, result }` with `result.idToken`; `GoogleLoginOptions.nonce` exists;
+  `InitializeOptions.google.webClientId` is the Web (not Android) client ID —
+  the README calls using the Android ID here "a common mistake".
+- `@supabase/auth-js` installed types: `SignInWithIdTokenCredentials` = `{ provider,
+  token, access_token?, nonce? }`; nonce doc says "the hash of this value is
+  compared to the value in the ID token" → we pass raw.
+- Supabase Google docs Android/Kotlin example: hashed nonce → Google, raw → Supabase.
+
+Notes / clarifications:
+- The **Android** OAuth client ID (`...c6q7ertto3dabfij...`) is never referenced
+  in code — Credential Manager matches it via the APK signature against what's
+  registered in Google Cloud Console (package `app.web.oneonone` + upload-key
+  SHA-1, which the user already registered). Only the Web client ID goes in code.
+- Google's `prompt: 'select_account'` is web-only in this plugin. On Android the
+  default `style: 'standard'` already shows an account picker every time; the
+  "Use a different account" path additionally calls `SocialLogin.logout()` first
+  to clear Credential Manager's remembered account.
+- `main.ts` unchanged — `captureOAuthError()` and the `detectSessionInUrl`
+  default are inert no-ops on native (the URL never carries a fragment/error),
+  not a broken path. Left alone per the surgical-change rule.
+- **Not device-tested by Claude** (no Android toolchain here). User verifies on a
+  physical device: tap sign-in → native Google picker (no browser, no
+  `redirect_uri_mismatch`) → signed in → kill & reopen the app, still signed in.
+  Then re-test web login on `one-on-one-mu.vercel.app` (must be unaffected).
+
+---
+
 ## [Capacitor migration] Stage 1 — scaffold the Capacitor shell — 2026-09-10
 Status: done. Branch `capacitor/stage-1-scaffold`.
 
