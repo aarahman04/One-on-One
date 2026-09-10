@@ -57,7 +57,71 @@ picker → signed in, no `[16]`; session survives app kill/reopen; Logcat still
 `nonceSet=true` + no Supabase nonce error; `./gradlew assembleRelease` with
 `keystore.properties` present yields an APK whose SHA-1 == `36:A9:69:…:C6`; web
 login on `one-on-one-mu.vercel.app` still fine; **after consent the app
-returns to a signed-in UI** (bugfix #2 — MainActivity forward).
+returns to a signed-in UI** (bugfix #2 — MainActivity forward); **app then
+loads connections/chat data from the Railway backend and stays on the real UI**
+(bugfix #3 — no localhost, no CSP block, no "startup failed" fallback).
+
+---
+
+## [Capacitor migration] Stage 2 bugfix #3 — native build pointed at localhost — 2026-09-10
+Status: code done, branch `capacitor/stage-2-fix-signing`. On-device re-test
+pending. Same fix series as below.
+
+Symptom: with bugfix #2 in place, Google sign-in **succeeds** on device (Logcat
+shows access token, ID token and profile returned) — then the app drops straight
+back to the login screen. Device console:
+```
+Connecting to 'http://localhost:3000/api/connections/current' violates the
+following Content Security Policy directive: "connect-src 'self' ... "
+startup failed, falling back to login: TypeError: Failed to fetch
+```
+`main.ts:133` catches the failed startup fetch and falls back to login, so a
+working sign-in looked identical to a broken one.
+
+Root cause: `client/.env` (a dev file) carries `VITE_API_URL=http://localhost:3000`,
+and **Vite loads `.env` in every mode, production included**. There was no
+`.env.production` to override it, so the local `npm run build` that feeds
+`npx cap sync` baked `localhost:3000` into the APK. The web deploy was never
+affected because Vercel sets `VITE_API_URL` as a project env var and Vite's
+`loadEnv` lets real `process.env` values win over `.env` files. Confirmed by
+pulling the live bundle from `one-on-one-mu.vercel.app` and grepping it — it
+contains `https://one-on-one-production-a5b8.up.railway.app`.
+
+Blast radius was both consumers of the value, not just the startup fetch:
+`client/src/services/apiClient.ts:3` (REST) and
+`client/src/services/transport/InternetTransport.ts:7` (Socket.IO) — so realtime
+was pointed at localhost on device too.
+
+Fix: added **committed** `client/.env.production` with
+`VITE_API_URL=https://one-on-one-production-a5b8.up.railway.app`, and un-ignored
+it via `!.env.production` in `client/.gitignore` (repo already un-ignores
+`.env.example`). File header states public/non-secret values only. Vite
+precedence does the rest: `.env.production` beats `.env` for `npm run build`,
+Vercel's project env var still beats both on web, and `npm run dev`
+(mode=development) never reads it so local dev keeps localhost. No source
+change, no CSP change. `client/.env.example` notes the override.
+
+CSP re-checked, no change needed: `connect-src` in `client/index.html` and
+`client/vercel.json` already allows `https://*.up.railway.app` +
+`wss://*.up.railway.app`, which covers both the REST calls and the Socket.IO
+websocket upgrade.
+
+Verified off-device:
+- Rebuilt bundle contains zero `http://localhost:3000`; contains the Railway URL.
+  Chunk hash `index-FHtZ0gyo.js` now matches the deployed Vercel bundle exactly.
+- `npx cap sync android` copied it into `android/app/src/main/assets/public`.
+- `./gradlew installDebug` — BUILD SUCCESSFUL, installed on device + emulator.
+- Backend live: `GET /api/me` and `/api/connections/current` → `401`
+  (up, correctly rejecting unauthenticated).
+- CORS live on Railway: `OPTIONS /api/connections/current` with
+  `Origin: https://localhost` → `204`, `access-control-allow-origin: https://localhost`.
+  The Stage 1 native-origin allowance is deployed.
+
+Account special-casing audit (user asked, after testing with two accounts):
+none. Only identity strings in the client are `CONTACT_EMAIL` /
+`CHILD_SAFETY_CONTACT` in `client/src/pages/legalShared.ts:11-12`, display-only
+on the legal pages. No identity branching anywhere in `client/src` or
+`backend/src` — both test accounts take identical code paths.
 
 ---
 

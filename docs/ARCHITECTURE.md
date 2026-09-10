@@ -209,6 +209,16 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
   future never completes and `login()` hangs after consent. Flow:
   Credential Manager → consent Activity → `MainActivity.onActivityResult` →
   `SocialLoginPlugin` → JS promise resolves → `signInWithIdToken`.
+- **Backend origin on native:** the shell is served from `https://localhost`, but
+  `VITE_API_URL` must still resolve to the deployed Railway backend. `client/.env`
+  holds the dev value (`http://localhost:3000`) and Vite loads `.env` in *every*
+  mode, so a committed `client/.env.production` (un-ignored in
+  `client/.gitignore`, public values only) overrides it for `npm run build` —
+  which is what `npx cap sync` copies into the APK. On Vercel the project env var
+  still wins over both. Consumed by `services/apiClient.ts` (REST) and
+  `services/transport/InternetTransport.ts` (Socket.IO); both origins are already
+  in the `connect-src` allowlist (`https://*.up.railway.app`,
+  `wss://*.up.railway.app`), and the backend CORS allowlist pins `https://localhost`.
 
 TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
 in place until Stage 6 rewrites the build pipeline for Gradle.
