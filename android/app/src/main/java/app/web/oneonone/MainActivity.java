@@ -1,6 +1,7 @@
 package app.web.oneonone;
 
 import android.content.Intent;
+import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginHandle;
@@ -13,6 +14,12 @@ import ee.forgr.capacitor.social.login.SocialLoginPlugin;
 // bridge cannot route the result back. Without this forward the plugin's
 // internal future never completes and login() hangs after consent.
 public class MainActivity extends BridgeActivity implements ModifiedMainActivityForSocialLoginPlugin {
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(CallServicePlugin.class);
+        super.onCreate(savedInstanceState);
+    }
 
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {

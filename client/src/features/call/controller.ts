@@ -5,6 +5,7 @@ import { callingSupported, hasMultipleCameras } from './media'
 import { ensurePermissionRationale } from '../permissionRationale'
 import { CallSession } from './session'
 import * as wakeLock from './wakeLock'
+import { startCallService, stopCallService } from '../../services/callForegroundService'
 import {
   CALL_CAM_ICON,
   CALL_CAM_OFF_ICON,
@@ -244,6 +245,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     connectedAt = 0
     stopTimer()
     wakeLock.release()
+    void stopCallService()
     pendingAcceptedUnsub?.()
     pendingAcceptedUnsub = null
     session?.close()
@@ -307,8 +309,18 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     session = new CallSession(transport, callId, kind, iceServers, {
       onRemoteStream: (stream) => {
         if (kind === 'video') {
-          remoteVideo.srcObject = stream
-          void remoteVideo.play().catch(() => {})
+          // Android System WebView won't repaint a <video> when a track is
+          // added to an already-attached MediaStream — desktop Chrome re-runs
+          // its load algorithm and picks up the new track, WebView doesn't.
+          // The remote peer adds audio then video, so the first ontrack binds
+          // an audio-only stream and the later video track never shows (audio
+          // plays, picture stays black). Bind a fresh MediaStream whenever the
+          // track set changes to force the repaint.
+          const bound = remoteVideo.srcObject as MediaStream | null
+          if (!bound || bound.getTracks().length !== stream.getTracks().length) {
+            remoteVideo.srcObject = new MediaStream(stream.getTracks())
+            void remoteVideo.play().catch(() => {})
+          }
           applyStateClass()
         } else {
           // ontrack can fire more than once (per-track, and again after an
@@ -395,6 +407,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       return
     }
     state = 'in-call'
+    void startCallService(kind, peerName)
     show('Connecting…')
     try {
       startSession(callId, kind, accepted.iceServers, 'callee')
@@ -430,6 +443,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
         const { callId, iceServers } = await transport.invite(kind)
         activeCallId = callId
         state = 'ringing-out'
+        void startCallService(kind, peerName)
         show(kind === 'video' ? 'Video call…' : 'Calling…')
         // The offer is only created once they actually answer — see session.ts.
         pendingAcceptedUnsub = transport.onAccepted((acceptedId) => {
@@ -447,6 +461,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
         })
       } catch (err) {
         state = 'ringing-out'
+        void startCallService(kind, peerName)
         show(err instanceof Error ? err.message : 'Call failed')
         setTimeout(reset, 2500)
       }
@@ -492,6 +507,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       pendingAcceptedUnsub?.()
       stopTimer()
       wakeLock.release()
+      void stopCallService()
       session?.close()
       remoteAudio?.remove()
       screen.remove()

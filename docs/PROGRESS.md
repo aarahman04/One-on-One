@@ -11,6 +11,96 @@ Notes/deviations:
 
 ---
 
+## [Capacitor migration] Stage 3 — call foreground service — 2026-09-10
+Status: code done, branch `capacitor/stage-3-call-foreground-service`. Off-device
+verification only (build + tsc + merged manifest). On-device checklist pending
+before PR.
+
+Problem: calls did not survive backgrounding on the Capacitor build. The TWA got
+this free — Chrome kept its own process alive. The WebView shell does not, so
+pressing Home during a call froze/killed the media within seconds.
+
+What shipped:
+- `AndroidManifest.xml` — added `CAMERA`, `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`,
+  `VIBRATE`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_PHONE_CALL`,
+  `MANAGE_OWN_CALLS`, `POST_NOTIFICATIONS`, and a `<service
+  android:name=".CallForegroundService" android:foregroundServiceType="phoneCall"
+  android:exported="false" />`.
+- `CallForegroundService.java` — plain started service. `onStartCommand` calls
+  `startForeground` first thing (typed `FOREGROUND_SERVICE_TYPE_PHONE_CALL` on API
+  ≥ 29, plain below, minSdk is 24) and returns `START_NOT_STICKY`. Creates a
+  low-importance NotificationChannel `calls` on first use — low on purpose: the
+  app plays its own ringtone / `/alarm` sound and a higher importance would add a
+  second OS sound. Ongoing notification, `CATEGORY_CALL`, "Ongoing audio/video
+  call" from a `kind` extra, contentIntent back to the singleTask `MainActivity`.
+  Handles `ACTION_STOP` → `stopForeground(STOP_FOREGROUND_REMOVE)` + `stopSelf()`.
+- `CallServicePlugin.java` — `@CapacitorPlugin(name = "CallService")` with
+  idempotent `start` / `stop`. On API 33+ requests `POST_NOTIFICATIONS`; denial is
+  non-fatal, the service starts regardless.
+- `MainActivity.java` — `onCreate` registers the plugin before
+  `super.onCreate`. Stage 2's `onActivityResult` forwarding and the
+  `ModifiedMainActivityForSocialLoginPlugin` interface are untouched.
+- `client/src/services/callForegroundService.ts` — `startCallService` /
+  `stopCallService`. No-ops off native, swallow all errors (a service that won't
+  start must degrade to today's behaviour, never break the call).
+- `client/src/features/call/controller.ts` — starts the service on
+  `ringing-out` (both sites) and on the incoming-accept `in-call`; stops it in
+  `reset()` and `dispose()`. Not started for `ringing-in` — no media is held
+  before accept. Nothing else in the file changed.
+
+MANAGE_OWN_CALLS prerequisite: Android's foreground-service-types rules require
+either `MANAGE_OWN_CALLS` in the manifest OR the `ROLE_DIALER` role for the
+`phoneCall` service type. Declaration alone is sufficient — no ConnectionService,
+no dialer role. `MANAGE_OWN_CALLS` is normal / install-time, so there is no
+runtime prompt.
+
+Deferred — speaker/earpiece routing: `controller.ts` gates the speaker button
+behind `setSinkId`, which Android WebView lacks, so the button is simply not
+rendered on Android. That matches the TWA, so it is not a regression. No
+AudioManager plugin was built. Revisit if native output-routing control is ever
+needed.
+
+Known gap: an unanswered *incoming* call may not survive backgrounding — the
+service is only started once the call is accepted, and FCM call-wake
+(push-triggered ringing with the app closed) is out of scope, deferred to a future
+project. Native incoming-call UI is likewise deferred.
+
+### Bugfix 1 — stale install (no code change)
+On-device: system mic/camera dialogs never appeared, Settings listed no
+Camera/Microphone toggle. Root cause: the test devices were running an APK built
+before Stage 3 added `CAMERA` / `RECORD_AUDIO` to the manifest — Android returns
+an instant silent denial for an undeclared permission, so Capacitor's
+`BridgeWebChromeClient.onPermissionRequest` bridge had nothing to grant. Fix:
+`adb uninstall app.web.oneonone` then reinstall this branch's APK (`versionCode`
+never bumped across the migration, so install-over can skip refreshing the
+manifest). Verified: fresh `dumpsys package` shows all three runtime permissions
+declared and pending. No source change.
+
+### Bugfix 2 — remote video black on Android + `/location` permission
+Two device-reported issues:
+
+1. **Video call, remote video never renders on Android** (local preview fine,
+   audio bidirectional fine, web side renders both). Root cause: Android System
+   WebView does not repaint a `<video>` when a track is added to an
+   already-attached `MediaStream` — desktop Chrome re-runs its media-element load
+   algorithm and picks up the track, WebView does not. The remote peer adds its
+   audio track then its video track, so `controller.ts`'s `onRemoteStream` bound
+   an audio-only stream on the first `ontrack` and the later video track never
+   showed. Fix (client, `controller.ts` `onRemoteStream` only): when the remote
+   track set changes, bind a fresh `new MediaStream(stream.getTracks())` to force
+   the repaint. No change to `session.ts` / `media.ts`. Web path unaffected
+   (guarded on track-count change; desktop already worked).
+
+2. **`/location` never prompted on native.** `location.ts` uses
+   `navigator.geolocation.getCurrentPosition({ enableHighAccuracy: true })`.
+   Capacitor's `BridgeWebChromeClient.onGeolocationPermissionsShowPrompt`
+   (verified in `@capacitor/android` 8.5.1 source, line 246) requests
+   `ACCESS_COARSE_LOCATION` + `ACCESS_FINE_LOCATION` through the same permission
+   bridge as camera/mic — but neither was in the manifest, so the request was an
+   instant silent denial. Fix: added both to `AndroidManifest.xml`. `Bridge.java`
+   already calls `settings.setGeolocationEnabled(true)` (line 591), so no other
+   wiring is needed.
+
 ## [Capacitor migration] Stage 2 bugfix — `[16] Account reauth failed` — 2026-09-10
 Status: code done, branch `capacitor/stage-2-fix-signing`. Not a new stage — a
 fix on top of Stage 2 (PR #66). One user action + one on-device re-test remain
