@@ -255,6 +255,15 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
   in `controller.ts`'s `reset()` / `dispose()` chokepoints. Not started for
   `ringing-in` (no media held before accept); FCM call-wake and native
   incoming-call UI are out of scope.
+  - `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` are also declared — the
+    `/location` feature's `navigator.geolocation` call is bridged by the same
+    `BridgeWebChromeClient` (`onGeolocationPermissionsShowPrompt`, which requests
+    both). Without the manifest entries Android silent-denies and no dialog shows.
+  - Remote video attach: Android System WebView doesn't repaint a `<video>` when
+    a track is added to an already-bound `MediaStream`, so `controller.ts`'s
+    `onRemoteStream` re-binds a fresh `MediaStream` when the remote track set
+    changes (the remote peer sends audio then video). Desktop Chrome never hit
+    this — its media-element load algorithm re-runs on track add.
 
 TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
 in place until Stage 6 rewrites the build pipeline for Gradle.

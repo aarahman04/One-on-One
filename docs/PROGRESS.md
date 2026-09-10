@@ -65,6 +65,42 @@ service is only started once the call is accepted, and FCM call-wake
 (push-triggered ringing with the app closed) is out of scope, deferred to a future
 project. Native incoming-call UI is likewise deferred.
 
+### Bugfix 1 — stale install (no code change)
+On-device: system mic/camera dialogs never appeared, Settings listed no
+Camera/Microphone toggle. Root cause: the test devices were running an APK built
+before Stage 3 added `CAMERA` / `RECORD_AUDIO` to the manifest — Android returns
+an instant silent denial for an undeclared permission, so Capacitor's
+`BridgeWebChromeClient.onPermissionRequest` bridge had nothing to grant. Fix:
+`adb uninstall app.web.oneonone` then reinstall this branch's APK (`versionCode`
+never bumped across the migration, so install-over can skip refreshing the
+manifest). Verified: fresh `dumpsys package` shows all three runtime permissions
+declared and pending. No source change.
+
+### Bugfix 2 — remote video black on Android + `/location` permission
+Two device-reported issues:
+
+1. **Video call, remote video never renders on Android** (local preview fine,
+   audio bidirectional fine, web side renders both). Root cause: Android System
+   WebView does not repaint a `<video>` when a track is added to an
+   already-attached `MediaStream` — desktop Chrome re-runs its media-element load
+   algorithm and picks up the track, WebView does not. The remote peer adds its
+   audio track then its video track, so `controller.ts`'s `onRemoteStream` bound
+   an audio-only stream on the first `ontrack` and the later video track never
+   showed. Fix (client, `controller.ts` `onRemoteStream` only): when the remote
+   track set changes, bind a fresh `new MediaStream(stream.getTracks())` to force
+   the repaint. No change to `session.ts` / `media.ts`. Web path unaffected
+   (guarded on track-count change; desktop already worked).
+
+2. **`/location` never prompted on native.** `location.ts` uses
+   `navigator.geolocation.getCurrentPosition({ enableHighAccuracy: true })`.
+   Capacitor's `BridgeWebChromeClient.onGeolocationPermissionsShowPrompt`
+   (verified in `@capacitor/android` 8.5.1 source, line 246) requests
+   `ACCESS_COARSE_LOCATION` + `ACCESS_FINE_LOCATION` through the same permission
+   bridge as camera/mic — but neither was in the manifest, so the request was an
+   instant silent denial. Fix: added both to `AndroidManifest.xml`. `Bridge.java`
+   already calls `settings.setGeolocationEnabled(true)` (line 591), so no other
+   wiring is needed.
+
 ## [Capacitor migration] Stage 2 bugfix — `[16] Account reauth failed` — 2026-09-10
 Status: code done, branch `capacitor/stage-2-fix-signing`. Not a new stage — a
 fix on top of Stage 2 (PR #66). One user action + one on-device re-test remain

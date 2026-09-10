@@ -309,8 +309,18 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     session = new CallSession(transport, callId, kind, iceServers, {
       onRemoteStream: (stream) => {
         if (kind === 'video') {
-          remoteVideo.srcObject = stream
-          void remoteVideo.play().catch(() => {})
+          // Android System WebView won't repaint a <video> when a track is
+          // added to an already-attached MediaStream — desktop Chrome re-runs
+          // its load algorithm and picks up the new track, WebView doesn't.
+          // The remote peer adds audio then video, so the first ontrack binds
+          // an audio-only stream and the later video track never shows (audio
+          // plays, picture stays black). Bind a fresh MediaStream whenever the
+          // track set changes to force the repaint.
+          const bound = remoteVideo.srcObject as MediaStream | null
+          if (!bound || bound.getTracks().length !== stream.getTracks().length) {
+            remoteVideo.srcObject = new MediaStream(stream.getTracks())
+            void remoteVideo.play().catch(() => {})
+          }
           applyStateClass()
         } else {
           // ontrack can fire more than once (per-track, and again after an
