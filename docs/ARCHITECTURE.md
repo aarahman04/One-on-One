@@ -200,6 +200,32 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
   by the OS from the APK signature, never referenced in code. The dynamic import
   keeps the plugin out of the web bundle's initial load. `main.ts` is unchanged —
   its redirect-handling code is an inert no-op on native.
+- **Stage 2 bugfix (branch `capacitor/stage-2-fix-signing`):** the plugin
+  launches Google's scope-consent screen with `Activity.startIntentSenderForResult`
+  (request codes `583892990..+128`), outside the Capacitor bridge. `MainActivity`
+  now implements `ModifiedMainActivityForSocialLoginPlugin` and forwards that
+  request-code range from `onActivityResult` to
+  `SocialLoginPlugin.handleGoogleLoginIntent`; without it the plugin's internal
+  future never completes and `login()` hangs after consent. Flow:
+  Credential Manager → consent Activity → `MainActivity.onActivityResult` →
+  `SocialLoginPlugin` → JS promise resolves → `signInWithIdToken`.
+- **Backend origin on native:** the shell is served from `https://localhost`, but
+  `VITE_API_URL` must still resolve to the deployed Railway backend. `client/.env`
+  holds the dev value (`http://localhost:3000`) and Vite loads `.env` in *every*
+  mode, so a committed `client/.env.production` (un-ignored in
+  `client/.gitignore`, public values only) overrides it for `npm run build` —
+  which is what `npx cap sync` copies into the APK. On Vercel the project env var
+  still wins over both. Consumed by `services/apiClient.ts` (REST) and
+  `services/transport/InternetTransport.ts` (Socket.IO); both origins are already
+  in the `connect-src` allowlist (`https://*.up.railway.app`,
+  `wss://*.up.railway.app`), and the backend CORS allowlist pins `https://localhost`.
+- **Post-sign-in routing:** web relies on the OAuth redirect reloading the page
+  to re-run `main.ts`'s boot resolution. Native has no reload, so
+  `signInWithGoogle()` reports whether a session now exists in-page and
+  `LoginPage` calls `state/boot.ts` → `goToPostSignInScreen(root, go)`, which
+  re-resolves the screen, applies the first-run age/Terms gate and drives the
+  router's existing `go()`. `resolveScreenForSession()` is shared by both paths
+  so cold boot and post-sign-in can't drift apart.
 
 TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
 in place until Stage 6 rewrites the build pipeline for Gradle.

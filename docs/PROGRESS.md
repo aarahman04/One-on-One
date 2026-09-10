@@ -56,7 +56,174 @@ Remaining before Stage 3 (all six must pass): debug SHA-1 registered; first-tap
 picker → signed in, no `[16]`; session survives app kill/reopen; Logcat still
 `nonceSet=true` + no Supabase nonce error; `./gradlew assembleRelease` with
 `keystore.properties` present yields an APK whose SHA-1 == `36:A9:69:…:C6`; web
-login on `one-on-one-mu.vercel.app` still fine.
+login on `one-on-one-mu.vercel.app` still fine; **after consent the app
+returns to a signed-in UI** (bugfix #2 — MainActivity forward); **app then
+loads connections/chat data from the Railway backend and stays on the real UI**
+(bugfix #3 — no localhost, no CSP block, no "startup failed" fallback).
+
+---
+
+## [Capacitor migration] Stage 2 bugfix #4 — no UI transition after native sign-in — 2026-09-10
+Status: code done, branch `capacitor/stage-2-fix-signing`. **On-device fresh
+sign-in still unverified** — must be tested from a clean install, not a relaunch
+with an existing session.
+
+Symptom: with #2 and #3 in place, native sign-in fully succeeds (Logcat shows
+idToken/accessToken/profile; a restart lands straight in the chat UI). But on the
+*first* sign-in inside a running app session, the login screen just sits there
+with no visible change. Only close-and-reopen shows the authenticated UI.
+
+Root cause: `main.ts` resolved the screen exactly once, at module top level, and
+nothing re-ran it. The web flow never needed more — `signInWithOAuth` navigates
+the browser to Google, and the redirect back is a full page load that re-executes
+the module and re-resolves the screen. The native Credential Manager flow
+navigates nowhere; `signInWithIdToken` just resolves a promise. `LoginPage.ts`
+awaited `signInWithGoogle()` and then did nothing with it, so the router was
+never told to move. The router already passes every page a `go(screen)`
+navigator (`state/router.ts:19,35`) — `LoginPage` declared `(root)` and dropped it.
+
+Fix (4 files, no behaviour change on web):
+- **`client/src/state/boot.ts` (new)** — `resolveScreenForSession()` (the
+  session → connection → screen resolution lifted verbatim out of `main.ts`) and
+  `goToPostSignInScreen(root, go)`, which re-resolves, applies
+  `ensureFirstRunGates` and calls `go(screen)`. The gate call matters: without it
+  a native first-timer would skip the 18+/Terms screen that the cold-boot path
+  enforces.
+- **`authService.signInWithGoogle()` now returns `boolean`** — true only when a
+  session exists in *this* page (native), false when the browser is mid-redirect
+  (web) or the picker was cancelled. Keeps the platform check in one place
+  instead of importing Capacitor into the login screen.
+- **`nativeGoogleAuth.signInWithGoogleNative()`** returns `true` after
+  `signInWithIdToken`, `false` on `USER_CANCELLED`.
+- **`LoginPage.ts`** takes the `go` it was already being handed and calls
+  `goToPostSignInScreen(root, go)` when sign-in returns true — on both the main
+  button and the "Use a different account" button.
+- **`main.ts`** drops its local `resolveInitialScreen()` and calls
+  `resolveScreenForSession()`, keeping the `hadOAuthError` short-circuit at the
+  call site. No duplicated routing logic.
+
+Verified off-device: `tsc` clean, `vite build` succeeds, `nativeGoogleAuth` still
+lazily chunked (plugin stays out of the web entry), bundle still carries the
+Railway URL and no localhost, `npx cap sync android` + `./gradlew installDebug`
+succeeded on device + emulator.
+
+Known adjacent issue, **not** touched (pre-existing, unchanged by this fix):
+`main.ts` `onSignedOut(() => location.assign('/'))` races the "Use a different
+account" path, which calls `signOut()` and then immediately `signInWithGoogle(true)`.
+The sign-out event can reload the page mid-flow. Flag for a follow-up if the
+device test shows the switch-account path misbehaving.
+
+---
+
+## [Capacitor migration] Stage 2 bugfix #3 — native build pointed at localhost — 2026-09-10
+Status: code done, branch `capacitor/stage-2-fix-signing`. On-device re-test
+pending. Same fix series as below.
+
+Symptom: with bugfix #2 in place, Google sign-in **succeeds** on device (Logcat
+shows access token, ID token and profile returned) — then the app drops straight
+back to the login screen. Device console:
+```
+Connecting to 'http://localhost:3000/api/connections/current' violates the
+following Content Security Policy directive: "connect-src 'self' ... "
+startup failed, falling back to login: TypeError: Failed to fetch
+```
+`main.ts:133` catches the failed startup fetch and falls back to login, so a
+working sign-in looked identical to a broken one.
+
+Root cause: `client/.env` (a dev file) carries `VITE_API_URL=http://localhost:3000`,
+and **Vite loads `.env` in every mode, production included**. There was no
+`.env.production` to override it, so the local `npm run build` that feeds
+`npx cap sync` baked `localhost:3000` into the APK. The web deploy was never
+affected because Vercel sets `VITE_API_URL` as a project env var and Vite's
+`loadEnv` lets real `process.env` values win over `.env` files. Confirmed by
+pulling the live bundle from `one-on-one-mu.vercel.app` and grepping it — it
+contains `https://one-on-one-production-a5b8.up.railway.app`.
+
+Blast radius was both consumers of the value, not just the startup fetch:
+`client/src/services/apiClient.ts:3` (REST) and
+`client/src/services/transport/InternetTransport.ts:7` (Socket.IO) — so realtime
+was pointed at localhost on device too.
+
+Fix: added **committed** `client/.env.production` with
+`VITE_API_URL=https://one-on-one-production-a5b8.up.railway.app`, and un-ignored
+it via `!.env.production` in `client/.gitignore` (repo already un-ignores
+`.env.example`). File header states public/non-secret values only. Vite
+precedence does the rest: `.env.production` beats `.env` for `npm run build`,
+Vercel's project env var still beats both on web, and `npm run dev`
+(mode=development) never reads it so local dev keeps localhost. No source
+change, no CSP change. `client/.env.example` notes the override.
+
+CSP re-checked, no change needed: `connect-src` in `client/index.html` and
+`client/vercel.json` already allows `https://*.up.railway.app` +
+`wss://*.up.railway.app`, which covers both the REST calls and the Socket.IO
+websocket upgrade.
+
+Verified off-device:
+- Rebuilt bundle contains zero `http://localhost:3000`; contains the Railway URL.
+  Chunk hash `index-FHtZ0gyo.js` now matches the deployed Vercel bundle exactly.
+- `npx cap sync android` copied it into `android/app/src/main/assets/public`.
+- `./gradlew installDebug` — BUILD SUCCESSFUL, installed on device + emulator.
+- Backend live: `GET /api/me` and `/api/connections/current` → `401`
+  (up, correctly rejecting unauthenticated).
+- CORS live on Railway: `OPTIONS /api/connections/current` with
+  `Origin: https://localhost` → `204`, `access-control-allow-origin: https://localhost`.
+  The Stage 1 native-origin allowance is deployed.
+
+Account special-casing audit (user asked, after testing with two accounts):
+none. Only identity strings in the client are `CONTACT_EMAIL` /
+`CHILD_SAFETY_CONTACT` in `client/src/pages/legalShared.ts:11-12`, display-only
+on the legal pages. No identity branching anywhere in `client/src` or
+`backend/src` — both test accounts take identical code paths.
+
+---
+
+## [Capacitor migration] Stage 2 bugfix #2 — sign-in hangs after consent — 2026-09-10
+Status: code done, branch `capacitor/stage-2-fix-signing`. Same fix series as
+above. On-device re-test pending.
+
+Symptom: after the debug SHA-1 was registered, the account picker and Google
+consent screen ("Agree and continue") both complete — then nothing. App never
+returns to a signed-in UI; JS promise from `signInWithGoogleNative` never
+settles.
+
+Root cause (from plugin source, `@capgo/capacitor-social-login` 8.5.7,
+`GoogleProvider.java` + `SocialLoginPlugin.java`): Credential Manager returns the
+ID token, then the plugin runs `getAuthorizationResult()` and **blocks** on
+`future.get()` (no timeout) on a background executor. Scopes aren't granted yet,
+so `authorizationResult.hasResolution()` is true and the plugin launches the
+consent screen with `activity.startIntentSenderForResult(...,
+REQUEST_AUTHORIZE_GOOGLE_MIN + i, ...)` — **directly on the Activity, outside the
+Capacitor bridge**. The result lands in `MainActivity.onActivityResult`;
+Capacitor's `BridgeActivity` only dispatches request codes it registered, so it's
+dropped. `SocialLoginPlugin.handleGoogleLoginIntent(requestCode, intent)` is
+`public` and never called anywhere in the plugin — it exists solely to be
+invoked from a modified `MainActivity`. Our `MainActivity` was bare
+(`extends BridgeActivity {}`), so the completer is never completed, `future.get()`
+blocks forever, `call.resolve()` never fires. The plugin's
+`instanceof ModifiedMainActivityForSocialLoginPlugin` guard only *enforces* the
+modification for `OFFLINE` mode, so ONLINE mode failed silently.
+
+Client-ID audit (user asked, after a foreign OAuth client ID was added somewhere
+while debugging): repo-wide grep for `apps.googleusercontent.com` / `628827083956`
+/ `clientId` / `webClientId` over `*.ts,tsx,json,gradle,xml,env,md,yml` (minus
+`node_modules`, `dist`) — exactly one web client ID referenced,
+`628827083956-au0n92v35p0un0kob10254j7rhc0tcft.apps.googleusercontent.com`
+(hardcoded fallback in `nativeGoogleAuth.ts`, `VITE_GOOGLE_WEB_CLIENT_ID` absent
+from `client/.env`). No `google-services.json`, no `default_web_client_id` in
+`strings.xml`. The foreign client ID is inert — not referenced anywhere in the
+build. Nonce handling in `nativeGoogleAuth.ts` confirmed correct against plugin
+source (plugin passes our value straight to `GoogleIdOption.setNonce`, no extra
+hashing).
+
+Fix — one file, `android/app/src/main/java/app/web/oneonone/MainActivity.java`:
+implement `ModifiedMainActivityForSocialLoginPlugin`, override `onActivityResult`
+to forward the `REQUEST_AUTHORIZE_GOOGLE_MIN.._MAX` range to
+`SocialLoginPlugin.handleGoogleLoginIntent`. No JS/TS change. Verified
+`./gradlew compileDebugJavaWithJavac` succeeds.
+
+User action (pending): confirm Supabase → Authentication → Providers → Google →
+**Authorized Client IDs** contains the web client ID above (field is separate
+from Client ID/Secret; used by `signInWithIdToken`). Remove any other entry.
 
 ---
 

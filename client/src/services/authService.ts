@@ -8,7 +8,12 @@ import { supabase } from './supabaseClient'
 // Native (Capacitor) and web take different paths: the native build uses Android
 // Credential Manager + signInWithIdToken (Google blocks OAuth redirects inside a
 // WebView), the web build keeps the browser-redirect OAuth flow unchanged.
-export async function signInWithGoogle(forceAccountChooser = false): Promise<void> {
+//
+// Returns true when a session now exists in *this* page, which only the native
+// path can do — it resolves in place with nothing reloading, so the caller has
+// to route itself. Web returns false: the browser is mid-redirect and will
+// re-run the whole app on the way back. A cancelled picker is also false.
+export async function signInWithGoogle(forceAccountChooser = false): Promise<boolean> {
   if (Capacitor.isNativePlatform()) {
     const { signInWithGoogleNative } = await import('./nativeGoogleAuth')
     return signInWithGoogleNative(forceAccountChooser)
@@ -22,6 +27,7 @@ export async function signInWithGoogle(forceAccountChooser = false): Promise<voi
     },
   })
   if (error) throw error
+  return false
 }
 
 export async function getSession() {

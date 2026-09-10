@@ -14,10 +14,9 @@ import { PrivacyPage } from './pages/PrivacyPage'
 import { TermsPage } from './pages/TermsPage'
 import { ChildSafetyPage } from './pages/ChildSafetyPage'
 import { DeleteAccountPage } from './pages/DeleteAccountPage'
-import { getSession, onSignedOut, signOut } from './services/authService'
+import { onSignedOut, signOut } from './services/authService'
 import { setUnauthorizedHandler } from './services/apiClient'
-import { getCurrentConnection } from './services/connectionsApi'
-import { nextScreenFor } from './state/nextScreen'
+import { resolveScreenForSession } from './state/boot'
 import { ensureFirstRunGates } from './features/ageGate'
 
 registerPage('login', LoginPage)
@@ -99,31 +98,13 @@ function captureOAuthError(): boolean {
 
 const hadOAuthError = captureOAuthError()
 
-async function resolveInitialScreen(): Promise<Screen> {
-  if (hadOAuthError) return 'login'
-  const session = await getSession()
-  if (!session) return 'login'
-
-  // Mark this device as having signed in before, so the login screen knows
-  // to offer "Use a different account" next time (e.g. after signing out).
-  try {
-    localStorage.setItem('hasSignedInBefore', '1')
-  } catch {
-    /* private mode — the switch-account link just won't show next time */
-  }
-
-  const current = await getCurrentConnection()
-  if (!current) return 'connection-id'
-  return nextScreenFor(current)
-}
-
 const app = document.querySelector<HTMLDivElement>('#app')!
 const legalScreen = LEGAL_ROUTES[location.pathname]
 if (legalScreen) {
   mountRouter(app, legalScreen)
 } else {
   try {
-    const initial = await resolveInitialScreen()
+    const initial = hadOAuthError ? 'login' : await resolveScreenForSession()
     // Age (18+) + Terms acceptance before anything else — but not on the login
     // screen itself (a signed-out visitor has nothing to gate yet).
     if (initial !== 'login') await ensureFirstRunGates(app)
