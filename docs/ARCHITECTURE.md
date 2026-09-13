@@ -122,6 +122,13 @@ and the chat `•••` menu "ABOUT" group (`MenuDropdown.ts`, new tab).
 
 ## PWA / TWA packaging (V1, since 2026-09-09 — Play Store Stages 3–4)
 
+> **Superseded 2026-09-13 (Capacitor migration Stage 6).** The TWA shell,
+> `android/twa-manifest.json` and the Bubblewrap CI workflow are gone; the
+> Android app is the Capacitor project described in the next section. The web
+> PWA parts of this section (manifest, icons, fonts, `vercel.json`, `sw.js`)
+> still describe the live site. `assetlinks.json` is kept but dormant — the
+> native app has no App Links intent filter, so nothing reads it.
+
 The Android app is the deployed site (`https://one-on-one-mu.vercel.app/`) wrapped
 as a **Trusted Web Activity** via Bubblewrap (plan
 `~/.claude/plans/ancient-weaving-raven.md` Part 1 — no native logic, Chrome
@@ -334,8 +341,32 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
   `@capacitor/app` is dynamic-imported like the other native-only plugins,
   confirmed in its own lazy chunk rather than the bundle entry.
 
-TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
-in place until Stage 6 rewrites the build pipeline for Gradle.
+- **Stage 6 (branch `capacitor/stage-6-build-pipeline`):** build pipeline.
+  `android/twa-manifest.json` deleted; `.github/workflows/android-build.yml`
+  rewritten from Bubblewrap to the committed Gradle project. Signing identity
+  is unchanged — the same `oneonone-upload` keystore + the same three
+  `ANDROID_KEYSTORE_*` secrets, now materialised into the gitignored
+  `android/keystore.properties` that `app/build.gradle` already reads. The
+  workflow has no keystore-generation path; it asserts the upload key's
+  SHA-1 on the restored keystore before the build and on the produced
+  `.aab`/`.apk` after it, so a wrong signing identity can never reach the
+  artifact. Three new secrets feed the build (`GOOGLE_SERVICES_JSON_BASE64`
+  for FCM, `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for the web bundle).
+  `versionCode`/`versionName` are `-PappVersionCode`/`-PappVersionName`
+  Gradle properties from the `workflow_dispatch` inputs. JDK 21 (matches
+  `capacitor.build.gradle`'s `VERSION_21`). `assetlinks.json` stays, dormant.
+
+```mermaid
+flowchart LR
+    secrets["repo secrets<br/>ANDROID_KEYSTORE_* (unchanged)<br/>GOOGLE_SERVICES_JSON_BASE64<br/>VITE_SUPABASE_*"] --> mat["materialise<br/>android.keystore<br/>keystore.properties<br/>google-services.json"]
+    web["client/: npm ci -> npm run build<br/>-> npx cap sync android"] --> gradle
+    mat --> assert1{"keytool -list<br/>SHA-1 == 36:A9:...:C6?"}
+    assert1 -- no --> fail["fail run"]
+    assert1 -- yes --> gradle["./gradlew bundleRelease assembleRelease<br/>-PappVersionCode -PappVersionName"]
+    gradle --> assert2{"keytool -printcert -jarfile (AAB)<br/>apksigner verify (APK)<br/>signer SHA-1 == 36:A9:...:C6?"}
+    assert2 -- no --> fail
+    assert2 -- yes --> art["artifact android-release<br/>app-release.aab + app-release.apk"]
+```
 
 ## Web Push notifications (V1, since 2026-08-27 — inert until keys are set)
 
