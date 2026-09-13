@@ -4,6 +4,8 @@
 // localStorage — matching how appearance prefs are stored, and enough for the
 // policy ("show an age screen"); there is deliberately no server column.
 
+import { Capacitor } from '@capacitor/core'
+
 const AGE_KEY = 'ageVerified'
 const TERMS_KEY = 'termsAcceptedAt'
 const MIN_AGE = 18
@@ -60,8 +62,8 @@ export function ensureFirstRunGates(root: HTMLElement): Promise<void> {
           <label class="age-gate__agree">
             <input type="checkbox" id="agree-check" />
             <span>I am 18 or older and I agree to the
-              <a href="/terms" target="_blank" rel="noopener">Terms</a> and
-              <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</span>
+              <a href="/terms" ${Capacitor.isNativePlatform() ? '' : 'target="_blank" rel="noopener"'}>Terms</a> and
+              <a href="/privacy" ${Capacitor.isNativePlatform() ? '' : 'target="_blank" rel="noopener"'}>Privacy Policy</a>.</span>
           </label>
           <div class="screen__actions">
             <button class="primary" id="agree-btn" disabled>Agree and continue</button>

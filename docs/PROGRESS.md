@@ -11,6 +11,101 @@ Notes/deviations:
 
 ---
 
+## [Capacitor migration] Stage 5 — hardware back, legal routing, launch polish — 2026-09-13
+Status: done, device-verified (physical Xiaomi 22111317I, Android 14), branch
+`capacitor/stage-5-navigation`.
+
+Findings (verified against `main` at `badf1c7` / Capacitor 8.5.1 sources):
+- **No back handling existed at all on native** — `@capacitor/app` was not
+  installed and neither Capacitor 8 core nor `MainActivity.java` overrode
+  back, so every press/edge-swipe `finish()`ed the activity from any screen,
+  including mid-call and with a modal open.
+- **Legal routes (`/privacy`, `/terms`, `/child-safety`, `/delete-account`)
+  were never actually broken in the WebView** — Capacitor's local server
+  SPA-falls back to `index.html` for extensionless paths (`html5mode`
+  defaults to `true`), so `main.ts`'s path-based routing already worked
+  in-app. The Stage 0 "SPA rewrite disappears → compliance break" concern
+  was moot from the start. Only the two `_blank`/`window.open` legal-link
+  call sites (`MenuDropdown.ts`, `ageGate.ts`) needed a native branch.
+- Launcher icon and splash were still Capacitor's stock blue defaults;
+  status bar on Android <15 was Capacitor's indigo.
+
+Decisions:
+- Back at a root screen (`login`, `connection-id`, `chat`, `waiting`,
+  `request`, `nickname`) calls `App.minimizeApp()`, never `exitApp()` — keeps
+  the WebView + socket alive for a fast resume, and never silently cancels a
+  pending request or leave countdown.
+- Screen-level back targets are app-defined, not history-based:
+  `connect → connection-id`, `export → chat`, `leave → chat`.
+- The call screen consumes back with no action while `state !== 'idle'` — no
+  confirm dialog, no minimize affordance (both out of scope).
+- New `state/backHandlers.ts` is a single LIFO stack that Modal, MenuDropdown,
+  the appearance panel, ChatPage's search bar + message context menu, and the
+  call controller all register with. Precedence: transient surfaces (newest
+  first) → call guard → screen target → legal-page WebView history
+  (`history.back()` if `canGoBack`, else `location.assign('/')`) →
+  `minimizeApp()`.
+- Legal pages stay in the same WebView on native (`location.assign`), never
+  `@capacitor/browser` or an external Custom Tab.
+- Brand assets (launcher icon, adaptive icon layers, splash) generated from
+  `client/public/icon.svg` via `@capacitor/assets`; `#0d1117` everywhere,
+  matching the web `theme-color`. Android <15 status bar forced to the same
+  color via a new `colors.xml`.
+- `@capacitor/app` is dynamic-imported (same pattern as push-notifications /
+  social-login) — confirmed in its own lazy chunk (`web-*.js`), not the
+  bundle entry chunk.
+
+What shipped:
+- `client/src/state/backHandlers.ts` (new) — the LIFO handler stack.
+- `client/src/state/router.ts` — `current`/`navigate` tracking, `BACK_TARGET`,
+  `getCurrentScreen`, `goBackScreen`.
+- `client/src/features/nativeBack.ts` (new) — installs the
+  `@capacitor/app` `backButton` listener and runs the precedence chain.
+- `client/src/main.ts` — wires up `installNativeBackButton()`.
+- `client/src/components/Modal.ts`, `MenuDropdown.ts`,
+  `client/src/features/appearancePreview.ts`,
+  `client/src/pages/ChatPage.ts` (search bar + context menu),
+  `client/src/features/call/controller.ts` — each registers/unregisters a
+  back handler for its own transient UI.
+- `client/src/components/MenuDropdown.ts`, `client/src/features/ageGate.ts` —
+  native branch: `location.assign` / no `target="_blank"` instead of
+  `window.open`/new-tab anchors; web behavior unchanged.
+- `client/assets/*.png` (5 source images, committed for reproducible
+  regeneration), Android launcher/adaptive icons + splash screens
+  (regenerated via `@capacitor/assets`), `android/.../values/colors.xml`
+  (new), `styles.xml` (`windowSplashScreenBackground`),
+  `client/capacitor.config.ts` (`backgroundColor`).
+- `client/package.json` — added `@capacitor/app`, dev dep `@capacitor/assets`.
+
+Device results (physical Xiaomi 22111317I, Android 14) — all 20 checklist
+items pass (item 18 skipped per plan, not a valid test without an intent
+filter):
+1. Launcher icon: pass. 2. Cold-launch splash, no white flash: pass.
+3. Status bar dark/light icons: pass. 4. Chat root back → minimizes, instant
+resume: pass. 5. Menu open → back closes menu, second back → launcher: pass.
+6. Search open → back closes search, second back → launcher: pass.
+7. Context menu → back closes only: pass. 8. Modal(s) → back closes one at a
+time: pass. 9. Export/Leave → back returns to chat, no leave step advanced:
+pass. 10. Connect → back returns to Connection ID: pass. 11. Waiting → back
+minimizes, request not cancelled: pass. 12. Incoming request → back
+minimizes, not declined: pass. 13. Call ringing/in-call/incoming → back is a
+no-op, hang-up button still works: pass. 14. In-call → Home → return via
+foreground-service notification → back still no-op: pass. 15. Legal from
+Login (signed out) → back returns to Login via WebView history: pass.
+16. Legal from chat ••• → in-app same WebView, back reboots to chat: pass.
+17. First-run gate → Terms link → back → gate re-shown unchecked → agree
+continues: pass. 19. Keyboard: composer sits above keyboard correctly, no
+gap/overlap — no code change needed. 20. Web regression (`npm run dev`): Esc
+still closes modals, menu still opens legal in a new tab: pass.
+
+Notes/deviations: none from the plan. Off-device checks (`tsc --noEmit`,
+`vite build`, `cap sync`, `gradlew assembleDebug`) all passed clean before
+install; the local Gradle build required pointing `JAVA_HOME` at Android
+Studio's bundled JBR (JDK 21) since the system default (JDK 25) is newer than
+Gradle 8.14.3 supports — an environment note, not a code change.
+
+---
+
 ## [Capacitor migration] Stage 4 follow-up — push authz + FCM delivery — 2026-09-13
 Status: code fixed (backend-only), branch `fix/push-authz-fcm-delivery`. Root
 causes confirmed against live prod (Railway backend, Supabase, a real FCM

@@ -1,6 +1,8 @@
 // Minimal reusable overlay modal (dimmed backdrop + centered panel). Closes on
 // ✕, backdrop click, or Esc. Used by the letter composer/viewer and the
 // report-message dialog.
+import { pushBackHandler } from '../state/backHandlers'
+
 export interface Modal {
   close: () => void
   panel: HTMLElement
@@ -67,6 +69,7 @@ export function openModal(node: HTMLElement, opts: { onClose?: () => void } = {}
   const previouslyFocused = document.activeElement as HTMLElement | null
 
   let closed = false
+  let unregisterBack: () => void = () => {}
   const close = (): void => {
     if (closed) return
     closed = true
@@ -75,6 +78,7 @@ export function openModal(node: HTMLElement, opts: { onClose?: () => void } = {}
     if (i !== -1) stack.splice(i, 1)
     if (stack.length === 0) document.removeEventListener('keydown', onKey)
     previouslyFocused?.focus?.()
+    unregisterBack()
     opts.onClose?.()
   }
 
@@ -92,6 +96,10 @@ export function openModal(node: HTMLElement, opts: { onClose?: () => void } = {}
 
   if (stack.length === 0) document.addEventListener('keydown', onKey)
   stack.push({ overlay, panel, close })
+  unregisterBack = pushBackHandler(() => {
+    close()
+    return true
+  })
 
   // Move focus into the panel so Tab-trapping has an anchor.
   ;(panel.querySelector<HTMLElement>(

@@ -4,6 +4,7 @@ const config: CapacitorConfig = {
   appId: 'app.web.oneonone',
   appName: 'One on One',
   webDir: 'dist',
+  backgroundColor: '#0d1117',
   // Native project lives at the repo root, beside backend/ and client/.
   android: {
     path: '../android',

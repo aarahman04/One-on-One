@@ -18,6 +18,7 @@ import { onSignedOut, signOut } from './services/authService'
 import { setUnauthorizedHandler } from './services/apiClient'
 import { resolveScreenForSession } from './state/boot'
 import { ensureFirstRunGates } from './features/ageGate'
+import { installNativeBackButton } from './features/nativeBack'
 
 registerPage('login', LoginPage)
 registerPage('connection-id', ConnectionIdPage)
@@ -32,6 +33,8 @@ registerPage('privacy', PrivacyPage)
 registerPage('terms', TermsPage)
 registerPage('child-safety', ChildSafetyPage)
 registerPage('delete-account', DeleteAccountPage)
+
+void installNativeBackButton()
 
 // Public legal routes: reachable without a session and without tripping the
 // age / consent gate. Matched by path before any auth work below.

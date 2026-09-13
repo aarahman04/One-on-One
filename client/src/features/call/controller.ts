@@ -6,6 +6,7 @@ import { ensurePermissionRationale } from '../permissionRationale'
 import { CallSession } from './session'
 import * as wakeLock from './wakeLock'
 import { startCallService, stopCallService } from '../../services/callForegroundService'
+import { pushBackHandler } from '../../state/backHandlers'
 import {
   CALL_CAM_ICON,
   CALL_CAM_OFF_ICON,
@@ -132,6 +133,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   })
 
   let state: CallState = 'idle'
+  const unregisterBack = pushBackHandler(() => state !== 'idle')
   let activeKind: CallKind = 'audio'
   let session: CallSession | null = null
   let activeCallId: string | null = null
@@ -501,6 +503,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     startAudioCall,
     startVideoCall,
     dispose: () => {
+      unregisterBack()
       incomingUnsub()
       endedUnsub()
       document.removeEventListener('visibilitychange', visibilityHandler)
