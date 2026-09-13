@@ -7,7 +7,7 @@ import { getLiveConnectionForUser, type MemberConnection } from '../services/con
 import { saveMessage, bumpSenderLastRead, isMessageType, type Message } from '../services/messageService.js'
 import { signAttachments, isAttachmentKind } from '../services/attachmentService.js'
 import { addReaction, removeReaction } from '../services/reactionService.js'
-import { sendToUser } from '../services/pushService.js'
+import { sendToUser, sendNativeToUser } from '../services/pushService.js'
 import { otherMemberId, room } from '../utils/connections.js'
 import {
   acceptCall,
@@ -92,16 +92,14 @@ function alarmRaiseAllowed(userId: string): boolean {
 // the open connection right now — mark it delivered immediately rather than
 // waiting for their next socket (re)connect. Otherwise fall back to push. A
 // room is exactly the two members of a 1:1 connection, so "any other socket
-// present" means the recipient is already here.
+// present" means the recipient is already here. On the online path we still
+// fire FCM (native only) because a backgrounded Capacitor WebView keeps its
+// socket alive — "online" doesn't mean "looking at the chat" on that build.
 async function syncDelivery(io: Server, connection: MemberConnection, senderId: string, message: Message): Promise<void> {
   const recipientId = otherMemberId(connection, senderId)
   try {
     const sockets = await io.in(room(connection.id)).fetchSockets()
     const recipientOnline = sockets.some((s) => (s.data as SocketData).userId !== senderId)
-    if (recipientOnline) {
-      await markDelivered(connection.id, recipientId)
-      return
-    }
 
     // Nicknames are stored on the OTHER member's row (spec §11) — so "what
     // the recipient calls the sender" lives on the sender's own member row.
@@ -111,10 +109,18 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
       .eq('connection_id', connection.id)
       .eq('user_id', senderId)
       .maybeSingle()
+    const payload = {
+      title: senderMember?.nickname ?? 'New message',
+      body: mediaNoticeFor(message),
+      urgent: message.type === 'alarm',
+    }
 
-    const title = senderMember?.nickname ?? 'New message'
-    const body = mediaNoticeFor(message)
-    await sendToUser(recipientId, { title, body, urgent: message.type === 'alarm' })
+    if (recipientOnline) {
+      await markDelivered(connection.id, recipientId)
+      await sendNativeToUser(recipientId, payload)
+      return
+    }
+    await sendToUser(recipientId, payload)
   } catch {
     /* best-effort — never fail the send because delivery-sync/push failed */
   }

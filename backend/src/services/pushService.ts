@@ -124,8 +124,13 @@ export async function saveToken(userId: string, token: string): Promise<void> {
   if (error) throw error
 }
 
-export async function removeToken(token: string): Promise<void> {
-  const { error } = await supabaseAdmin.from('push_tokens').delete().eq('token', token)
+// Scoped to the caller: a token is per-install and unguessable, but unlike a
+// web-push endpoint nothing else proves the caller owns it. If the row was
+// moved to another account by saveToken's onConflict upsert (same device, new
+// login) this deletes nothing — the next FCM send to the now-unregistered
+// token prunes it.
+export async function removeToken(userId: string, token: string): Promise<void> {
+  const { error } = await supabaseAdmin.from('push_tokens').delete().eq('user_id', userId).eq('token', token)
   if (error) throw error
 }
 
@@ -133,7 +138,10 @@ export async function removeToken(token: string): Promise<void> {
 // FCM reports as UNREGISTERED / INVALID_ARGUMENT (mirrors the 404/410 pruning
 // on the web-push side).
 async function sendFcmToUser(userId: string, payload: PushPayload): Promise<void> {
-  if (!fcmConfigured) return
+  if (!fcmConfigured) {
+    console.warn(`fcm: skipped for user ${userId} — FIREBASE_SERVICE_ACCOUNT not usable`)
+    return
+  }
 
   const { data, error } = await supabaseAdmin.from('push_tokens').select('id, token').eq('user_id', userId)
   if (error) throw error
@@ -238,6 +246,21 @@ export async function sendToUser(userId: string, payload: PushPayload): Promise<
       console.error(`push: ${names[i]} failed for user ${userId}:`, result.reason)
     }
   })
+}
+
+// Native (FCM) only. Used when the recipient DOES have a live socket: on the
+// Capacitor build the WebView keeps its socket alive while backgrounded
+// (KeepRunning defaults true), so "online" does not mean "looking at the chat".
+// Safe to send unconditionally on native — @capacitor/push-notifications drops
+// a notification-message silently while the app is foreground and the FCM SDK
+// shows it in the tray otherwise. Web-push is NOT sent here: sw.js always
+// shows a notification, so it stays gated on "no live socket" in sendToUser.
+export async function sendNativeToUser(userId: string, payload: PushPayload): Promise<void> {
+  try {
+    await sendFcmToUser(userId, payload)
+  } catch (err) {
+    console.error(`push: fcm (online path) failed for user ${userId}:`, err)
+  }
 }
 
 async function sendWebPushToUser(userId: string, payload: PushPayload): Promise<void> {

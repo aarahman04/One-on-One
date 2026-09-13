@@ -11,6 +11,70 @@ Notes/deviations:
 
 ---
 
+## [Capacitor migration] Stage 4 follow-up — push authz + FCM delivery — 2026-09-13
+Status: code fixed (backend-only), branch `fix/push-authz-fcm-delivery`. Root
+causes confirmed against live prod (Railway backend, Supabase, a real FCM
+`validate_only` send) before writing any fix — see investigation below.
+
+Context: Stage 4 (below) was merged as PR #70 before its on-device checklist
+ran and before two issues an automated push-security review had flagged were
+addressed. Symptom afterward: no push notifications arrived at all (messages
+backgrounded or killed, missed calls), and the pre-existing `/alarm` siren
+also didn't ring when the app wasn't focused.
+
+Root causes (three, independent):
+- **RC-A — FCM silently disabled.** `FIREBASE_SERVICE_ACCOUNT` held only the
+  PEM private key, not the full service-account JSON, so `JSON.parse` threw
+  and `sendFcmToUser` no-opped on every send with no per-send log (only a
+  boot-time warning). Confirmed locally (`backend/.env`); the deployed routes,
+  migration `032_push_tokens`, the one saved token, and the service account
+  itself all checked out fine (`validate_only:true` FCM send → 200). Not a
+  code bug — an env-var content mistake. Fixed the value (uncommitted,
+  `.env` is gitignored) and added a per-send warning
+  (`fcm: skipped for user … — FIREBASE_SERVICE_ACCOUNT not usable`) so this
+  can't go silent again. Railway's copy needed the same fix — see
+  docs/PROGRESS.md entry date for confirmation once the user rotated the key
+  (the key was exposed in a debugging session transcript and rotated as part
+  of this fix).
+- **RC-B — backgrounded ≠ offline on native.** `syncDelivery` only pushed when
+  the recipient had no live socket. Capacitor's WebView keeps its Socket.IO
+  connection open while backgrounded (`Bridge` `KeepRunning` defaults `true`),
+  so a backgrounded (not killed) native app looked "online" and never got a
+  push — this is what made messages, missed calls, and `/alarm` all look
+  broken the same way. Fixed by also sending FCM (native only, never
+  web-push) on the online branch: `pushService.sendNativeToUser()`, called
+  from `syncDelivery`'s `recipientOnline` branch. Duplicate-free because
+  `@capacitor/push-notifications` drops an FCM notification-message silently
+  while the app is foreground (only fires the JS `pushNotificationReceived`
+  event, which is already a no-op — live socket delivery covers that case).
+  Web-push stays untouched: `sw.js` always shows a notification, so it must
+  stay gated on "no live socket".
+- **RC-C — authorization hole (security, was live on prod).**
+  `POST /api/push/token/unregister` deleted a `push_tokens` row by token
+  alone, with no ownership check — any authenticated user who obtained
+  another user's FCM token could delete their push registration. Fixed:
+  `removeToken(userId, token)` now scopes the delete to `user_id` too;
+  `routes/push.ts` passes `req.appUser!.id`. (`push_subscriptions`'
+  `removeSubscription` is intentionally unscoped-by-user — pre-existing,
+  documented rationale, out of scope here.)
+
+`/alarm` clarified: not a separate regression. The in-app siren
+(`features/alarm.ts`) has always been documented foreground-only; its
+backgrounded/closed behavior has always been the push path with
+`urgent: true` (`PRIORITY_MAX` on FCM). RC-A + RC-B together explain why it
+silently stopped working — same fix, no alarm-specific code changed.
+
+Files changed: `backend/src/services/pushService.ts` (`removeToken` scoped,
+per-send FCM-unconfigured warning, new `sendNativeToUser`),
+`backend/src/routes/push.ts` (unregister passes caller id),
+`backend/src/websocket/socketServer.ts` (`syncDelivery` sends FCM on the
+online branch too). No client/, android/, or migration changes.
+
+On-device results: _pending — fill in after Railway redeploys with the
+corrected `FIREBASE_SERVICE_ACCOUNT` and this PR is merged._
+
+---
+
 ## [Capacitor migration] Stage 4 — FCM push on the native build — 2026-09-10
 Status: code done, branch `capacitor/stage-4-fcm`. Off-device verification only
 (client `tsc` + `vite build` clean, backend `tsc` clean, `cap sync` picks up the

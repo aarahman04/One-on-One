@@ -290,6 +290,17 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
                     (socketServer.ts new-message · callService.ts missed-call — unchanged)
   ```
 
+  **Follow-up (2026-09-13):** a backgrounded Capacitor WebView keeps its
+  Socket.IO connection alive (`Bridge` `KeepRunning` defaults `true`), so
+  `syncDelivery`'s "recipient has a live socket" branch doesn't mean the
+  recipient is looking at the chat on native. That branch now also calls
+  `pushService.sendNativeToUser()` (FCM only, never web-push — `sw.js` always
+  shows a notification, so web-push must stay gated on "no live socket"; FCM is
+  safe unconditionally because `@capacitor/push-notifications` drops a
+  notification-message silently while foreground). Also: `removeToken` is now
+  scoped to `(userId, token)`, not `token` alone — the unscoped version let any
+  authenticated user delete another user's push registration.
+
   Backend auth is `FIREBASE_SERVICE_ACCOUNT` (whole service-account JSON in one
   env var); the access token is minted with hand-rolled RS256 (`node:crypto`),
   no `googleapis` dep. Android: `com.google.gms.google-services` Gradle plugin was
