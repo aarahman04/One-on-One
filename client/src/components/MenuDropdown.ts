@@ -1,5 +1,7 @@
+import { Capacitor } from '@capacitor/core'
 import type { Screen } from '../state/router'
 import { animateOutAndRemove } from '../utils/animateOut'
+import { pushBackHandler } from '../state/backHandlers'
 
 export function mountMenuDropdown(
   nav: HTMLElement,
@@ -12,12 +14,15 @@ export function mountMenuDropdown(
   onDeleteAccount?: () => void,
 ): () => void {
   let panel: HTMLDivElement | null = null
+  let unregisterBack: (() => void) | null = null
 
   const close = (): void => {
     if (!panel) return
     animateOutAndRemove(panel, 'menu--closing')
     panel = null
     document.removeEventListener('click', onOutsideClick)
+    unregisterBack?.()
+    unregisterBack = null
   }
 
   const onOutsideClick = (e: MouseEvent): void => {
@@ -96,16 +101,22 @@ export function mountMenuDropdown(
         onDeleteAccount()
       })
     }
-    // Legal pages are public routes; open in a new tab so the conversation
-    // stays put.
+    // Web: new tab so the conversation stays put. Native: same WebView — the
+    // Capacitor local server SPA-falls back to index.html for /privacy etc.
+    // (html5mode), and hardware back walks the WebView history home.
     for (const route of ['privacy', 'terms', 'child-safety'] as const) {
       panel.querySelector(`[data-action="${route}"]`)!.addEventListener('click', () => {
         close()
-        window.open(`/${route}`, '_blank', 'noopener')
+        if (Capacitor.isNativePlatform()) location.assign(`/${route}`)
+        else window.open(`/${route}`, '_blank', 'noopener')
       })
     }
 
     document.addEventListener('click', onOutsideClick)
+    unregisterBack = pushBackHandler(() => {
+      close()
+      return true
+    })
   }
 
   anchor.addEventListener('click', onAnchorClick)

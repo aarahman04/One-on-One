@@ -1,4 +1,5 @@
 import type { Page } from '../state/router'
+import { pushBackHandler } from '../state/backHandlers'
 import {
   formatClock,
   formatDateSeparator,
@@ -171,6 +172,7 @@ export const ChatPage: Page = (root, go) => {
   let disposeMenuDropdown: (() => void) | null = null
   let disposePopover: (() => void) | null = null
   let callBar: CallBarHandle | null = null
+  let unregisterSearchBack: (() => void) | null = null
 
   const cleanup = (): void => {
     if (disposed) return
@@ -194,6 +196,8 @@ export const ChatPage: Page = (root, go) => {
     pollTimer = null
     if (searchDebounce) clearTimeout(searchDebounce)
     searchDebounce = null
+    unregisterSearchBack?.()
+    unregisterSearchBack = null
     if (focusHandler) window.removeEventListener('focus', focusHandler)
     focusHandler = null
     alarmController?.dispose()
@@ -311,13 +315,16 @@ export const ChatPage: Page = (root, go) => {
     })
     root.querySelector<HTMLButtonElement>('#search-prev')!.addEventListener('click', () => stepMatch(-1))
     root.querySelector<HTMLButtonElement>('#search-next')!.addEventListener('click', () => stepMatch(1))
-    root.querySelector<HTMLButtonElement>('#search-close')!.addEventListener('click', () => {
+    const closeSearch = (): void => {
       if (searchDebounce) clearTimeout(searchDebounce)
       searchDebounce = null
       searchInput.value = ''
       runSearch('')
       searchBar.style.display = 'none'
-    })
+      unregisterSearchBack?.()
+      unregisterSearchBack = null
+    }
+    root.querySelector<HTMLButtonElement>('#search-close')!.addEventListener('click', closeSearch)
 
     const nav = root.querySelector<HTMLElement>('.chat__nav')!
     const menuBtn = root.querySelector<HTMLButtonElement>('#menu-btn')!
@@ -382,6 +389,11 @@ export const ChatPage: Page = (root, go) => {
       () => {
         searchBar.style.display = 'flex'
         searchInput.focus()
+        unregisterSearchBack?.()
+        unregisterSearchBack = pushBackHandler(() => {
+          closeSearch()
+          return true
+        })
       },
       () => openAppearance(nav, chatEl, currentWallpaper, onWallpaperChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
@@ -2152,6 +2164,10 @@ export const ChatPage: Page = (root, go) => {
       window.visualViewport?.addEventListener('scroll', onScroll)
       document.addEventListener('keydown', onKey)
       const armTimer = setTimeout(() => document.addEventListener('click', onDocClick, { once: true }), 0)
+      const unregisterCtxBack = pushBackHandler(() => {
+        closeCtxMenu()
+        return true
+      })
       menuCleanup = () => {
         clearTimeout(armTimer)
         log.removeEventListener('scroll', onScroll)
@@ -2160,6 +2176,7 @@ export const ChatPage: Page = (root, go) => {
         window.visualViewport?.removeEventListener('scroll', onScroll)
         document.removeEventListener('keydown', onKey)
         document.removeEventListener('click', onDocClick)
+        unregisterCtxBack()
       }
     }
 

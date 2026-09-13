@@ -311,6 +311,29 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
   (it only asks at call-start if not already granted). **Still out of scope:** FCM
   call-wake / native incoming-call UI — messages + missed calls only.
 
+- **Stage 5 (branch `capacitor/stage-5-navigation`):** hardware/gesture back,
+  in-app legal routing, brand icon + splash. `@capacitor/app`'s `backButton`
+  listener drives a single precedence chain: transient surfaces (newest
+  first — `Modal`'s LIFO stack, `MenuDropdown`, the appearance panel,
+  ChatPage's search bar and message context menu, each registering with the
+  new `state/backHandlers.ts` LIFO stack) → the call screen (consumes back
+  unconditionally while `state !== 'idle'`, no dialog) → an app-defined
+  screen-level back target (`connect → connection-id`, `export → chat`,
+  `leave → chat`, tracked in `state/router.ts`) → legal-page WebView history
+  (`history.back()` if `canGoBack`, else `location.assign('/')`) →
+  `App.minimizeApp()` (never `exitApp()`, so the socket survives for a fast
+  resume). Legal pages (`/privacy`, `/terms`, `/child-safety`,
+  `/delete-account`) turned out to already resolve inside the WebView —
+  Capacitor's local server SPA-falls back to `index.html` for extensionless
+  paths — so the only change there was the two `_blank`/`window.open`
+  call sites (`MenuDropdown.ts`, `ageGate.ts`) branching to
+  `location.assign` on native; no `@capacitor/browser`. Brand assets
+  (launcher icon, adaptive icon layers, splash) regenerated from
+  `client/public/icon.svg` via `@capacitor/assets`, `#0d1117` throughout;
+  Android <15 status bar forced to match via a new `colors.xml`.
+  `@capacitor/app` is dynamic-imported like the other native-only plugins,
+  confirmed in its own lazy chunk rather than the bundle entry.
+
 TWA artifacts (`twa-manifest.json`, `android-build.yml`, `assetlinks.json`) stay
 in place until Stage 6 rewrites the build pipeline for Gradle.
 

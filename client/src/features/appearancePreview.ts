@@ -6,6 +6,8 @@
 // ChatPage.ts) — NOT stored here. Style and theme stay per-device
 // localStorage preferences, same as before.
 
+import { pushBackHandler } from '../state/backHandlers'
+
 interface Appearance {
   style: 'line' | 'bubbles'
   theme: 'light' | 'dark'
@@ -120,8 +122,14 @@ export function openAppearance(
   }
   setTimeout(() => document.addEventListener('click', onOutside), 0)
 
+  const unregisterBack = pushBackHandler(() => {
+    closeAppearance()
+    return true
+  })
+
   activeAppearanceDispose = () => {
     panel.remove()
     document.removeEventListener('click', onOutside)
+    unregisterBack()
   }
 }
