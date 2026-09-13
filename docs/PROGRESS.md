@@ -11,6 +11,53 @@ Notes/deviations:
 
 ---
 
+## [Capacitor migration] Stage 6 — build pipeline (Gradle CI, signing continuity) — 2026-09-13
+Status: code done, branch `capacitor/stage-6-build-pipeline`. **CI run + device
+sideload not yet done** — needs three new repo secrets from the user (below),
+then a `workflow_dispatch` run.
+
+What shipped:
+- `android/twa-manifest.json` deleted (Bubblewrap-only; nothing in the Capacitor
+  project reads it).
+- `.github/workflows/android-build.yml` rewritten: no Bubblewrap; `npm ci` +
+  `npm run build` + `npx cap sync android` in `client/`, then
+  `./gradlew bundleRelease assembleRelease` on Temurin JDK 21 against the
+  committed `android/` project. Still `workflow_dispatch` only.
+- Signing continuity: the SAME `oneonone-upload` keystore + the SAME three
+  secrets (`ANDROID_KEYSTORE_BASE64` / `_PASSWORD`, `ANDROID_KEY_PASSWORD`)
+  are written into `android/keystore.properties` (the file
+  `app/build.gradle` has read since the Stage 2 signing fix). The
+  keystore-generation branch is gone; a missing secret fails the run. SHA-1
+  `36:A9:69:D6:10:20:E0:7E:33:79:9F:0C:04:CE:F5:1A:63:BB:90:C6` is asserted on
+  the restored keystore before the build and on the produced AAB + APK after it.
+- New required secrets: `GOOGLE_SERVICES_JSON_BASE64` (FCM config is
+  gitignored — without it the release build silently ships with push
+  disabled), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (the web bundle
+  throws at launch without them).
+- `android/app/build.gradle`: `versionCode`/`versionName` now read
+  `-PappVersionCode`/`-PappVersionName` (defaults `1` / `1.0.0`).
+- `android/gradlew` index mode fixed to 100755.
+- `docs/playstore/ANDROID_BUILD.md` rewritten for Capacitor/Gradle;
+  `PUBLISH_CHECKLIST.md` sections A-D updated (Bubblewrap validate + DAL
+  fingerprint dance removed; new item: register the Play App Signing SHA-1 as
+  an Android OAuth client after the first upload); `ARCHITECTURE.md` Stage 6
+  bullet + pipeline diagram + "superseded" note on the TWA section.
+
+Decisions:
+- `client/public/.well-known/assetlinks.json` kept, dormant — no App Links
+  intent filter exists, so nothing reads it; it already carries the correct
+  upload-key SHA-256 and is the one artifact needed again if App Links come.
+- Both AAB and APK are built and uploaded (APK for sideload verification).
+
+Verification: pending. Local pre-flight run (unsigned, no keystore.properties
+locally): TODO before pushing. CI run + device sideload: user action, see
+`docs/playstore/PUBLISH_CHECKLIST.md` section C.
+
+Not in this stage (Stage 7): `DATA_SAFETY.md`, `CONTENT_RATING.md`,
+`NEW_SESSION_PROMPT.md`, `manifest.webmanifest` `start_url ?src=twa`.
+
+---
+
 ## [Capacitor migration] Stage 5 — hardware back, legal routing, launch polish — 2026-09-13
 Status: done, device-verified (physical Xiaomi 22111317I, Android 14), branch
 `capacitor/stage-5-navigation`.
