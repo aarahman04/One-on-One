@@ -12,9 +12,10 @@ Notes/deviations:
 ---
 
 ## [Capacitor migration] Stage 6 — build pipeline (Gradle CI, signing continuity) — 2026-09-13
-Status: code done, branch `capacitor/stage-6-build-pipeline`. **CI run + device
-sideload not yet done** — needs three new repo secrets from the user (below),
-then a `workflow_dispatch` run.
+Status: CI-verified, branch `capacitor/stage-6-build-pipeline` (PR #73). CI run
+green, signer SHA-1 asserted on both AAB and APK, release APK sideloaded and
+Google Sign-In confirmed working on device. Background push on the release
+build not yet independently confirmed.
 
 What shipped:
 - `android/twa-manifest.json` deleted (Bubblewrap-only; nothing in the Capacitor
@@ -49,9 +50,31 @@ Decisions:
   upload-key SHA-256 and is the one artifact needed again if App Links come.
 - Both AAB and APK are built and uploaded (APK for sideload verification).
 
-Verification: pending. Local pre-flight run (unsigned, no keystore.properties
-locally): TODO before pushing. CI run + device sideload: user action, see
-`docs/playstore/PUBLISH_CHECKLIST.md` section C.
+Verification: local pre-flight (unsigned, no `keystore.properties` locally) —
+`BUILD SUCCESSFUL`, `aapt2 dump badging` confirmed `versionCode`/`versionName`
+property wiring works. CI run on PR #73 — green, signer SHA-1
+`36:A9:69:D6:10:20:E0:7E:33:79:9F:0C:04:CE:F5:1A:63:BB:90:C6` asserted on both
+AAB and APK. Release APK sideloaded on device — Google Sign-In confirmed
+working. Background push on this release build: not yet independently
+confirmed.
+
+Bugfix — release-signed Google Sign-In `[16] Account reauth failed`: root
+cause was **not code**. Google Cloud Console only had the *debug* keystore's
+SHA-1 registered as the Android OAuth client; the release/upload key's SHA-1
+had no client at all. Ruled out first (confirmed, not assumed): `minifyEnabled
+false` on release (no R8 pass, so no ProGuard/keep-rule cause possible), and
+the `webClientId` literal verified byte-for-byte intact in the built bundle
+(no truncation, no variant-specific asset pipeline — debug and release ship
+the exact same `client/dist`). Fix was operational, not code: created a
+**second, separate** Android OAuth client in Google Cloud Console for SHA-1
+`36:A9:69:D6:10:20:E0:7E:33:79:9F:0C:04:CE:F5:1A:63:BB:90:C6`, same package
+`app.web.oneonone`, alongside the pre-existing debug-key client (SHA-1
+`ED:02:08:A3:38:18:A4:18:40:AC:EF:D9:BD:C2:B2:0C:ED:37:55:9D` — untouched).
+**Two Android OAuth clients now exist for this app, one per keystore.** Future
+note: if Google Sign-In ever breaks again right after a Google Cloud Console
+change, check that *both* SHA-1 registrations (debug and release) still
+exist — losing either one reproduces this exact `[16]` symptom on that
+build variant only.
 
 Not in this stage (Stage 7): `DATA_SAFETY.md`, `CONTENT_RATING.md`,
 `NEW_SESSION_PROMPT.md`, `manifest.webmanifest` `start_url ?src=twa`.
