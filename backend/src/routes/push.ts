@@ -42,11 +42,12 @@ pushRouter.post('/push/token', strictLimiter, async (req, res) => {
 })
 
 pushRouter.post('/push/token/unregister', async (req, res) => {
+  const user = req.appUser!
   const { token } = req.body ?? {}
   if (typeof token !== 'string' || !token) {
     res.status(400).json({ error: 'invalid token' })
     return
   }
-  await removeToken(token)
+  await removeToken(user.id, token)
   res.status(204).end()
 })
