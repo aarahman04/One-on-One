@@ -68,7 +68,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Project: One on One
 
-Private 1:1 messaging app. One account, one active connection, one conversation. Full spec: `One on One_concept.txt`. Execution plan (phases/stages/parts): `~/.claude/plans/you-are-a-experienced-polymorphic-metcalfe.md`.
+Private 1:1 messaging app. One account, one active connection, one conversation. Full spec: `docs/CONCEPT.md`. Execution plan (phases/stages/parts): `~/.claude/plans/you-are-a-experienced-polymorphic-metcalfe.md`.
 
 **Non-negotiable rules (spec §19, §20, §22, §28):**
 - One-active-connection is a **database/backend constraint**, not a UI hint. Never rely on the client to hide the "connect" UI as the only enforcement.
