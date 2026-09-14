@@ -68,7 +68,7 @@
         <a href="./child-safety.html">Child Safety</a>
       </nav>
       <h1>Privacy Policy</h1>
-      <p class="meta">Last updated 9 September 2026 &middot; Ahmed Abdul Rahman</p>
+      <p class="meta">Last updated 14 September 2026 &middot; Ahmed Abdul Rahman</p>
 
       <p>One on One is a private one-to-one messaging app. This policy explains what
       it collects, why, who it is shared with, how long it is kept, and how to have
@@ -102,7 +102,8 @@
         <li><strong>Reactions, nicknames and read / delivery timestamps</strong>
           &mdash; stored in plain text.</li>
         <li><strong>Push subscription</strong> &mdash; if you turn on notifications,
-          the browser push endpoint and its keys, one per device.</li>
+          the browser push endpoint and its keys (web), or a Firebase Cloud
+          Messaging registration token (Android app), one per device.</li>
         <li><strong>Reports</strong> &mdash; if you report a message or a person, the
           reason, category, your note, the reporter and reported account identifiers,
           and an encrypted snapshot of the reported message.</li>
@@ -141,6 +142,9 @@
           and sender nickname are visible to the push service and on your lock
           screen. For text messages this preview can include up to about 120
           characters of the message.</li>
+        <li><strong>Google Firebase Cloud Messaging</strong> &mdash; delivers
+          notifications to the Android app. Google sees the notification title,
+          preview text and sender nickname en route to your device.</li>
         <li><strong>OpenStreetMap</strong> &mdash; when a <code>/location</code> card
           is visible, your browser fetches map tiles from
           <code>tile.openstreetmap.org</code>, which receives the shared coordinates

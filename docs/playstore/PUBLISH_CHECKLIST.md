@@ -1,8 +1,10 @@
 # Play Store publish checklist
 
 The ordered list of steps **only you** can do (Play Console + credentials +
-device). Everything feeding these was produced in Stages 1–5. Plan:
-`~/.claude/plans/ancient-weaving-raven.md` Part 5.
+device). Everything feeding these was produced by the Play Store prep
+(Stages 1–5, 2026-09-09) and the Capacitor migration (Stages 1–7,
+2026-09-10..14). Plan: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
+Day-to-day release procedure (versioning, CI build, upload): `docs/RELEASING.md`.
 
 ## A. Start now — these gate everything and can take days
 
@@ -16,9 +18,12 @@ device). Everything feeding these was produced in Stages 1–5. Plan:
 
 ## B. Get the web app live and correct
 
-- [ ] Merge / deploy the `feat/playstore-stage1-compliance` branch to Vercel
-      production (`one-on-one-mu.vercel.app`).
+- [ ] `main` auto-deploys to Vercel production (`one-on-one-mu.vercel.app`);
+      confirm the latest `main` deploy succeeded.
 - [ ] Confirm the DB migrations are applied: **030 + 031 done (2026-09-09)**.
+- [ ] Railway is deploying the branch you expect (dashboard setting, not in
+      the repo) and `FIREBASE_SERVICE_ACCOUNT` is the full service-account
+      JSON (boot log shows `fcm: configured for project …`).
 - [ ] Verify in a browser:
   - [ ] `/privacy`, `/terms`, `/child-safety`, `/delete-account` all render,
         signed-out, light and dark.
@@ -35,6 +40,9 @@ device). Everything feeding these was produced in Stages 1–5. Plan:
 
 See `docs/playstore/ANDROID_BUILD.md` for detail.
 
+- [ ] Pick the next `versionCode` from the Version history table in
+      `docs/RELEASING.md` (first upload = `1`, `versionName` `1.0.0`); append
+      the row after the run.
 - [ ] Repo secrets present: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
       `ANDROID_KEY_PASSWORD` (existing, unchanged — the `oneonone-upload` key),
       plus `GOOGLE_SERVICES_JSON_BASE64`, `VITE_SUPABASE_URL`,
@@ -45,6 +53,8 @@ See `docs/playstore/ANDROID_BUILD.md` for detail.
       both the AAB and APK → download `android-release`.
 - [ ] Sideload `app-release.apk` on a device (uninstall the debug build first):
       Google sign-in works, a push arrives while backgrounded.
+- [ ] Push arrives on the release APK with the app **swiped from recents**
+      (not force-stopped) — still owed from Stage 6.
 
 ## D. Create the app in Play Console
 
@@ -53,8 +63,10 @@ See `docs/playstore/ANDROID_BUILD.md` for detail.
       **Closed testing** track.
 - [ ] Copy the **SHA-1** from App integrity → **App signing key certificate** →
       Google Cloud Console project `one-on-one-508202` → add a second **Android**
-      OAuth client (package `app.web.oneonone`, that SHA-1). Additive; keep the
-      existing clients. Without it native Google sign-in fails on Play installs.
+      OAuth client (package `app.web.oneonone`, that SHA-1) — the **third**
+      Android client (see `docs/RELEASING.md` "Google OAuth clients"). Additive;
+      keep the existing clients. Without it native Google sign-in fails on
+      Play installs.
 - [ ] Install from the Closed-testing track on a device: sign-in works, push
       arrives.
 
@@ -91,3 +103,6 @@ See `docs/playstore/ANDROID_BUILD.md` for detail.
 
 - [ ] Rotate the `VERCEL_OIDC_TOKEN` in `.env.local` if desired.
 - [ ] Install `gitleaks` locally (still owed from the Aug security audit).
+- [ ] If you switch dev machines, register the new
+      `~/.android/debug.keystore` SHA-1 as another Android OAuth client
+      (`docs/RELEASING.md`).

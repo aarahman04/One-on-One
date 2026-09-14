@@ -356,6 +356,15 @@ staged breakdown: `~/.claude/plans/pr-63-is-merged-radiant-dragon.md`.
   Gradle properties from the `workflow_dispatch` inputs. JDK 21 (matches
   `capacitor.build.gradle`'s `VERSION_21`). `assetlinks.json` stays, dormant.
 
+- **Stage 7 (branch `capacitor/stage-7-docs`):** docs only — final stage of
+  the migration. Reconciled `docs/playstore/DATA_SAFETY.md`,
+  `CONTENT_RATING.md`, `PUBLISH_CHECKLIST.md`, `ANDROID_BUILD.md` against the
+  Capacitor app; deleted the stale `NEW_SESSION_PROMPT.md`; two small code
+  exceptions (manifest `start_url`, privacy policy naming FCM). New
+  `docs/RELEASING.md` is the day-to-day release runbook (versioning, CI
+  build, Play upload, what must never change) — see it for anything past
+  this initial migration. Full detail: `docs/PROGRESS.md` Stage 7 entry.
+
 ```mermaid
 flowchart LR
     secrets["repo secrets<br/>ANDROID_KEYSTORE_* (unchanged)<br/>GOOGLE_SERVICES_JSON_BASE64<br/>VITE_SUPABASE_*"] --> mat["materialise<br/>android.keystore<br/>keystore.properties<br/>google-services.json"]
