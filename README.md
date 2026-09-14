@@ -2,36 +2,113 @@
 
 Private 1:1 messaging app. One account. One active connection. One person. One conversation.
 
-No contacts, no groups, no feed — just one connection.
+No contacts, no groups, no feed — just one connection, reached only through Google sign-in.
 
-## Docs
+## Features
 
-- Full concept/spec: `One on One_concept.txt`
-- Execution plan: `~/.claude/plans/you-are-a-experienced-polymorphic-metcalfe.md`
-- Progress log: `docs/PROGRESS.md`
-- Architecture diagrams: `docs/ARCHITECTURE.md`
-- Project rules for coding agents: `CLAUDE.md`
+- Real-time text chat with replies and emoji reactions
+- WhatsApp-style read/delivery receipts (sent / delivered / read)
+- Image, file, and voice-note attachments (EXIF stripped from images)
+- Slash commands: `/letter`, `/countdown`, `/checkin`, `/ask`, `/thisorthat`, `/alarm`, `/location`
+- Audio and video calls (WebRTC peer-to-peer, TURN relay fallback)
+- Push notifications (Web Push on the web app, FCM on Android)
+- Shared wallpaper and light/dark theme
+- Block, report, and a documented moderation process (`docs/MODERATION.md`)
+- Solo-completable 5-step leave/termination countdown, with TXT/JSON/HTML export
+- Account deletion, an 18+ age gate, and public legal pages (privacy, terms, child safety)
 
-## Roadmap
+Reactions, `/letter`, and calling are deliberate, user-confirmed overrides of the
+original V1 non-goals list — see `docs/ARCHITECTURE.md`.
 
-V1 Web App → V2 Android App → V3 Bluetooth → V4 BitChat-style mesh. Currently building V1.
+## Architecture at a glance
 
-## Structure
+- **`client/`** — TypeScript SPA (Vite), hosted on Vercel.
+- **`backend/`** — Node + Express + Socket.IO, hosted on Railway.
+- **Supabase** — Auth (Google OAuth) + Postgres. Row Level Security is default-deny;
+  the backend uses the service-role key and is the only thing that talks to the
+  database directly.
+- **`android/`** — a Capacitor 8 WebView shell wrapping the same web client, for
+  the Google Play release.
+
+Messages are encrypted at rest (AES-256-GCM) — this is *not* end-to-end encryption;
+see `docs/DECISIONS-encryption-at-rest.md`. All message and call traffic goes
+through a `MessageService → Transport → InternetTransport` abstraction so a future
+Bluetooth transport doesn't require a rewrite (spec §22).
+
+Full diagrams and detail: `docs/ARCHITECTURE.md`.
+
+## Repo structure
 
 ```
 client/     Vite + TypeScript web frontend
 backend/    Node + Express + Socket.IO backend (Railway root dir)
-database/   Migrations (raw SQL, applied via backend `npm run migrate` or by hand)
-docs/       Progress log + architecture diagrams
+android/    Capacitor Android shell (Gradle project)
+database/   Migrations (raw SQL, applied via backend `npm run migrate`)
+scripts/    Icon/font generation, screenshot capture, repo hygiene checks
+docs/       Architecture, progress log, release runbook, Play Store material
 ```
 
-`shared/` (spec §30, for types/constants reused across clients) is planned but
-not yet created — V1 hand-duplicates the wire contracts on each side.
+## Run it locally
+
+Requires Node 24 (see `.nvmrc`) and, for the native build, Java 21.
+
+```
+cp backend/.env.example backend/.env   # fill in from your Supabase project
+cp client/.env.example client/.env
+
+cd backend && npm ci && npm run migrate && npm run dev
+cd client && npm ci && npm run dev
+```
+
+`backend/.env` needs `ENCRYPTION_KEY_V1` — the server refuses to start without it
+(generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`).
+
+To run the Android shell against your local build:
+
+```
+cd client && npm run build && npx cap sync android
+cd android && ./gradlew installDebug
+```
+
+Full dev-loop detail: `docs/RELEASING.md` (§2).
+
+## Build and ship the Android app
+
+Release builds are signed and built by `.github/workflows/android-build.yml`
+(manual trigger), using the committed `oneonone-upload` signing key. The full
+runbook — versioning, sideload testing, and the Play Console upload steps — is
+`docs/RELEASING.md`. Play Store submission material (content rating, data safety,
+store listing, reviewer notes) lives in `docs/playstore/`.
+
+## Status
+
+V1 is feature-complete. The web app is live on Vercel + Railway. The Android app
+has completed its TWA → Capacitor migration and the release build pipeline is
+verified; a Play Console account has not yet been created, so Play Store
+submission is the remaining open item (`docs/playstore/PUBLISH_CHECKLIST.md`).
+See `docs/PROGRESS.md` for the full history.
+
+Longer-term roadmap: V1 (web, done) → V2 (native Android, in flight) → V3
+(Bluetooth transport) → V4 (BitChat-style mesh).
+
+## Docs
+
+- `docs/CONCEPT.md` — the original product spec (cited by section number
+  elsewhere, e.g. CLAUDE.md's §19/§20/§22/§28/§29)
+- `CLAUDE.md` — project rules for coding agents
+- `docs/PROGRESS.md` — progress log
+- `docs/ARCHITECTURE.md` — architecture and diagrams
+- `docs/RELEASING.md` — release/ops runbook
+- `docs/MODERATION.md` — trust & safety process
+- `docs/DECISIONS-encryption-at-rest.md` — encryption design decision
+- `docs/playstore/` — Play Store submission material
 
 ## Development setup
 
 Secrets live only in `backend/.env` / the deploy platform env — never in a tracked file.
-`backend/.env.example` and any `*.example` must contain `KEY=` placeholders with no values.
+Sensitive keys in any `*.env.example` must stay blank (enforced by
+`scripts/check-env-examples.sh`); non-secret defaults like `PORT` or a localhost
+URL are fine.
 
 Enable the secret-scanning pre-commit hook once per clone:
 
@@ -40,5 +117,5 @@ git config core.hooksPath .githooks
 ```
 
 It runs `gitleaks protect --staged` (install: https://github.com/gitleaks/gitleaks#installing)
-and rejects a non-empty `backend/.env.example`. CI (`.github/workflows/gitleaks.yml`) enforces
-the same on every PR.
+and rejects a non-empty sensitive value in `*.env.example`. CI (`.github/workflows/gitleaks.yml`)
+enforces the same on every PR.
