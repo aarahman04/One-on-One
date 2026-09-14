@@ -71,7 +71,14 @@ export async function requestConnection(requesterUserId: string, targetCode: str
     .single()
 
   if (error) {
-    if (error.code === RAISE_EXCEPTION) throw new ConnectionError(409, 'connection already exists')
+    if (error.code === RAISE_EXCEPTION) {
+      // Migration 033's trigger backstop caught a blocked pair (race between
+      // the isBlockedBetween check above and this insert, or a caller that
+      // skipped it) — same generic, enumeration-safe failure as an unknown
+      // code, never a message distinguishable from migration 016's guard.
+      if (error.message?.includes('connection blocked between this pair')) throw cannotConnect
+      throw new ConnectionError(409, 'connection already exists')
+    }
     throw error
   }
 
@@ -113,6 +120,13 @@ async function transitionStatus(
 export async function acceptConnection(connectionId: string, userId: string): Promise<ConnectionRow> {
   const connection = await getConnectionForMember(connectionId, userId)
   if (connection.user_b_id !== userId) throw new ConnectionError(403, 'only the recipient can accept')
+  // Defense-in-depth: a block landing between request and accept (the request
+  // already existed as 'pending' before the block was written, so
+  // requestConnection's own isBlockedBetween check never saw it) must not be
+  // acceptable. Same generic wording as the block trigger's mapped error.
+  if (await isBlockedBetween(userId, otherMemberId(connection, userId))) {
+    throw new ConnectionError(409, "couldn't send a request to that connection ID")
+  }
   return transitionStatus(connectionId, 'pending', 'active', 'connection is no longer pending')
 }
 

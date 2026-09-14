@@ -11,6 +11,53 @@ Notes/deviations:
 
 ---
 
+## [Blocking] Defense-in-depth pairwise enforcement — 2026-09-14
+Status: done. Migration 033 applied to the live DB.
+
+Prompted by a user report that blocking "seemed" to affect more than the
+blocker/blocked pair. Investigation traced the full path (blocks table,
+`blockService.isBlockedBetween`, `requestConnection`, `blockAndTerminate`,
+socket `message:send`) and found it was already correctly pairwise and
+already enforced both at connect time and (indirectly, via the connection
+row being deleted) at message time — no bug reproduced. This entry is
+defense-in-depth hardening only, so the guarantee is a DB constraint per
+spec §19/§20, not just an app-level check.
+
+What shipped:
+- Migration 033 (`033_blocks_enforce_connection.sql`): trigger on
+  `connections` (before insert/update of status) rejects any row that would
+  put a blocked pair into `pending`/`active`/`leave_pending`, mirroring
+  migration 016's single-active-connection guard. Second trigger on `blocks`
+  (after insert) deletes any live connection between the pair as a backstop,
+  covering the case where `blockAndTerminate`'s `terminate()` step fails
+  after `addBlock()` already committed.
+- `connectionService.requestConnection`: maps the new trigger's distinct
+  `P0001` message to the same generic "couldn't send a request to that
+  connection ID" failure already used for an unknown code or an
+  application-level block hit — never a distinguishable error.
+- `connectionService.acceptConnection`: added an `isBlockedBetween` check
+  (generic 409) closing the narrow window where a block is written after a
+  request is already `pending` (the request predates the block, so
+  `requestConnection`'s own check never saw it).
+
+Notes/deviations:
+- No message-time check added — with the migration in place, no live
+  connection row can exist between a blocked pair, so `message:send`'s
+  existing "no active connection" failure already covers it; an explicit
+  per-message `blocks` query would be a redundant DB round-trip.
+- Unblock (`DELETE /api/me/blocks/:id`) kept as-is — blocker-controlled
+  reversal, user-confirmed to stay.
+- Verified: `backend` `npm run build` clean. No backend test suite exists
+  (`npm test` — no script). SQL smoke test (throwaway users, rolled-back
+  transaction) could not run from this environment — the Supabase DB host is
+  IPv6-only and this machine has no IPv6 route (`ENETUNREACH`). Plan file:
+  `~/.claude/plans/bug-behavior-fix-blocking-is-effervescent-phoenix.md` has
+  the smoke-test script and the 7-step on-device verification script. Owner
+  applied migration 033 to the live DB directly; on-device verification still
+  owed.
+
+---
+
 ## [Capacitor migration] Stage 7 — docs reconciliation + release guide — 2026-09-14
 Status: done. Final stage of the TWA→Capacitor migration; all remaining
 Stage 7 scope items (per the Stage 6 "Not in this stage" note) are closed.
