@@ -2,7 +2,8 @@
 
 Transcribe into Play Console → **App content → Data safety**. Must stay
 consistent with the privacy policy (`/privacy`, `client/src/pages/legalShared.ts`).
-Source: plan `~/.claude/plans/ancient-weaving-raven.md` Part 2 data inventory.
+Source: plan `~/.claude/plans/pr-63-is-merged-radiant-dragon.md` (Capacitor
+migration) + `docs/ARCHITECTURE.md`.
 
 Developer: **Ahmed Abdul Rahman** · Contact: **aarahman803@gmail.com**
 Privacy policy URL: **https://one-on-one-mu.vercel.app/privacy**
@@ -35,6 +36,7 @@ account is deleted (report snapshots excepted — see notes).
 | **Voice or sound recordings** (Audio) | Yes | App functionality | Optional | Voice-note messages. |
 | **Files and docs** (Files and docs) | Yes | App functionality | Optional | File-attachment messages. |
 | **Other user-generated content** | Yes | App functionality | Optional | Emoji reactions, per-connection nicknames, call logs (`{kind, outcome, durationSec}` — no call media is ever stored). |
+| **Device or other IDs** (Device or other IDs) | Yes | App functionality | Optional | Firebase Cloud Messaging registration token (Android app) or web-push subscription endpoint (web), stored in `push_tokens` / `push_subscriptions`; app-instance-scoped, rotates, removed when notifications are turned off or the account is deleted. Not shared. |
 
 ### Not collected (answer "No" / leave unchecked)
 
@@ -42,17 +44,17 @@ Financial info · Health & fitness · Web browsing history · App activity /
 analytics · Contacts · Calendar · SMS or call log · Installed apps · Crash logs /
 diagnostics (no crash-reporting SDK) · Purchase history.
 
-**Device or other IDs — needs a decision (Capacitor Stage 4, FCM).** The native
-Android build registers an **FCM registration token** with our backend
-(`push_tokens` table) so message / missed-call notifications can be delivered.
-Google's "Device or other IDs" category targets cross-app identifiers used for
-advertising/analytics (advertising ID, Android ID, IMEI); an FCM token is
-app-instance-scoped, rotates, and is used solely to route notifications, so the
-common reading is **still "No"** here and the token falls under "Messages … App
-functionality". **Flag for the developer:** if you prefer to be maximally
-conservative, declare "Device or other IDs = Yes / App functionality / not
-shared / not optional" and note it is the push token only. The web PWA's
-web-push endpoint raises the same question and has never been declared.
+**Device or other IDs — resolved as "Yes" (Capacitor Stage 4, FCM).** The
+native Android build registers an **FCM registration token** with our backend
+(`push_tokens` table) so message / missed-call notifications can be
+delivered; the web PWA registers a web-push subscription endpoint the same
+way (`push_subscriptions`). Google's Data Safety help lists the Firebase
+installation ID among its "Device or other IDs" examples, and an FCM
+registration token derives from it, so this form declares **Device or other
+IDs = Yes / App functionality / not shared / optional** — the conservative,
+never-penalised reading, even though the token is app-instance-scoped,
+rotates, and is used solely to route notifications (some developers would
+read that as "No"). The privacy policy discloses the token either way.
 
 IP address is **not** collected — `req.ip` is used only for in-memory rate
 limiting and is never persisted. (TURN relay and the OpenStreetMap tile still see
@@ -86,16 +88,17 @@ IPs transiently — see notes 1 and 3.)
    browser push services (Google/Mozilla/Apple/Microsoft) for the web PWA,
    **Google Firebase Cloud Messaging (FCM) for the native Android build**
    (Capacitor Stage 4), Google (OAuth). List these in the privacy policy's
-   "who we share with" section (`legalShared.ts` — **update it to name FCM**).
+   "who we share with" section (`legalShared.ts` + `client/public/legal/privacy.html`
+   — names FCM since 2026-09-14).
 5. **Retention.** No TTL/cron. Data persists until the connection is terminated
    (whole conversation cascade-deleted) or the account is deleted (`auth.users`
    delete cascades). **Report snapshots deliberately survive** account deletion
    as moderation evidence, with the message link nulled — call this out under
    "Data retention" and in the deletion page copy (already done).
-6. **App manifest permissions (new under Capacitor — Play Console permissions
-   review, not the Data Safety form itself).** Under the Bubblewrap TWA every
-   device capability was mediated by Chrome and the app's own `AndroidManifest`
-   declared **none** of them. The Capacitor build declares them directly, added
+6. **App manifest permissions (Play Console permissions review, not the Data
+   Safety form itself).** Historically (Bubblewrap TWA, removed 2026-09-13)
+   the app's manifest declared no permissions — every device capability was
+   mediated by Chrome. The Capacitor build declares them directly, added
    across Stages 3–4:
    - `CAMERA`, `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS` — WebRTC audio/video
      calls. Maps to the **Voice or sound recordings** and (call video, not

@@ -1,5 +1,8 @@
 # Android build — Capacitor (Gradle)
 
+End-to-end release procedure (versioning, Play upload, what must never
+change): `docs/RELEASING.md`. This file is the build-internals reference.
+
 The Android app is the Vite web bundle (`client/dist`) packaged into a native
 WebView shell by **Capacitor 8**. The Gradle project is a committed source
 artifact at repo-root `android/` (not generated at build time). This replaced
@@ -115,7 +118,7 @@ after the first `.aab` upload:
 (The SHA-256 from the same screen would go into `assetlinks.json` only if App
 Links are ever added — not needed today.)
 
-## Verify (Stage 6 exit)
+## Verify a build
 
 - [ ] `android-build` run green; `android-release` artifact contains
       `app-release.aab` + `app-release.apk`.

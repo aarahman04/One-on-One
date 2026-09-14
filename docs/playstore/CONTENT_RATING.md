@@ -32,7 +32,7 @@ private messaging with user-generated content.
 | Digital purchases / in-app purchases | **No** | None in V1. |
 | Contains ads | **No** | None. |
 | Shares user data with third parties for advertising/marketing | **No** | No ad or analytics SDKs; nothing sold. |
-| Unrestricted internet access (open browser/webview) | **No** | The wrapper is a Trusted Web Activity bound to a single origin; there is no address bar or arbitrary navigation. |
+| Unrestricted internet access (open browser/webview) | **No** | The app is a Capacitor native WebView shell serving its own bundled web app from `https://localhost`; there is no address bar, no arbitrary URL navigation, and external links open in the system browser. |
 
 ## Expected outcome
 

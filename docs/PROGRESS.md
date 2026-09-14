@@ -11,6 +11,71 @@ Notes/deviations:
 
 ---
 
+## [Capacitor migration] Stage 7 — docs reconciliation + release guide — 2026-09-14
+Status: done. Final stage of the TWA→Capacitor migration; all remaining
+Stage 7 scope items (per the Stage 6 "Not in this stage" note) are closed.
+
+What shipped:
+- `docs/playstore/DATA_SAFETY.md`: source ref updated off the old TWA plan;
+  "Device or other IDs" flag resolved (see Decisions); privacy-policy
+  cross-reference updated; note 6 rephrased as history instead of "new under
+  Capacitor".
+- `docs/playstore/CONTENT_RATING.md`: the "Unrestricted internet access"
+  justification rewritten from "Trusted Web Activity" to the actual Capacitor
+  WebView shell description. Answer (No) unchanged.
+- `docs/playstore/PUBLISH_CHECKLIST.md`: plan reference updated; Section B's
+  stale "merge the compliance branch" step replaced with a `main`-auto-deploys
+  check + a Railway/FCM-env sanity check; Section C gained a `versionCode`
+  pick-and-record step and a release-APK backgrounded-push check; Section D's
+  OAuth step now names it the third Android client; Section H gained a
+  dev-machine-switch reminder. All cross-link `docs/RELEASING.md`.
+- `docs/playstore/ANDROID_BUILD.md`: added a pointer to the new
+  `docs/RELEASING.md` at the top; "Verify (Stage 6 exit)" heading renamed to
+  "Verify a build" since it's now a reusable checklist, not a stage gate.
+- `docs/playstore/NEW_SESSION_PROMPT.md` deleted (fully stale Bubblewrap
+  handoff; superseded by `docs/RELEASING.md` + this checklist).
+- New `docs/RELEASING.md`: the operational runbook for shipping future
+  updates — local web/native test loop, `versionCode`/`versionName` rules
+  (Play requires a strictly increasing `versionCode` per upload; a version
+  history table is seeded to track it), how to run the CI workflow, how to
+  upload to Play Console (first-time vs. every-time), what must never change
+  (package name, `oneonone-upload` keystore, the CI SHA-1 assertions,
+  Firebase Android app), and what must stay registered/valid (all three
+  Android OAuth clients, `FIREBASE_SERVICE_ACCOUNT`, the Supabase/Railway/
+  Vercel secrets, MIUI/Xiaomi device-testing gotchas, Capacitor dependency
+  upgrade risk).
+- Two small user-approved code exceptions to the "docs-only" stage:
+  `client/public/manifest.webmanifest` `start_url` changed from `/?src=twa`
+  to `/` (dead TWA query param); `client/src/pages/legalShared.ts` +
+  `client/public/legal/privacy.html` privacy policy now names Firebase Cloud
+  Messaging in the push-subscription bullet and the "who we share with" list,
+  and `LAST_UPDATED` bumped to 14 September 2026.
+- `docs/ARCHITECTURE.md`: Stage 7 bullet added to the Capacitor migration
+  section with a pointer to `docs/RELEASING.md`.
+- `CLAUDE.md`: added a pointer to `docs/RELEASING.md` in the project section.
+
+Decisions:
+- Data Safety "Device or other IDs" resolved as **Yes** (conservative reading
+  — Google's guidance lists the Firebase installation ID as a Device-ID
+  example, and the FCM token derives from it), rather than left open.
+- `NEW_SESSION_PROMPT.md` deleted rather than rewritten — its purpose (resume
+  guidance) is now served by `docs/RELEASING.md` + `PUBLISH_CHECKLIST.md`.
+- Real-world status confirmed: no Play Console account exists yet — checklist
+  Section A is still fully open.
+
+Verification: `grep -rniE "bubblewrap|trusted web activity|twa-manifest|src=twa"`
+across `docs/`, `client/public`, `client/src`, `CLAUDE.md`, `README.md` —
+remaining hits are only historical PROGRESS.md entries, the ARCHITECTURE.md
+"Superseded" note, ANDROID_BUILD.md's "replaced the Bubblewrap TWA" sentence,
+and the assetlinks.json dormant-artifact commentary. `client && npm run build`
+passes. `docs/RELEASING.md` re-read end to end as the target reader; every
+referenced path exists.
+
+Migration complete — remaining work is the user's Play Console actions per
+`docs/playstore/PUBLISH_CHECKLIST.md`.
+
+---
+
 ## [Capacitor migration] Stage 6 — build pipeline (Gradle CI, signing continuity) — 2026-09-13
 Status: CI-verified, branch `capacitor/stage-6-build-pipeline` (PR #73). CI run
 green, signer SHA-1 asserted on both AAB and APK, release APK sideloaded and
@@ -77,7 +142,8 @@ exist — losing either one reproduces this exact `[16]` symptom on that
 build variant only.
 
 Not in this stage (Stage 7): `DATA_SAFETY.md`, `CONTENT_RATING.md`,
-`NEW_SESSION_PROMPT.md`, `manifest.webmanifest` `start_url ?src=twa`.
+`NEW_SESSION_PROMPT.md`, `manifest.webmanifest` `start_url ?src=twa`. — done,
+see Stage 7.
 
 ---
 

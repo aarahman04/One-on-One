@@ -79,3 +79,4 @@ Private 1:1 messaging app. One account, one active connection, one conversation.
 **Tracking files — update every completed part:**
 - `docs/PROGRESS.md` — append an entry per part (phase.stage.part, status, what shipped).
 - `docs/ARCHITECTURE.md` — mermaid diagrams, updated when a part changes system shape (don't rewrite from scratch, add to it).
+- `docs/RELEASING.md` — release/ops runbook; read before any build, version, or Play Console work.

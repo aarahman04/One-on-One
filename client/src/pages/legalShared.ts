@@ -11,7 +11,7 @@ export const DEVELOPER_NAME = 'Ahmed Abdul Rahman'
 export const CONTACT_EMAIL = 'aarahman803@gmail.com'
 export const CHILD_SAFETY_CONTACT = 'Ahmed Abdul Rahman (aarahman803@gmail.com)'
 export const JURISDICTION = 'Telangana, India'
-export const LAST_UPDATED = '9 September 2026'
+export const LAST_UPDATED = '14 September 2026'
 
 // {{DOMAIN}} is left as a literal token: no custom domain is registered yet, so
 // the concrete URL is the current Vercel deployment. Swapped for a real domain
@@ -82,7 +82,8 @@ export const privacyBody = `
     <li><strong>Reactions, nicknames and read / delivery timestamps</strong>
       &mdash; stored in plain text.</li>
     <li><strong>Push subscription</strong> &mdash; if you turn on notifications,
-      the browser push endpoint and its keys, one per device.</li>
+      the browser push endpoint and its keys (web), or a Firebase Cloud
+      Messaging registration token (Android app), one per device.</li>
     <li><strong>Reports</strong> &mdash; if you report a message or a person, the
       reason, category, your note, the reporter and reported account identifiers,
       and an encrypted snapshot of the reported message.</li>
@@ -121,6 +122,9 @@ export const privacyBody = `
       and sender nickname are visible to the push service and on your lock
       screen. For text messages this preview can include up to about 120
       characters of the message.</li>
+    <li><strong>Google Firebase Cloud Messaging</strong> &mdash; delivers
+      notifications to the Android app. Google sees the notification title,
+      preview text and sender nickname en route to your device.</li>
     <li><strong>OpenStreetMap</strong> &mdash; when a <code>/location</code> card
       is visible, your browser fetches map tiles from
       <code>tile.openstreetmap.org</code>, which receives the shared coordinates

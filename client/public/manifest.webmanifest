@@ -4,7 +4,7 @@
   "description": "Private 1:1 messaging. One account, one active connection, one conversation — nothing else.",
   "id": "/",
   "scope": "/",
-  "start_url": "/?src=twa",
+  "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
   "theme_color": "#0d1117",
