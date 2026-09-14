@@ -48,30 +48,6 @@ scripts/    Icon/font generation, screenshot capture, repo hygiene checks
 docs/       Architecture, progress log, release runbook, Play Store material
 ```
 
-## Run it locally
-
-Requires Node 24 (see `.nvmrc`) and, for the native build, Java 21.
-
-```
-cp backend/.env.example backend/.env   # fill in from your Supabase project
-cp client/.env.example client/.env
-
-cd backend && npm ci && npm run migrate && npm run dev
-cd client && npm ci && npm run dev
-```
-
-`backend/.env` needs `ENCRYPTION_KEY_V1` — the server refuses to start without it
-(generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`).
-
-To run the Android shell against your local build:
-
-```
-cd client && npm run build && npx cap sync android
-cd android && ./gradlew installDebug
-```
-
-Full dev-loop detail: `docs/RELEASING.md` (§2).
-
 ## Build and ship the Android app
 
 Release builds are signed and built by `.github/workflows/android-build.yml`
@@ -102,20 +78,3 @@ Longer-term roadmap: V1 (web, done) → V2 (native Android, in flight) → V3
 - `docs/MODERATION.md` — trust & safety process
 - `docs/DECISIONS-encryption-at-rest.md` — encryption design decision
 - `docs/playstore/` — Play Store submission material
-
-## Development setup
-
-Secrets live only in `backend/.env` / the deploy platform env — never in a tracked file.
-Sensitive keys in any `*.env.example` must stay blank (enforced by
-`scripts/check-env-examples.sh`); non-secret defaults like `PORT` or a localhost
-URL are fine.
-
-Enable the secret-scanning pre-commit hook once per clone:
-
-```
-git config core.hooksPath .githooks
-```
-
-It runs `gitleaks protect --staged` (install: https://github.com/gitleaks/gitleaks#installing)
-and rejects a non-empty sensitive value in `*.env.example`. CI (`.github/workflows/gitleaks.yml`)
-enforces the same on every PR.
