@@ -17,8 +17,8 @@ const COPY: Record<PermissionKind, { title: string; body: string; cta: string }>
     cta: 'Continue',
   },
   camera: {
-    title: 'Camera access',
-    body: 'The next prompt asks to use your camera. One on One needs it for video calls. Video goes directly to the person you are connected with — it is never recorded or stored.',
+    title: 'Camera and microphone access',
+    body: 'The next prompts ask to use your camera and microphone. One on One needs both for video calls. Video and audio go directly to the person you are connected with — never recorded or stored.',
     cta: 'Continue',
   },
   notifications: {
