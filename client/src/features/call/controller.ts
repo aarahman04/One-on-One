@@ -145,6 +145,9 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   let canFlipCamera = false
   let connectedAt = 0
   let timerId: ReturnType<typeof setInterval> | null = null
+  // True while acceptCall() is awaiting the permission rationale — guards
+  // against a rapid double-tap on Accept stacking two rationale boxes.
+  let accepting = false
 
   // One circular icon button with a label under it, WhatsApp-style.
   const controlBtn = (
@@ -153,12 +156,14 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     variant: 'neutral' | 'danger' | 'accept',
     onClick: () => void,
     active = false,
+    disabled = false,
   ): HTMLElement => {
     const wrap = document.createElement('div')
     wrap.className = 'call-screen__control'
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.className = `call-screen__btn call-screen__btn--${variant}` + (active ? ' call-screen__btn--active' : '')
+    btn.disabled = disabled
     btn.innerHTML = icon
     btn.setAttribute('aria-label', label)
     btn.onclick = onClick
@@ -182,7 +187,14 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           if (activeCallId) void transport.decline(activeCallId)
           reset()
         }),
-        controlBtn('Accept', activeKind === 'video' ? CALL_CAM_ICON : CALL_PHONE_ICON, 'accept', () => void acceptCall()),
+        controlBtn(
+          'Accept',
+          activeKind === 'video' ? CALL_CAM_ICON : CALL_PHONE_ICON,
+          'accept',
+          () => void acceptCall(),
+          false,
+          accepting,
+        ),
       )
       return
     }
@@ -241,6 +253,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     state = 'idle'
     activeKind = 'audio'
     activeCallId = null
+    accepting = false
     muted = false
     cameraOn = true
     canFlipCamera = false
@@ -386,6 +399,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   }
 
   const acceptCall = async (): Promise<void> => {
+    if (accepting) return // a rapid double-tap must not stack a second rationale box
     const callId = activeCallId
     if (!callId) return
     if (!callingSupported()) {
@@ -395,11 +409,27 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       return
     }
     const kind = activeKind
-    if (!(await ensurePermissionRationale(kind === 'video' ? 'camera' : 'microphone'))) {
+    accepting = true
+    renderControls() // disable Accept while the rationale box is up
+    // The rationale box is a Modal (z-index 50), under the ringing call
+    // screen (z-index 60) — hide the screen while it's shown, or it renders
+    // (and is tappable) underneath the ringing UI instead of on top of it.
+    let granted: boolean
+    try {
+      screen.hidden = true
+      granted = await ensurePermissionRationale(kind === 'video' ? 'camera' : 'microphone')
+    } finally {
+      accepting = false
+    }
+    // The call may have ended, been declined, or moved on while the rationale
+    // box was up — a stale continuation here must not resurrect it.
+    if (activeCallId !== callId || state !== 'ringing-in') return
+    if (!granted) {
       void transport.decline(callId)
       reset()
       return
     }
+    screen.hidden = false
     let accepted: { iceServers: IceServer[] }
     try {
       accepted = await transport.accept(callId)
