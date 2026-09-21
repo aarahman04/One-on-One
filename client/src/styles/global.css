@@ -3072,3 +3072,27 @@ input:focus {
   color: inherit;
   opacity: 0.7;
 }
+
+/* In-app splash — see index.html / main.ts. z-index above .call-screen (60),
+   the highest existing layer, so it can never be hidden behind anything. */
+#splash {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0d1117;
+  transition: opacity 250ms ease;
+}
+
+#splash.splash--out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #splash {
+    transition: none;
+  }
+}

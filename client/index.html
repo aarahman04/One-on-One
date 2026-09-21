@@ -27,6 +27,17 @@
   </head>
   <body>
     <div id="app"></div>
+    <!--
+      In-app splash: covers everything from first paint through the auth
+      callback / boot-routing gap on web (native gets the platform splash
+      instead — see main.ts). Same icon as the favicon, on the app background.
+    -->
+    <div id="splash">
+      <svg width="72" height="72" viewBox="0 0 192 192" aria-hidden="true">
+        <circle cx="76" cy="96" r="40" fill="#7ee787" />
+        <circle cx="116" cy="96" r="40" fill="#79c0ff" fill-opacity="0.85" />
+      </svg>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

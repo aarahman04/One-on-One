@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core'
 import type { Screen } from '../state/router'
 import { animateOutAndRemove } from '../utils/animateOut'
 import { pushBackHandler } from '../state/backHandlers'
+import { openPanel } from '../state/activePanel'
 
 export function mountMenuDropdown(
   nav: HTMLElement,
@@ -15,6 +16,7 @@ export function mountMenuDropdown(
 ): () => void {
   let panel: HTMLDivElement | null = null
   let unregisterBack: (() => void) | null = null
+  let unregisterPanel: (() => void) | null = null
 
   const close = (): void => {
     if (!panel) return
@@ -23,6 +25,8 @@ export function mountMenuDropdown(
     document.removeEventListener('click', onOutsideClick)
     unregisterBack?.()
     unregisterBack = null
+    unregisterPanel?.()
+    unregisterPanel = null
   }
 
   const onOutsideClick = (e: MouseEvent): void => {
@@ -117,6 +121,7 @@ export function mountMenuDropdown(
       close()
       return true
     })
+    unregisterPanel = openPanel(close)
   }
 
   anchor.addEventListener('click', onAnchorClick)

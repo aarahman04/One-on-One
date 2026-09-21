@@ -1,6 +1,14 @@
 import type { Page } from '../state/router'
-import { signInWithGoogle, signOut } from '../services/authService'
+import { signInWithGoogle } from '../services/authService'
 import { goToPostSignInScreen } from '../state/boot'
+import { withTimeout } from '../utils/withTimeout'
+
+// A device that has ever signed in gets Google's account picker forced
+// (instead of silently reusing the last account) — no separate "use a
+// different account" control on this screen: nobody is signed in here yet,
+// so a control framed around switching *away* from an account never makes
+// sense on this page.
+const HAS_SIGNED_IN_KEY = 'hasSignedInBefore'
 
 export const LoginPage: Page = (root, go) => {
   let oauthError: string | null = null
@@ -11,12 +19,9 @@ export const LoginPage: Page = (root, go) => {
     /* ignore */
   }
 
-  // "Use a different account" only makes sense once this device has actually
-  // signed in before — a brand-new visitor has no prior account to switch
-  // away from.
   let hasSignedInBefore = false
   try {
-    hasSignedInBefore = localStorage.getItem('hasSignedInBefore') === '1'
+    hasSignedInBefore = localStorage.getItem(HAS_SIGNED_IN_KEY) === '1'
   } catch {
     /* private mode — treat as a new device */
   }
@@ -28,7 +33,6 @@ export const LoginPage: Page = (root, go) => {
       <div class="screen__actions">
         <button class="primary" id="login-btn">Continue with Google</button>
       </div>
-      ${hasSignedInBefore ? '<button type="button" class="screen__alt" id="switch-account-btn">Use a different account</button>' : ''}
       <div class="screen__subtitle screen__error" id="login-error"></div>
       <div class="screen__legal">
         <a href="/privacy">Privacy Policy</a>
@@ -44,29 +48,34 @@ export const LoginPage: Page = (root, go) => {
     errorEl.style.display = 'block'
   }
 
+  const loginBtn = root.querySelector<HTMLButtonElement>('#login-btn')!
+  const DEFAULT_LABEL = loginBtn.textContent!
+
   // signInWithGoogle resolves true only on the native path, which signs in
   // without navigating anywhere — so nothing re-runs the boot routing and this
   // screen has to move itself. On web it returns false mid-redirect and the
-  // reload does the routing.
-  root.querySelector<HTMLButtonElement>('#login-btn')!.addEventListener('click', async () => {
+  // reload does the routing (the button stays disabled through the redirect).
+  loginBtn.addEventListener('click', async () => {
+    loginBtn.disabled = true
+    loginBtn.textContent = 'Signing in…'
+    errorEl.style.display = 'none'
     try {
-      if (await signInWithGoogle()) await goToPostSignInScreen(root, go)
+      if (await withTimeout(signInWithGoogle(hasSignedInBefore), 20000)) {
+        await goToPostSignInScreen(root, go)
+        return
+      }
+      loginBtn.disabled = false
+      loginBtn.textContent = DEFAULT_LABEL
     } catch (err) {
-      errorEl.textContent = err instanceof Error ? err.message : 'Sign-in failed. Try again.'
+      const timedOut = err instanceof Error && err.message === 'timeout'
+      errorEl.textContent = timedOut
+        ? 'Sign-in is taking too long. Try again.'
+        : err instanceof Error
+          ? err.message
+          : 'Sign-in failed. Try again.'
       errorEl.style.display = 'block'
-    }
-  })
-
-  // Clear any lingering session, then relaunch Google with its account picker
-  // forced so a different account can actually be chosen. Only rendered for
-  // a device that has signed in before.
-  root.querySelector<HTMLButtonElement>('#switch-account-btn')?.addEventListener('click', async () => {
-    try {
-      await signOut()
-      if (await signInWithGoogle(true)) await goToPostSignInScreen(root, go)
-    } catch (err) {
-      errorEl.textContent = err instanceof Error ? err.message : 'Could not switch accounts. Try again.'
-      errorEl.style.display = 'block'
+      loginBtn.disabled = false
+      loginBtn.textContent = DEFAULT_LABEL
     }
   })
 }

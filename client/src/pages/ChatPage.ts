@@ -1,5 +1,6 @@
 import type { Page } from '../state/router'
 import { pushBackHandler } from '../state/backHandlers'
+import { openPanel } from '../state/activePanel'
 import {
   formatClock,
   formatDateSeparator,
@@ -395,7 +396,7 @@ export const ChatPage: Page = (root, go) => {
           return true
         })
       },
-      () => openAppearance(nav, chatEl, currentWallpaper, onWallpaperChange),
+      () => openAppearance(nav, menuBtn, chatEl, currentWallpaper, onWallpaperChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
       () =>
         openBlockConfirm({
@@ -2168,6 +2169,7 @@ export const ChatPage: Page = (root, go) => {
         closeCtxMenu()
         return true
       })
+      const unregisterCtxPanel = openPanel(closeCtxMenu)
       menuCleanup = () => {
         clearTimeout(armTimer)
         log.removeEventListener('scroll', onScroll)
@@ -2177,6 +2179,7 @@ export const ChatPage: Page = (root, go) => {
         document.removeEventListener('keydown', onKey)
         document.removeEventListener('click', onDocClick)
         unregisterCtxBack()
+        unregisterCtxPanel()
       }
     }
 

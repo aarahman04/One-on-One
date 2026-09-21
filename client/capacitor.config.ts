@@ -25,6 +25,15 @@ const config: CapacitorConfig = {
         twitter: false,
       },
     },
+    SplashScreen: {
+      // main.ts calls SplashScreen.hide() itself once the app is ready
+      // (same min/max timing as the web in-app splash) — auto-hide would race
+      // that and dismiss the native splash before boot routing finishes.
+      launchAutoHide: false,
+      backgroundColor: '#0d1117',
+      androidScaleType: 'CENTER',
+      showSpinner: false,
+    },
   },
 }
 
