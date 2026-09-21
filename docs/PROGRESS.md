@@ -21,6 +21,44 @@ Notes/deviations: Migration 034 must be applied to Supabase before deploying
 the backend. A new Android AAB is required so old versionCode 1 builds do not
 render notice lines as empty bubbles. Device behavior is not yet verified.
 
+## [Batch B] Incoming-call permission layering fix — 2026-09-21
+Status: done (builds clean; needs versionCode-2 AAB to reach Play testers)
+What shipped: Fixed issue 4 (first incoming call unanswerable) — the
+permission-rationale modal was rendering under the full-screen `.call-screen`
+overlay, so the "Microphone access / Continue" box was invisible on a
+callee's first ring. `controller.ts` `acceptCall()` now hides the ringing
+call surface while `ensurePermissionRationale` awaits, then restores it (or
+declines/reset()s) once the rationale resolves, and gained an `accepting`
+guard so repeated taps no longer stack rationale modals (R1). Camera
+rationale copy updated to mention microphone too, since a video call needs
+both (R9).
+Notes/deviations: Client-only change, ships in the same AAB as Batch A. Not
+yet verified on a real device/Play build.
+
+## [Batch A] Chat panel layering, login switch-account, boot splash — 2026-09-21
+Status: done (builds clean; needs versionCode-2 AAB to reach Play testers)
+What shipped: Fixed issues 1, 2, 5a, 5b from device reports.
+- Issue 1: new `state/activePanel.ts` — single-active-panel registry so the
+  header menu, appearance panel, and message context popover are mutually
+  exclusive (opening one closes whichever else is open); shared Escape
+  handling. Also closes R2 (appearance staying open under header taps) and
+  R3 (menu leaving the message popover open via `stopPropagation`).
+- Issue 2: removed the persistent "Use a different account" button from the
+  login screen (nobody is signed in there); the underlying
+  `hasSignedInBefore` flag now only changes which Google flow "Continue with
+  Google" uses (account chooser vs. plain).
+- Issue 5a: sign-in button shows a disabled "Signing in…" state with a 20s
+  timeout and error message; `main.ts` wraps session resolution in the same
+  timeout, falling back to login with a message instead of failing silently
+  (R4).
+- Issue 5b: static HTML splash screen (web) plus `@capacitor/splash-screen`
+  (native) replace the bare navy flash on boot; makes the existing
+  `drawable*/splash.png` assets live (R7, no separate action needed).
+Notes/deviations: 5b is an Android-native change (new Capacitor plugin) —
+requires a new AAB (versionCode 2) like every client change in this series.
+Not yet verified on a real device/Play build. R5, R6, R8 deliberately left
+as-is per the plan (see plan file referenced in CLAUDE.md).
+
 ## [Blocking] Defense-in-depth pairwise enforcement — 2026-09-14
 Status: done. Migration 033 applied to the live DB.
 

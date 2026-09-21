@@ -327,12 +327,13 @@ export async function getHistory(
 async function assertReplyTargetInConnection(connectionId: string, replyTo: string): Promise<void> {
   const { data, error } = await supabaseAdmin
     .from('messages')
-    .select('id')
+    .select('id, type')
     .eq('id', replyTo)
     .eq('connection_id', connectionId)
     .maybeSingle()
   if (error) throw error
   if (!data) throw new ConnectionError(400, 'reply target not found in this connection')
+  if (data.type === 'system') throw new ConnectionError(400, 'cannot reply to a system message')
 }
 
 // The connection is passed in already resolved + membership/live-checked by the
