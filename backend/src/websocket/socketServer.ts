@@ -115,10 +115,18 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
       .eq('connection_id', connection.id)
       .eq('user_id', senderId)
       .maybeSingle()
+    const isAlarm = message.type === 'alarm'
     const payload = {
       title: senderMember?.nickname ?? 'New message',
       body: mediaNoticeFor(message),
-      urgent: message.type === 'alarm',
+      urgent: isAlarm,
+      // Native-only: routes the FCM send data-only so AlarmMessagingService
+      // can start/stop the ring even when the app is backgrounded or killed
+      // (see pushService.sendFcmToUser). `ack` mirrors the same payload
+      // shape messageService.validateAlarmPayload already validates.
+      ...(isAlarm
+        ? { data: { type: 'alarm', ack: (message.payload as { ack?: string } | null)?.ack ? 'true' : 'false' } }
+        : {}),
     }
 
     if (recipientOnline) {

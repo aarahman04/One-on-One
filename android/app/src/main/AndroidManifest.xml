@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -36,6 +37,32 @@
             android:foregroundServiceType="phoneCall"
         />
 
+        <!-- Rings the /alarm emergency alert while backgrounded or killed —
+             see AlarmForegroundService for why this can't just be the plugin's
+             default notification handling (a WebView's Web Audio is throttled
+             outside the foreground). -->
+        <service
+            android:name=".AlarmForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback"
+        />
+
+        <!-- Only one FirebaseMessagingService may own the MESSAGING_EVENT
+             intent-filter — remove the plugin's default registration and
+             replace it with AlarmMessagingService, which subclasses it (see
+             that class) so the plugin's own JS-relay behavior is preserved. -->
+        <service
+            android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"
+            tools:node="remove"
+        />
+        <service
+            android:name=".AlarmMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <!-- FCM: route notifications to the "messages" channel (created in
              pushNotifications.ts) when the incoming payload doesn't already
              name one — the app is quiet-quiet in the low-importance "calls"
@@ -43,6 +70,14 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="messages"
+        />
+
+        <!-- Status-bar/notification icons must be a flat white-on-transparent
+             silhouette (an OS requirement, not a style choice) — without this,
+             FCM falls back to a generic icon instead of the app's mark. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_notify"
         />
     </application>
 
@@ -55,8 +90,14 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lets the alarm ring's notification turn the screen on over the lock
+         screen, same as an incoming call — legitimate for a genuine emergency
+         alert; Android 14+ requires this to be explicitly declared. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 </manifest>

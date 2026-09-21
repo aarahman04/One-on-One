@@ -13,4 +13,9 @@ ext {
     androidxJunitVersion = '1.3.0'
     androidxEspressoCoreVersion = '3.7.0'
     cordovaAndroidVersion = '14.0.1'
+    // Matches @capacitor/push-notifications' own default (its build.gradle),
+    // needed directly in app/build.gradle too — AlarmMessagingService
+    // subclasses that plugin's FirebaseMessagingService, and `implementation`
+    // deps aren't exposed transitively.
+    firebaseMessagingVersion = '25.0.1'
 }

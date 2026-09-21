@@ -11,6 +11,55 @@ Notes/deviations:
 
 ---
 
+## [Device fixes] Composer keyboard scroll, native alarm wake, notification icon — 2026-09-21
+Status: done (builds clean; alarm wake and notification icon are Android-native — need a versionCode-3 AAB and real-device verification; composer scroll also fixed on web/PWA)
+What shipped: Three device-reported issues.
+- **Composer-focus scroll jump**: focusing the message box no longer jumps
+  the chat view up to reveal older messages. Root cause: `#app`'s height is
+  pinned to `visualViewport` (`main.ts`), so the keyboard opening shrinks
+  `.chat__log`'s `clientHeight` without moving its `scrollTop`. `ChatPage.ts`
+  now tracks whether the log was scrolled to the bottom and re-pins it on
+  `visualViewport` resize if so.
+- **Alarm doesn't ring when the app is backgrounded or killed**: `/alarm`
+  previously relied entirely on the WebView's Web Audio, which Android
+  throttles/suspends outside the foreground — so a backgrounded or killed
+  recipient got, at best, a silent-ish system notification. New native path:
+  alarm pushes now send FCM data-only (`pushService.sendFcmToUser`, gated on
+  `payload.data`) instead of a display notification, so they always reach
+  `AlarmMessagingService.onMessageReceived` (subclasses the push-notifications
+  plugin's own `FirebaseMessagingService`, swapped in via manifest
+  `tools:node="remove"` + re-add, since only one service may own the FCM
+  intent-filter). It starts `AlarmForegroundService`, which loops
+  `alarm.wav` (`USAGE_ALARM`), vibrates the same pattern as `alarm.ts`, and
+  posts a full-screen high-priority notification — unless `AppState.foreground`
+  (set from `MainActivity.onResume`/`onPause`) is true, in which case the
+  live socket + in-app path already has it. An ack (received the same way)
+  stops the service; a 2-minute timer auto-stops it otherwise, matching
+  `alarm.ts`'s `AUTO_CLEAR_MS`.
+- **Generic notification icon**: FCM/native notifications showed a generic
+  icon instead of the app's mark. Root cause: no
+  `default_notification_icon` meta-data, so FCM fell back to a default —
+  and a full-color mipmap wouldn't have worked anyway (Android requires a
+  flat white-on-transparent silhouette for status-bar icons). Added
+  `drawable/ic_stat_notify.xml` (a monochrome vector of the two-circle mark)
+  and wired it into the manifest meta-data and `CallForegroundService`
+  (which had the same bug).
+Notes/deviations: `android/app/build.gradle` and `variables.gradle` gained a
+direct `firebase-messaging` dependency — `AlarmMessagingService` subclasses
+the push-notifications plugin's service, and plugin `implementation` deps
+aren't exposed transitively to the app module, so this was required for the
+app module to even see `FirebaseMessagingService`/`RemoteMessage`. New
+manifest permissions: `WAKE_LOCK`, `USE_FULL_SCREEN_INTENT` (Android 14+
+requires this declared explicitly; legitimate here, same justification as an
+incoming call), `FOREGROUND_SERVICE_MEDIA_PLAYBACK`. Verified:
+`android/gradlew :app:compileDebugJavaWithJavac` succeeds (manifest merges
+cleanly, no duplicate-FCM-service error) and both `backend`/`client`
+`tsc --noEmit` + `npm run build` are clean. Not verified: any of this on a
+real device — can't confirm the ring actually sounds/vibrates when killed,
+that the full-screen intent wakes the lock screen, or that the icon renders
+correctly in the tray. Needs the next AAB (versionCode 3) and a real
+two-account test.
+
 ## [Batch C] Appearance-change notices + shared message style — 2026-09-21
 Status: done (builds clean; needs migration 034, two accounts, and a new AAB)
 What shipped: Wallpaper and message-style changes now emit shared system

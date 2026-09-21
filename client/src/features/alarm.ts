@@ -87,9 +87,12 @@ export function createAlarmController(): AlarmController {
       // hidden tab's timers/audio, may drop the WebSocket during that window
       // (so this call never even fires until the tab wakes), and autoplay
       // engagement can lapse independently of the priming above. That's a
-      // platform restriction, not a bug — see docs/PROGRESS.md. Logged (not
-      // surfaced to the user) so a real regression is still distinguishable
-      // from this expected inconsistency.
+      // platform restriction, not a bug — see docs/PROGRESS.md. On native,
+      // AlarmForegroundService (android/) rings independently of this path
+      // whenever the app isn't foreground, so this in-app path only needs to
+      // cover "app open" there; this call and its silence elsewhere are
+      // logged (not surfaced to the user) so a real regression is still
+      // distinguishable from this expected inconsistency.
       void audio.play().catch((err) => {
         console.warn('alarm: audio.play() blocked', err)
       })

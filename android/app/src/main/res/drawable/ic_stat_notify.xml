@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification small icon: Android requires a flat white-on-transparent
+     silhouette (a full-color mipmap renders as a plain square/generic
+     bell) — this is the app's two-circle mark from public/icon.svg,
+     stripped to a single fill color per that OS requirement. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="192"
+    android:viewportHeight="192">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M36,96 a40,40 0 1,0 80,0 a40,40 0 1,0 -80,0 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M76,96 a40,40 0 1,0 80,0 a40,40 0 1,0 -80,0 Z" />
+</vector>
