@@ -13,10 +13,12 @@ import {
   getCurrentConnection,
   markRead,
   requestConnection,
+  setMessageStyle,
   setNickname,
   setWallpaper,
 } from '../services/connectionService.js'
 import { reportConnectionUser } from '../services/reportService.js'
+import { emitAppearanceNotice } from '../services/messageService.js'
 
 export const connectionsRouter = Router()
 
@@ -88,7 +90,17 @@ connectionsRouter.post('/connections/:id/leave/confirm-end', async (req, res) =>
 
 connectionsRouter.patch('/connections/:id/wallpaper', async (req, res) => {
   const user = req.appUser!
-  await setWallpaper(req.params.id, user.id, String(req.body?.wallpaper ?? ''))
+  const wallpaper = String(req.body?.wallpaper ?? '')
+  const changed = await setWallpaper(req.params.id, user.id, wallpaper)
+  if (changed) emitAppearanceNotice(req.params.id, user.id, 'wallpaper', wallpaper)
+  res.status(204).end()
+})
+
+connectionsRouter.patch('/connections/:id/style', async (req, res) => {
+  const user = req.appUser!
+  const style = String(req.body?.style ?? '')
+  const changed = await setMessageStyle(req.params.id, user.id, style)
+  if (changed) emitAppearanceNotice(req.params.id, user.id, 'style', style)
   res.status(204).end()
 })
 

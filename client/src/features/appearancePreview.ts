@@ -1,21 +1,21 @@
 // Appearance settings: chat wallpaper, message style (line/bubbles), and
 // bubble-mode light/dark theme.
 //
-// Wallpaper is shared per-connection (either member's choice applies to
-// both — synced server-side via connectionsApi.setWallpaper, owned by
-// ChatPage.ts) — NOT stored here. Style and theme stay per-device
-// localStorage preferences, same as before.
+// Wallpaper and message style are both shared per-connection (either
+// member's choice applies to both — synced server-side via
+// connectionsApi.setWallpaper / setMessageStyle, owned by ChatPage.ts) — NOT
+// stored here. Theme stays a per-device localStorage preference, same as
+// before.
 
 import { pushBackHandler } from '../state/backHandlers'
 import { openPanel } from '../state/activePanel'
 
 interface Appearance {
-  style: 'line' | 'bubbles'
   theme: 'light' | 'dark'
 }
 
 const KEY = 'appearancePreview'
-const DEFAULT: Appearance = { style: 'bubbles', theme: 'dark' }
+const DEFAULT: Appearance = { theme: 'dark' }
 
 function read(): Appearance {
   try {
@@ -35,12 +35,11 @@ function write(a: Appearance): void {
   }
 }
 
-export function applyAppearance(chat: HTMLElement, wallpaper: string): void {
-  const a = read()
+export function applyAppearance(chat: HTMLElement, wallpaper: string, style: string): void {
   chat.classList.toggle('chat--wallpaper-love', wallpaper === 'love')
   chat.classList.toggle('chat--wallpaper-samurai', wallpaper === 'samurai')
-  chat.classList.toggle('chat--bubbles', a.style === 'bubbles')
-  chat.dataset.theme = a.theme
+  chat.classList.toggle('chat--bubbles', style === 'bubbles')
+  chat.dataset.theme = read().theme
 }
 
 // The one open appearance panel's teardown (panel + its outside-click
@@ -53,18 +52,21 @@ export function closeAppearance(): void {
 }
 
 // Small popover anchored to the nav (reuses the .menu positioning).
-// `wallpaper` is the connection's current (shared) value; `onWallpaperChange`
-// persists a new choice server-side — this module never writes it locally.
-// `trigger` is the button that opens/closes this panel — used for the
-// outside-click test so taps elsewhere in the nav (call buttons, the ••• menu)
-// count as "outside" and close it, instead of the whole `anchor` nav being
-// treated as part of the panel.
+// `wallpaper` and `style` are the connection's current (shared) values;
+// `onWallpaperChange` / `onStyleChange` persist a new choice server-side —
+// this module never writes either locally. `trigger` is the button that
+// opens/closes this panel — used for the outside-click test so taps
+// elsewhere in the nav (call buttons, the ••• menu) count as "outside" and
+// close it, instead of the whole `anchor` nav being treated as part of the
+// panel.
 export function openAppearance(
   anchor: HTMLElement,
   trigger: HTMLElement,
   chat: HTMLElement,
   wallpaper: string,
+  style: string,
   onWallpaperChange: (value: string) => void,
+  onStyleChange: (value: string) => void,
 ): void {
   const panel = document.createElement('div')
   panel.className = 'menu appearance'
@@ -76,7 +78,7 @@ export function openAppearance(
       <button class="appearance__opt" data-value="samurai">Samurai</button>
     </div>
     <div class="menu__divider"></div>
-    <div class="menu__group-label">MESSAGE STYLE</div>
+    <div class="menu__group-label">MESSAGE STYLE (shared)</div>
     <div class="appearance__row" data-group="style">
       <button class="appearance__opt" data-value="line">Line</button>
       <button class="appearance__opt" data-value="bubbles">Bubbles</button>
@@ -91,12 +93,18 @@ export function openAppearance(
   anchor.appendChild(panel)
 
   let currentWallpaper = wallpaper
+  let currentStyle = style
 
   const mark = (): void => {
-    const cur = read()
+    const theme = read().theme
     for (const btn of panel.querySelectorAll<HTMLButtonElement>('.appearance__opt')) {
       const group = btn.closest<HTMLElement>('[data-group]')!.dataset.group
-      const active = group === 'wallpaper' ? currentWallpaper === btn.dataset.value : cur[group as keyof Appearance] === btn.dataset.value
+      const active =
+        group === 'wallpaper'
+          ? currentWallpaper === btn.dataset.value
+          : group === 'style'
+            ? currentStyle === btn.dataset.value
+            : theme === btn.dataset.value
       btn.classList.toggle('appearance__opt--active', active)
     }
   }
@@ -113,8 +121,15 @@ export function openAppearance(
       mark()
       return
     }
-    write({ ...read(), [group as keyof Appearance]: value } as Appearance)
-    applyAppearance(chat, currentWallpaper)
+    if (group === 'style') {
+      currentStyle = value
+      onStyleChange(value)
+      applyAppearance(chat, currentWallpaper, currentStyle)
+      mark()
+      return
+    }
+    write({ theme: value as Appearance['theme'] })
+    applyAppearance(chat, currentWallpaper, currentStyle)
     mark()
   })
 

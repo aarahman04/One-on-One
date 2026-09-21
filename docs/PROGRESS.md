@@ -11,6 +11,16 @@ Notes/deviations:
 
 ---
 
+## [Batch C] Appearance-change notices + shared message style — 2026-09-21
+Status: done (builds clean; needs migration 034, two accounts, and a new AAB)
+What shipped: Wallpaper and message-style changes now emit shared system
+messages with live delivery and poll fallback; appearance notices persist as
+encrypted messages and are rendered consistently across the chat. Migration
+034 adds the appearance/style and system-message support.
+Notes/deviations: Migration 034 must be applied to Supabase before deploying
+the backend. A new Android AAB is required so old versionCode 1 builds do not
+render notice lines as empty bubbles. Device behavior is not yet verified.
+
 ## [Blocking] Defense-in-depth pairwise enforcement — 2026-09-14
 Status: done. Migration 033 applied to the live DB.
 

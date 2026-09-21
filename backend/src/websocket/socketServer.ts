@@ -4,7 +4,13 @@ import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { resolveUserFromToken } from '../services/authToken.js'
 import { ConnectionError, markDelivered } from '../services/connectionService.js'
 import { getLiveConnectionForUser, type MemberConnection } from '../services/connectionAccess.js'
-import { saveMessage, bumpSenderLastRead, isMessageType, type Message } from '../services/messageService.js'
+import {
+  saveMessage,
+  bumpSenderLastRead,
+  isMessageType,
+  setIo as setMessageServiceIo,
+  type Message,
+} from '../services/messageService.js'
 import { signAttachments, isAttachmentKind } from '../services/attachmentService.js'
 import { addReaction, removeReaction } from '../services/reactionService.js'
 import { sendToUser, sendNativeToUser } from '../services/pushService.js'
@@ -130,6 +136,7 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
   const io = new Server(httpServer, { cors: { origin: allowedOrigins } })
   ioRef = io
   setIo(io) // lets callService.forceEndCall run from outside the socket layer
+  setMessageServiceIo(io) // lets messageService.emitAppearanceNotice run from the REST route
 
   // Auth handshake: verify the Supabase JWT and resolve the app user. The
   // client never gets to name its own connection or sender (spec §20); the
@@ -213,6 +220,14 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         // so a forged client-sent 'call' type never passes as ordinary text.
         if (msg?.type === 'call') {
           ack?.({ error: 'call messages are server-authored' })
+          return
+        }
+        // Appearance-change notices are likewise server-authored only
+        // (messageService.emitAppearanceNotice, from the wallpaper/style
+        // routes) — same reject as 'call' above, so a forged client-sent
+        // 'system' type never passes as a real notice.
+        if (msg?.type === 'system') {
+          ack?.({ error: 'system messages are server-authored' })
           return
         }
         const content = typeof msg?.content === 'string' ? msg.content : ''

@@ -1,13 +1,15 @@
+import type { Server } from 'socket.io'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
 import { getConnectionForMember } from './connectionAccess.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
 import { isAllowedMime, maxBytesFor, type AttachmentKind } from './attachmentService.js'
 import { encrypt, decrypt, isEncrypted } from './crypto.js'
+import { room } from '../utils/connections.js'
 
-export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm' | 'call' | 'location'
+export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm' | 'call' | 'location' | 'system'
 
-const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat', 'alarm', 'call', 'location']
+const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat', 'alarm', 'call', 'location', 'system']
 export function isMessageType(x: unknown): x is MessageType {
   return MESSAGE_TYPES.includes(x as MessageType)
 }
@@ -228,6 +230,65 @@ function validateLocationPayload(payload: unknown): { lat: number; lng: number; 
   return { lat, lng, accuracy }
 }
 
+const APPEARANCE_EVENTS = ['wallpaper', 'style']
+const APPEARANCE_WALLPAPERS = ['off', 'love', 'samurai']
+const APPEARANCE_STYLES = ['line', 'bubbles']
+
+// Appearance-change notices are server-authored only (emitAppearanceNotice
+// below, called from routes/connections.ts on a real change) — never
+// accepted from message:send — but still validated here like every other
+// payload rather than trusted blind, same stance as validateCallPayload.
+function validateSystemPayload(payload: unknown): { event: 'wallpaper' | 'style'; value: string } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  const event = String(p.event ?? '')
+  const value = String(p.value ?? '')
+  if (!APPEARANCE_EVENTS.includes(event)) throw new ConnectionError(400, 'invalid system event')
+  const allowedValues = event === 'wallpaper' ? APPEARANCE_WALLPAPERS : APPEARANCE_STYLES
+  if (!allowedValues.includes(value)) throw new ConnectionError(400, 'invalid system value')
+  return { event: event as 'wallpaper' | 'style', value }
+}
+
+// Lets emitAppearanceNotice below fire from the REST route (connections.ts),
+// outside the socket layer — same pattern callService.setIo uses for
+// forceEndCall.
+let ioRef: Server | null = null
+export function setIo(io: Server): void {
+  ioRef = io
+}
+
+const APPEARANCE_NOTICE_DEBOUNCE_MS = 1500
+const pendingAppearanceNotices = new Map<string, ReturnType<typeof setTimeout>>()
+
+// Rapid changes (e.g. scrolling through wallpaper options) must not spam the
+// chat with one notice per tap — coalesce into a single notice carrying
+// whatever value the burst settles on, ~1.5s after the last change. The DB
+// column itself (connectionService.setWallpaper/setMessageStyle) is already
+// updated synchronously on every call; only the chat notice is debounced.
+export function emitAppearanceNotice(
+  connectionId: string,
+  userId: string,
+  event: 'wallpaper' | 'style',
+  value: string,
+): void {
+  const key = `${connectionId}:${event}`
+  const existing = pendingAppearanceNotices.get(key)
+  if (existing) clearTimeout(existing)
+  pendingAppearanceNotices.set(
+    key,
+    setTimeout(() => {
+      pendingAppearanceNotices.delete(key)
+      void (async () => {
+        try {
+          const message = await saveMessage({ id: connectionId }, userId, '', 'system', { event, value })
+          ioRef?.to(room(connectionId)).emit('message:new', message)
+        } catch (err) {
+          console.error('emitAppearanceNotice: failed to write notice', err)
+        }
+      })()
+    }, APPEARANCE_NOTICE_DEBOUNCE_MS),
+  )
+}
+
 const HISTORY_PAGE_SIZE = 50
 
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
@@ -288,13 +349,13 @@ export async function saveMessage(
   if (!isMessageType(type)) throw new ConnectionError(400, 'invalid message type')
   const isMedia = (MEDIA_TYPES as string[]).includes(type)
 
-  // Media messages carry an optional caption, and an alarm/call carry no
-  // meaningful content of their own — both can be empty. Every other type
-  // (text, letter, ask, countdown, checkin, thisorthat, location) still
+  // Media messages carry an optional caption, and an alarm/call/system carry
+  // no meaningful content of their own — all three can be empty. Every other
+  // type (text, letter, ask, countdown, checkin, thisorthat, location) still
   // requires actual content — each one's primary display string
   // (body / question / label / note / "optionA vs optionB" / "lat, lng").
   const trimmed = content.trim()
-  if (isMedia || type === 'alarm' || type === 'call') {
+  if (isMedia || type === 'alarm' || type === 'call' || type === 'system') {
     if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
   } else if (trimmed.length < 1 || trimmed.length > 4000) {
     throw new ConnectionError(400, 'message must be 1-4000 characters')
@@ -318,7 +379,9 @@ export async function saveMessage(
                   ? validateCallPayload(payload)
                   : type === 'location'
                     ? validateLocationPayload(payload)
-                    : null
+                    : type === 'system'
+                      ? validateSystemPayload(payload)
+                      : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 

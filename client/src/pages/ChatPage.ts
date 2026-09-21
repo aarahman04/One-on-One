@@ -31,6 +31,7 @@ import {
   markRead,
   reportConnectionUser,
   reportMessage,
+  setMessageStyle,
   setWallpaper,
   blockAndEnd,
   type CurrentConnection,
@@ -343,16 +344,27 @@ export const ChatPage: Page = (root, go) => {
     }
     alarmController.onAutoClear(() => setAlarmGlow(false))
 
-    // Wallpaper is shared per-connection (either member's pick applies to
-    // both); style/theme stay per-device. Synced via the poll below.
+    // Wallpaper and message style are both shared per-connection (either
+    // member's pick applies to both); theme stays per-device. Synced via the
+    // poll below, and immediately on receipt of the other side's 'system'
+    // notice (see onMessage).
     let currentWallpaper = current.wallpaper
-    applyAppearance(chatEl, currentWallpaper)
+    let currentStyle = current.messageStyle
+    applyAppearance(chatEl, currentWallpaper, currentStyle)
 
     const onWallpaperChange = (value: string): void => {
       currentWallpaper = value
-      applyAppearance(chatEl, currentWallpaper) // optimistic
+      applyAppearance(chatEl, currentWallpaper, currentStyle) // optimistic
       void setWallpaper(connectionId, value).catch(() => {
         showNotice('Could not update the wallpaper — try again.')
+      })
+    }
+
+    const onStyleChange = (value: string): void => {
+      currentStyle = value
+      applyAppearance(chatEl, currentWallpaper, currentStyle) // optimistic
+      void setMessageStyle(connectionId, value).catch(() => {
+        showNotice('Could not update the message style — try again.')
       })
     }
 
@@ -396,7 +408,7 @@ export const ChatPage: Page = (root, go) => {
           return true
         })
       },
-      () => openAppearance(nav, menuBtn, chatEl, currentWallpaper, onWallpaperChange),
+      () => openAppearance(nav, menuBtn, chatEl, currentWallpaper, currentStyle, onWallpaperChange, onStyleChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
       () =>
         openBlockConfirm({
@@ -1242,9 +1254,38 @@ export const ChatPage: Page = (root, go) => {
       return card
     }
 
+    // Server-authored appearance-change notice — see docs/PROGRESS.md Batch C.
+    // Payload carries {event, value}; only ever server-sent (socketServer.ts
+    // rejects a client-sent 'system' type).
+    const WALLPAPER_LABELS: Record<string, string> = { off: 'Off', love: 'Love', samurai: 'Samurai' }
+    const STYLE_LABELS: Record<string, string> = { line: 'Lines', bubbles: 'Bubbles' }
+
+    const systemNoticeText = (message: ChatMessage): string => {
+      const p = (message.payload ?? {}) as { event?: string; value?: string }
+      const who = message.senderId === myUserId ? 'You' : otherName
+      if (p.event === 'wallpaper') {
+        return `${who} changed the wallpaper to ${WALLPAPER_LABELS[p.value ?? ''] ?? p.value}`
+      }
+      if (p.event === 'style') {
+        return `${who} changed the message style to ${STYLE_LABELS[p.value ?? ''] ?? p.value}`
+      }
+      return `${who} changed an appearance setting`
+    }
+
     // Pure row build (no DOM insertion, no side effects) so both the forward
     // append and the "load older" prepend can share it.
     const buildMessageRow = (message: ChatMessage, pending: boolean): HTMLElement => {
+      // Renders as a plain system line (the leave-events/"start of your
+      // one-on-one" style), not a message bubble — no receipt, reaction,
+      // reply or quote affordance exists on this element at all.
+      if (message.type === 'system') {
+        const line = document.createElement('div')
+        line.className = 'chat__system-line'
+        line.dataset.type = message.type
+        if (message.id) line.dataset.id = message.id
+        line.textContent = systemNoticeText(message)
+        return line
+      }
       const at = new Date(message.createdAt)
       const isMine = message.senderId === myUserId
       const row = document.createElement('div')
@@ -1346,9 +1387,10 @@ export const ChatPage: Page = (root, go) => {
 
     // Side effects after a row is in the DOM (receipts, id map, reaction chips).
     const registerMessageRow = (message: ChatMessage, row: HTMLElement): void => {
-      // Call logs carry no receipt, and can't be quoted or reacted to — so
-      // they stay out of myRows and the quotable-message map entirely.
-      if (message.type === 'call') return
+      // Call logs and system (appearance-change) notices carry no receipt,
+      // and can't be quoted or reacted to — so they stay out of myRows and
+      // the quotable-message map entirely.
+      if (message.type === 'call' || message.type === 'system') return
       if (message.senderId === myUserId) {
         myRows.push(row)
         applyReceipt(row)
@@ -2509,6 +2551,20 @@ export const ChatPage: Page = (root, go) => {
         }
       }
 
+      // Apply the other side's appearance change immediately rather than
+      // waiting for the next poll tick (poll sync above remains the fallback
+      // for anything missed, same as leave/wallpaper already do).
+      if (message.type === 'system') {
+        const p = (message.payload ?? {}) as { event?: string; value?: string }
+        if (p.event === 'wallpaper' && typeof p.value === 'string') {
+          currentWallpaper = p.value
+          applyAppearance(chatEl, currentWallpaper, currentStyle)
+        } else if (p.event === 'style' && typeof p.value === 'string') {
+          currentStyle = p.value
+          applyAppearance(chatEl, currentWallpaper, currentStyle)
+        }
+      }
+
       appendMessage(message, false, true)
       if (message.senderId !== myUserId) {
         void markRead(connectionId).catch(() => {})
@@ -2579,9 +2635,10 @@ export const ChatPage: Page = (root, go) => {
       otherLastDelivered = next.otherLastDeliveredAt
       refreshReceipts()
       updatePresence(next.otherLastReadAt)
-      if (next.wallpaper !== currentWallpaper) {
+      if (next.wallpaper !== currentWallpaper || next.messageStyle !== currentStyle) {
         currentWallpaper = next.wallpaper
-        applyAppearance(chatEl, currentWallpaper)
+        currentStyle = next.messageStyle
+        applyAppearance(chatEl, currentWallpaper, currentStyle)
       }
       // Keep marking read while the chat is actually on screen — makes the
       // other side's "seen" tick reliable even if a discrete event was missed.

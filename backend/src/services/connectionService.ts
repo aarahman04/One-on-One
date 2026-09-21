@@ -178,6 +178,7 @@ interface CurrentConnection {
   otherLastReadAt: string | null
   otherLastDeliveredAt: string | null
   wallpaper: string
+  messageStyle: string
 }
 
 interface CurrentConnectionRow {
@@ -186,6 +187,7 @@ interface CurrentConnectionRow {
   user_a_id: string
   user_b_id: string
   wallpaper: string | null
+  message_style: string | null
   connection_members: MemberLeaveRow[]
 }
 
@@ -196,7 +198,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
   const { data: connRows, error } = await supabaseAdmin
     .from('connections')
     .select(
-      'id, status, user_a_id, user_b_id, wallpaper, ' +
+      'id, status, user_a_id, user_b_id, wallpaper, message_style, ' +
         'connection_members(user_id, nickname, leave_step, leave_last_step_at, last_read_at, last_delivered_at)',
     )
     .in('status', ['pending', 'active', 'leave_pending'])
@@ -242,6 +244,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     otherLastReadAt: other?.last_read_at ?? null,
     otherLastDeliveredAt: other?.last_delivered_at ?? null,
     wallpaper: data.wallpaper ?? 'off',
+    messageStyle: data.message_style ?? 'bubbles',
   }
 }
 
@@ -438,18 +441,54 @@ export async function blockAndTerminate(connectionId: string, userId: string): P
 }
 
 const ALLOWED_WALLPAPERS = ['off', 'love', 'samurai']
+const ALLOWED_STYLES = ['line', 'bubbles']
 
-// Wallpaper is shared per-connection (unlike message style/theme, which stay
-// per-device localStorage preferences) — either member's choice applies to both.
-export async function setWallpaper(connectionId: string, userId: string, wallpaper: string): Promise<void> {
+// Wallpaper is shared per-connection (unlike theme, which stays a per-device
+// localStorage preference) — either member's choice applies to both. Returns
+// whether the value actually changed, so the caller (routes/connections.ts)
+// can skip emitting a chat notice on a no-op re-select of the current value.
+export async function setWallpaper(connectionId: string, userId: string, wallpaper: string): Promise<boolean> {
   await getConnectionForMember(connectionId, userId, { requireLive: true })
   if (!ALLOWED_WALLPAPERS.includes(wallpaper)) throw new ConnectionError(400, 'invalid wallpaper')
+
+  const { data: current, error: selectError } = await supabaseAdmin
+    .from('connections')
+    .select('wallpaper')
+    .eq('id', connectionId)
+    .maybeSingle()
+  if (selectError) throw selectError
+  if ((current?.wallpaper ?? 'off') === wallpaper) return false
 
   const { error } = await supabaseAdmin
     .from('connections')
     .update({ wallpaper, updated_at: new Date().toISOString() })
     .eq('id', connectionId)
   if (error) throw error
+  return true
+}
+
+// Message style (bubbles/line) is shared per-connection, same model as
+// wallpaper above — either member's choice applies to both. Theme stays a
+// per-device localStorage preference. Same changed/unchanged return as
+// setWallpaper.
+export async function setMessageStyle(connectionId: string, userId: string, style: string): Promise<boolean> {
+  await getConnectionForMember(connectionId, userId, { requireLive: true })
+  if (!ALLOWED_STYLES.includes(style)) throw new ConnectionError(400, 'invalid message style')
+
+  const { data: current, error: selectError } = await supabaseAdmin
+    .from('connections')
+    .select('message_style')
+    .eq('id', connectionId)
+    .maybeSingle()
+  if (selectError) throw selectError
+  if ((current?.message_style ?? 'bubbles') === style) return false
+
+  const { error } = await supabaseAdmin
+    .from('connections')
+    .update({ message_style: style, updated_at: new Date().toISOString() })
+    .eq('id', connectionId)
+  if (error) throw error
+  return true
 }
 
 export async function setNickname(connectionId: string, userId: string, nickname: string): Promise<void> {
