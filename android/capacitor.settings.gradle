@@ -8,5 +8,8 @@ project(':capacitor-app').projectDir = new File('../client/node_modules/@capacit
 include ':capacitor-push-notifications'
 project(':capacitor-push-notifications').projectDir = new File('../client/node_modules/@capacitor/push-notifications/android')
 
+include ':capacitor-splash-screen'
+project(':capacitor-splash-screen').projectDir = new File('../client/node_modules/@capacitor/splash-screen/android')
+
 include ':capgo-capacitor-social-login'
 project(':capgo-capacitor-social-login').projectDir = new File('../client/node_modules/@capgo/capacitor-social-login/android')

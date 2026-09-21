@@ -7,6 +7,7 @@
 // localStorage preferences, same as before.
 
 import { pushBackHandler } from '../state/backHandlers'
+import { openPanel } from '../state/activePanel'
 
 interface Appearance {
   style: 'line' | 'bubbles'
@@ -54,17 +55,17 @@ export function closeAppearance(): void {
 // Small popover anchored to the nav (reuses the .menu positioning).
 // `wallpaper` is the connection's current (shared) value; `onWallpaperChange`
 // persists a new choice server-side — this module never writes it locally.
+// `trigger` is the button that opens/closes this panel — used for the
+// outside-click test so taps elsewhere in the nav (call buttons, the ••• menu)
+// count as "outside" and close it, instead of the whole `anchor` nav being
+// treated as part of the panel.
 export function openAppearance(
   anchor: HTMLElement,
+  trigger: HTMLElement,
   chat: HTMLElement,
   wallpaper: string,
   onWallpaperChange: (value: string) => void,
 ): void {
-  if (activeAppearanceDispose) {
-    closeAppearance()
-    return
-  }
-
   const panel = document.createElement('div')
   panel.className = 'menu appearance'
   panel.innerHTML = `
@@ -118,7 +119,7 @@ export function openAppearance(
   })
 
   const onOutside = (e: MouseEvent): void => {
-    if (!panel.contains(e.target as Node) && e.target !== anchor) closeAppearance()
+    if (!panel.contains(e.target as Node) && e.target !== trigger) closeAppearance()
   }
   setTimeout(() => document.addEventListener('click', onOutside), 0)
 
@@ -126,10 +127,12 @@ export function openAppearance(
     closeAppearance()
     return true
   })
+  const unregisterPanel = openPanel(closeAppearance)
 
   activeAppearanceDispose = () => {
     panel.remove()
     document.removeEventListener('click', onOutside)
     unregisterBack()
+    unregisterPanel()
   }
 }

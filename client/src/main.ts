@@ -1,5 +1,6 @@
 import './styles/global.css'
 import { Capacitor } from '@capacitor/core'
+import { SplashScreen } from '@capacitor/splash-screen'
 import { mountRouter, registerPage, type Screen } from './state/router'
 import { LoginPage } from './pages/LoginPage'
 import { ConnectionIdPage } from './pages/ConnectionIdPage'
@@ -19,6 +20,56 @@ import { setUnauthorizedHandler } from './services/apiClient'
 import { resolveScreenForSession } from './state/boot'
 import { ensureFirstRunGates } from './features/ageGate'
 import { installNativeBackButton } from './features/nativeBack'
+import { withTimeout } from './utils/withTimeout'
+
+// --- Splash (see index.html for the markup, capacitor.config.ts for the
+// native plugin config) ---------------------------------------------------
+// Native shows the platform splash (Theme.SplashScreen, launchAutoHide:
+// false) before the WebView even loads, so the in-app HTML splash would only
+// double up behind it — remove it immediately there and drive the native
+// splash instead. Web has no platform splash, so the HTML one covers the
+// whole gap from first paint through boot routing.
+const SPLASH_START = performance.now()
+const SPLASH_MIN_MS = 1500
+const SPLASH_MAX_MS = 3000
+const isNative = Capacitor.isNativePlatform()
+const splashEl = isNative ? null : document.getElementById('splash')
+if (isNative) document.getElementById('splash')?.remove()
+
+let splashHidden = false
+function hideSplash(): void {
+  if (splashHidden) return
+  splashHidden = true
+  if (isNative) {
+    void SplashScreen.hide({ fadeOutDuration: 250 })
+    return
+  }
+  if (!splashEl) return
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    splashEl.remove()
+    return
+  }
+  let done = false
+  const finish = (): void => {
+    if (done) return
+    done = true
+    splashEl.remove()
+  }
+  splashEl.addEventListener('transitionend', finish, { once: true })
+  setTimeout(finish, 300)
+  splashEl.classList.add('splash--out')
+}
+
+// Hard cap — the splash must never outlast this, however long boot takes.
+setTimeout(hideSplash, SPLASH_MAX_MS)
+
+// Call once the first real screen has mounted. Enforces the ~1.5s minimum
+// display so a near-instant boot doesn't just flash the splash; adds no wait
+// once SPLASH_MIN_MS has already elapsed.
+function scheduleSplashHide(): void {
+  const elapsed = performance.now() - SPLASH_START
+  setTimeout(hideSplash, Math.max(SPLASH_MIN_MS - elapsed, 0))
+}
 
 registerPage('login', LoginPage)
 registerPage('connection-id', ConnectionIdPage)
@@ -105,18 +156,31 @@ const app = document.querySelector<HTMLDivElement>('#app')!
 const legalScreen = LEGAL_ROUTES[location.pathname]
 if (legalScreen) {
   mountRouter(app, legalScreen)
+  scheduleSplashHide()
 } else {
   try {
-    const initial = hadOAuthError ? 'login' : await resolveScreenForSession()
+    const initial = hadOAuthError ? 'login' : await withTimeout(resolveScreenForSession(), 20000)
     // Age (18+) + Terms acceptance before anything else — but not on the login
     // screen itself (a signed-out visitor has nothing to gate yet).
     if (initial !== 'login') await ensureFirstRunGates(app)
     mountRouter(app, initial)
   } catch (err) {
-    // A transient network failure on cold load must not leave a blank page.
+    // A transient network failure (or a hung request past the 20s timeout) on
+    // cold load must not leave a blank page — fall back to login with a
+    // reason LoginPage's existing oauthError channel can show.
     console.error('startup failed, falling back to login:', err)
+    const timedOut = err instanceof Error && err.message === 'timeout'
+    try {
+      sessionStorage.setItem(
+        'oauthError',
+        timedOut ? "Couldn't finish signing in. Check your connection and try again." : 'Something went wrong. Try again.',
+      )
+    } catch {
+      /* private mode — login just won't show the reason */
+    }
     mountRouter(app, 'login')
   }
+  scheduleSplashHide()
 }
 
 // Cross-tab sign-out → back to login.
