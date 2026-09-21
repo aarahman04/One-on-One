@@ -22,6 +22,18 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+        AppState.foreground = true;
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        AppState.foreground = false;
+    }
+
+    @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 

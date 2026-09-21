@@ -164,6 +164,7 @@ export const ChatPage: Page = (root, go) => {
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let searchDebounce: ReturnType<typeof setTimeout> | null = null
   let focusHandler: (() => void) | null = null
+  let viewportResizeHandler: (() => void) | null = null
   let alarmController: AlarmController | null = null
   let disposed = false
 
@@ -202,6 +203,8 @@ export const ChatPage: Page = (root, go) => {
     unregisterSearchBack = null
     if (focusHandler) window.removeEventListener('focus', focusHandler)
     focusHandler = null
+    if (viewportResizeHandler) window.visualViewport?.removeEventListener('resize', viewportResizeHandler)
+    viewportResizeHandler = null
     alarmController?.dispose()
     alarmController = null
   }
@@ -222,6 +225,25 @@ export const ChatPage: Page = (root, go) => {
 
     renderChat(root, otherName)
     const log = root.querySelector<HTMLDivElement>('#chat-log')!
+
+    // Keyboard open/close shrinks/grows #app (main.ts pins its height to
+    // visualViewport), which changes log's clientHeight without moving its
+    // scrollTop — if the log was scrolled to the bottom, that alone reveals
+    // older messages instead of staying on the latest one (the view "jumps
+    // up" when the composer is focused). Re-pin to bottom on resize, but only
+    // if it was already there — never yank the view while reading history.
+    let stickToBottom = true
+    log.addEventListener(
+      'scroll',
+      () => {
+        stickToBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80
+      },
+      { passive: true },
+    )
+    viewportResizeHandler = (): void => {
+      if (stickToBottom) log.scrollTop = log.scrollHeight
+    }
+    window.visualViewport?.addEventListener('resize', viewportResizeHandler)
 
     // --- Search: highlight every match, jump between them with the arrows --
     const searchBar = root.querySelector<HTMLDivElement>('#chat-search')!

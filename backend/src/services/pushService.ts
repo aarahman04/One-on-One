@@ -151,6 +151,13 @@ async function sendFcmToUser(userId: string, payload: PushPayload): Promise<void
   const accessToken = await getFcmAccessToken()
   const url = `https://fcm.googleapis.com/v1/projects/${serviceAccount!.project_id}/messages:send`
 
+  // An alarm send carries `payload.data` and goes out data-only (no
+  // `notification` block) — a display notification is auto-shown by the OS
+  // without ever reaching app code, but an alarm needs AlarmMessagingService
+  // to run so it can start the native ring; data-only messages always reach
+  // onMessageReceived, foreground, backgrounded or killed.
+  const dataOnly = !!payload.data
+
   await Promise.all(
     rows.map(async (row) => {
       try {
@@ -160,15 +167,19 @@ async function sendFcmToUser(userId: string, payload: PushPayload): Promise<void
           body: JSON.stringify({
             message: {
               token: row.token,
-              notification: { title: payload.title, body: payload.body },
+              ...(dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
               android: {
                 priority: 'high',
-                notification: {
-                  channel_id: 'messages',
-                  notification_priority: payload.urgent ? 'PRIORITY_MAX' : 'PRIORITY_DEFAULT',
-                },
+                ...(dataOnly
+                  ? {}
+                  : {
+                      notification: {
+                        channel_id: 'messages',
+                        notification_priority: payload.urgent ? 'PRIORITY_MAX' : 'PRIORITY_DEFAULT',
+                      },
+                    }),
               },
-              data: { urgent: payload.urgent ? 'true' : 'false' },
+              data: { urgent: payload.urgent ? 'true' : 'false', ...payload.data },
             },
           }),
         })
@@ -199,6 +210,12 @@ interface PushPayload {
   // Real platform limits apply: no OS-level DND bypass exists for web push,
   // and iOS PWA ignores vibrate/custom-sound entirely (see sw.js).
   urgent?: boolean
+  // Present for /alarm sends on the native (FCM) transport only — routes the
+  // message data-only (see sendFcmToUser) so it always reaches
+  // AlarmMessagingService.onMessageReceived, backgrounded or killed, instead
+  // of an OS-auto-displayed notification. android/AlarmForegroundService
+  // reads `type`/`ack` to start or stop the native ring.
+  data?: Record<string, string>
 }
 
 interface SubscriptionRow {
