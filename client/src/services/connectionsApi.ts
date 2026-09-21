@@ -25,6 +25,7 @@ export interface CurrentConnection {
   otherLastReadAt: string | null
   otherLastDeliveredAt: string | null
   wallpaper: string
+  messageStyle: string
 }
 
 export interface LeaveResult {
@@ -132,6 +133,15 @@ export async function setWallpaper(connectionId: string, wallpaper: string): Pro
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ wallpaper }),
+  })
+  await unwrap(res)
+}
+
+export async function setMessageStyle(connectionId: string, style: string): Promise<void> {
+  const res = await authedFetch(`/api/connections/${connectionId}/style`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ style }),
   })
   await unwrap(res)
 }
