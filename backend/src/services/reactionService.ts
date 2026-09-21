@@ -25,7 +25,8 @@ function validateEmoji(emoji: unknown): string {
 // instead of adding a second one.
 export async function addReaction(messageId: string, userId: string, emoji: unknown): Promise<string> {
   const validEmoji = validateEmoji(emoji)
-  const { connection } = await getConnectionByMessageId(messageId, userId, { requireLive: true })
+  const { connection, messageType } = await getConnectionByMessageId(messageId, userId, { requireLive: true })
+  if (messageType === 'system') throw new ConnectionError(400, 'cannot react to a system message')
   const { error } = await supabaseAdmin
     .from('reactions')
     .upsert({ message_id: messageId, user_id: userId, emoji: validEmoji }, { onConflict: 'message_id,user_id' })
@@ -35,7 +36,8 @@ export async function addReaction(messageId: string, userId: string, emoji: unkn
 
 export async function removeReaction(messageId: string, userId: string, emoji: unknown): Promise<string> {
   const validEmoji = validateEmoji(emoji)
-  const { connection } = await getConnectionByMessageId(messageId, userId, { requireLive: true })
+  const { connection, messageType } = await getConnectionByMessageId(messageId, userId, { requireLive: true })
+  if (messageType === 'system') throw new ConnectionError(400, 'cannot react to a system message')
   const { error } = await supabaseAdmin
     .from('reactions')
     .delete()

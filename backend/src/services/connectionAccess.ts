@@ -87,10 +87,10 @@ export async function getConnectionByMessageId(
   messageId: string,
   userId: string,
   opts: AccessOpts = {},
-): Promise<{ connection: MemberConnection; messageContent: string; messageSenderId: string }> {
+): Promise<{ connection: MemberConnection; messageContent: string; messageSenderId: string; messageType: string }> {
   const { data: msg, error: msgErr } = await supabaseAdmin
     .from('messages')
-    .select('connection_id, content, sender_id')
+    .select('connection_id, content, sender_id, type')
     .eq('id', messageId)
     .maybeSingle()
   if (msgErr) throw msgErr
@@ -112,5 +112,6 @@ export async function getConnectionByMessageId(
     connection: conn as MemberConnection,
     messageContent: msg.content as string,
     messageSenderId: msg.sender_id as string,
+    messageType: msg.type as string,
   }
 }
