@@ -57,8 +57,8 @@ cleanly, no duplicate-FCM-service error) and both `backend`/`client`
 `tsc --noEmit` + `npm run build` are clean. Not verified: any of this on a
 real device — can't confirm the ring actually sounds/vibrates when killed,
 that the full-screen intent wakes the lock screen, or that the icon renders
-correctly in the tray. Needs the next AAB (versionCode 3) and a real
-two-account test.
+correctly in the tray. Needs the next AAB (versionCode 2 — none has been
+uploaded to Play yet; see docs/RELEASING.md) and a real two-account test.
 
 ## [Batch C] Appearance-change notices + shared message style — 2026-09-21
 Status: done (builds clean; needs migration 034, two accounts, and a new AAB)
