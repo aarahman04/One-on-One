@@ -1,29 +1,16 @@
-name: Ultimate Keystore Recovery
+name: Precise Keystore Recovery
 on: workflow_dispatch
 
 jobs:
   recover_everything:
     runs-on: ubuntu-latest
     steps:
-      - name: Decode and Bundle Keystore File
-        run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > recovered_keystore.jks
-
-      - name: Upload Keystore File As Downloadable Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: my-keystore-file
-          path: recovered_keystore.jks
-
       - name: Reveal All Text Secrets Backwards
         run: |
           echo "========================================"
-          echo "KEYSTORE_PASSWORD BACKWARDS IS:"
+          echo "ANDROID_KEYSTORE_PASSWORD BACKWARDS IS:"
           echo "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | rev
           echo "========================================"
-          echo "KEY_ALIAS BACKWARDS IS:"
-          echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | rev
-          echo "========================================"
-          echo "KEY_PASSWORD BACKWARDS IS:"
+          echo "ANDROID_KEY_PASSWORD BACKWARDS IS:"
           echo "${{ secrets.ANDROID_KEY_PASSWORD }}" | rev
           echo "========================================"
