@@ -1,5 +1,16 @@
 # Progress Log
 
+## RESUME HERE — feat/whatsapp-ui (2026-10-06)
+Section 1 complete; section 2 is next: fragment history / row Map / swipe and viewport scheduling / lifecycle cleanup. Protected alarm, notification, send/ack/retry/dedupe/resync/receipt logic and android/backend/service files must remain unchanged. Final step: finish QA, push and open a PR to main with docs/ui-whatsapp before/after screenshots; do not merge.
+
+## [WhatsApp UI 1] Visual redesign — 2026-10-06
+Status: done (client build and browser fixture matrix pass; not live/device verified).
+What shipped: bubbles only (stored line is presentation-normalized, no DB write), brand green outgoing / neutral incoming on all wallpapers, 80% widths, compact spacing and first-in-group tails (same sender within 60s), inline time/ticks, Today/Yesterday date chips, normal-case partner/avatar and reserved 40px header controls, native details menu subgroups, paperclip pill composer and 48px send/mic, one encryption chip at conversation top, flattened slash cards and static red alarm accent. Removed sender/clock gutter DOM. Theme palette blocks remain because they override the OS theme and are not pure duplicates.
+Files: client/src/pages/ChatPage.ts, styles/global.css, components/MenuDropdown.ts, features/appearancePreview.ts, features/call/controller.ts (reuse header DOM only), utils/formatTime.ts; client/scripts/chat-ui-check.mjs; docs/ui-whatsapp/.
+Verified: npm run build (tsc + Vite), fixture browser render at 360x800 and 412x915, dark/light, Off/Love/Samurai, long/emoji text, quotes/reactions, all seven slash cards (sealed/revealed where relevant), voice/image/file, search, context/header menus, connecting/offline status, viewport shrink/reply bar. No document/log horizontal overflow; header/composer icon targets >=40px. Screenshots captured from the Vite dev server with synthetic accounts/messages and stubbed transport, no backend writes.
+Unverified: actual Android keyboard/IME, real media playback/recording, live calls/alarms/notifications and two-account messaging. Viewport shrink is only a keyboard-layout simulation.
+Next step: section 2 rendering changes, expand runnable fixture checks for fragments, Map reconciliation, gestures and disposal, build, update docs and commit.
+
 One entry per completed part. Newest at top. Format:
 
 ```

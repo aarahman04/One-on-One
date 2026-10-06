@@ -2,7 +2,6 @@ import type { Page } from '../state/router'
 import { pushBackHandler } from '../state/backHandlers'
 import { openPanel } from '../state/activePanel'
 import {
-  formatClock,
   formatDateSeparator,
   formatCallDuration,
   formatDuration,
@@ -37,7 +36,6 @@ import {
   markRead,
   reportConnectionUser,
   reportMessage,
-  setMessageStyle,
   setWallpaper,
   blockAndEnd,
   type CurrentConnection,
@@ -61,6 +59,8 @@ import {
   CALL_LOG_OUT_ICON,
   CALL_LOG_VIDEO_IN_ICON,
   CALL_LOG_VIDEO_OUT_ICON,
+  CALL_PHONE_ICON,
+  CALL_VIDEO_ICON,
 } from '../features/call/icons'
 import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
 import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
@@ -227,7 +227,7 @@ export const ChatPage: Page = (root, go) => {
       return
     }
 
-    const otherName = (current.otherNickname ?? 'them').toUpperCase()
+    const otherName = current.otherNickname ?? 'them'
     const myUserId = current.myUserId
     const connectionId = current.id
 
@@ -411,14 +411,6 @@ export const ChatPage: Page = (root, go) => {
       })
     }
 
-    const onStyleChange = (value: string): void => {
-      currentStyle = value
-      applyAppearance(chatEl, currentWallpaper, currentStyle) // optimistic
-      void setMessageStyle(connectionId, value).catch(() => {
-        showNotice('Could not update the message style — try again.')
-      })
-    }
-
     // Push notifications: a menu toggle rather than an automatic prompt-on-load
     // (unsolicited permission prompts get auto-denied by browsers/users alike).
     // Feedback is a popup, not the quiet in-chat system line — a subscribe
@@ -459,7 +451,7 @@ export const ChatPage: Page = (root, go) => {
           return true
         })
       },
-      () => openAppearance(nav, menuBtn, chatEl, currentWallpaper, currentStyle, onWallpaperChange, onStyleChange),
+      () => openAppearance(nav, menuBtn, chatEl, currentWallpaper, currentStyle, onWallpaperChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
       () =>
         openBlockConfirm({
@@ -480,6 +472,7 @@ export const ChatPage: Page = (root, go) => {
     let presenceActive = false
     let connLabel: string | null = null
     const renderStatus = (): void => {
+      for (const button of nav.querySelectorAll<HTMLButtonElement>('.chat__call-btn')) button.disabled = connLabel !== null
       if (connLabel) {
         navStatus.textContent = connLabel
         navStatus.classList.add('chat__nav-status--connecting')
@@ -1338,7 +1331,7 @@ export const ChatPage: Page = (root, go) => {
     // Payload carries {event, value}; only ever server-sent (socketServer.ts
     // rejects a client-sent 'system' type).
     const WALLPAPER_LABELS: Record<string, string> = { off: 'Off', love: 'Love', samurai: 'Samurai' }
-    const STYLE_LABELS: Record<string, string> = { line: 'Lines', bubbles: 'Bubbles' }
+    const STYLE_LABELS: Record<string, string> = { line: 'Bubbles', bubbles: 'Bubbles' }
 
     const systemNoticeText = (message: ChatMessage): string => {
       const p = (message.payload ?? {}) as { event?: string; value?: string }
@@ -1372,18 +1365,11 @@ export const ChatPage: Page = (root, go) => {
       row.className = 'chat__message' + (pending ? ' chat__message--pending' : '')
       row.dataset.at = message.createdAt
       row.dataset.type = message.type // lets CSS give image/voice/file their own bubble treatment
+      row.dataset.sender = message.senderId
       if (message.id) row.dataset.id = message.id
-
-      const time = document.createElement('div')
-      time.className = 'chat__message-time'
-      time.textContent = formatClock(at)
 
       const body = document.createElement('div')
       body.className = 'chat__message-body'
-
-      const sender = document.createElement('div')
-      sender.className = `chat__message-sender chat__message-sender--${isMine ? 'you' : 'other'}`
-      sender.textContent = isMine ? 'YOU' : otherName
 
       const text = document.createElement('div')
       text.className = 'chat__message-text'
@@ -1430,7 +1416,18 @@ export const ChatPage: Page = (root, go) => {
                               ? locationCard(message)
                               : text
 
-      body.append(sender)
+      const cardTitles: Partial<Record<MessageType, string>> = {
+        letter: 'Letter', countdown: 'Countdown', checkin: 'Check-in', ask: 'Ask', thisorthat: 'This or that',
+      }
+      const cardTitle = cardTitles[message.type]
+      if (cardTitle) {
+        const heading = document.createElement('div')
+        heading.className = 'chat__card-heading'
+        const icon = content.querySelector<HTMLElement>('[class$="__icon"]')
+        if (icon) heading.append(icon)
+        heading.append(document.createTextNode(cardTitle))
+        content.prepend(heading)
+      }
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
       body.append(content)
       if (isMine) {
@@ -1457,7 +1454,7 @@ export const ChatPage: Page = (root, go) => {
       if (message.type === 'text') text.append(meta)
       else body.append(meta)
       body.append(fullTime)
-      row.append(time, body)
+      row.append(body)
       // Scoped to the message content itself, not the row/body — .chat__message-body
       // stretches to fill the row (flex: 1) in line mode, so listening on it would
       // still toggle on clicks in the empty space beside a short message.
@@ -1486,6 +1483,15 @@ export const ChatPage: Page = (root, go) => {
     // session — never for history/pagination, or every past message would
     // cascade-animate in on load.
     const messageRows = (): NodeListOf<HTMLElement> => log.querySelectorAll<HTMLElement>('.chat__message[data-at]')
+    // Presentation only: adjacent messages from one sender within a minute.
+    const updateGroup = (row: Element | null): void => {
+      if (!(row instanceof HTMLElement) || !row.classList.contains('chat__message')) return
+      const prev = row.previousElementSibling as HTMLElement | null
+      const delta = Date.parse(row.dataset.at ?? '') - Date.parse(prev?.dataset.at ?? '')
+      row.dataset.groupStart = prev?.classList.contains('chat__message') &&
+        prev.dataset.sender === row.dataset.sender && delta >= 0 && delta <= 60_000 &&
+        isSameDay(new Date(prev.dataset.at!), new Date(row.dataset.at!)) ? '0' : '1'
+    }
     // First rendered message strictly later than `iso` (so a message that
     // arrives out of order — e.g. after a resync — lands where it belongs).
     const findNextRow = (iso: string): HTMLElement | null => {
@@ -1510,6 +1516,8 @@ export const ChatPage: Page = (root, go) => {
         while (prev && !(prev.classList.contains('chat__message') && (prev as HTMLElement).dataset.at)) prev = prev.previousElementSibling
         if (!prev || !isSameDay(new Date((prev as HTMLElement).dataset.at!), at)) log.insertBefore(dateSeparator(at), row)
       }
+      updateGroup(row)
+      updateGroup(row.nextElementSibling)
     }
     // The server echo replaces an optimistic row's client time; if that crosses
     // midnight the row must move to the right day (and orphan separators go).
@@ -1520,6 +1528,7 @@ export const ChatPage: Page = (root, go) => {
       const prev = row.previousElementSibling
       const after = row.nextElementSibling
       row.remove()
+      updateGroup(after)
       if (prev?.classList.contains('chat__date-separator') && (!after || after.classList.contains('chat__date-separator'))) prev.remove()
       const next = findNextRow(newAt)
       if (next) insertOrdered(row, n, next)
@@ -1528,6 +1537,7 @@ export const ChatPage: Page = (root, go) => {
         const last = rows[rows.length - 1]
         if (!last || !isSameDay(new Date(last.dataset.at!), n)) log.appendChild(dateSeparator(n))
         log.appendChild(row)
+        updateGroup(row)
       }
       const rows = messageRows()
       lastDate = rows.length ? new Date(rows[rows.length - 1].dataset.at!) : null
@@ -1548,6 +1558,8 @@ export const ChatPage: Page = (root, go) => {
       if (animate) row.classList.add('chat__message--enter')
       if (orderedNext) insertOrdered(row, at, orderedNext)
       else log.appendChild(row)
+      updateGroup(row)
+      updateGroup(row.nextElementSibling)
       if (atBottom || isMine) log.scrollTop = log.scrollHeight
       registerMessageRow(message, row)
       return row
@@ -1690,6 +1702,7 @@ export const ChatPage: Page = (root, go) => {
         }
         const row = buildMessageRow(m, false)
         log.insertBefore(row, firstSep)
+        updateGroup(row)
         registerMessageRow(m, row)
       }
       // Drop the pre-existing leading separator if the batch already ended on that day.
@@ -1701,6 +1714,8 @@ export const ChatPage: Page = (root, go) => {
       ) {
         firstSep.remove()
       }
+      updateGroup(log.querySelector('.chat__message'))
+      if (firstSep) updateGroup(firstSep.nextSibling as Element | null)
       oldestLoadedAt = older[0].createdAt
       log.scrollTop = prevTop + (log.scrollHeight - prevHeight)
       if (older.length < HISTORY_PAGE) loadOlderBtn.remove()
@@ -2332,6 +2347,10 @@ export const ChatPage: Page = (root, go) => {
       const M = 8 // safe margin from every viewport edge
       const menu = document.createElement('div')
       menu.className = 'menu chat__ctx-menu'
+      const theme = getComputedStyle(chatEl)
+      for (const token of ['--bg', '--bg-raised', '--border', '--text', '--text-dim', '--muted', '--accent-you', '--danger']) {
+        menu.style.setProperty(token, theme.getPropertyValue(token))
+      }
       menu.style.visibility = 'hidden'
       menu.style.left = '0'
       menu.style.top = '0'
@@ -2906,49 +2925,60 @@ function renderChat(root: HTMLElement, displayName: string): void {
   root.innerHTML = `
     <div class="chat">
       <div class="chat__nav">
-        <div>
+        <div class="chat__nav-peer">
+          <span class="chat__avatar" id="nav-avatar" aria-hidden="true"></span>
+          <div class="chat__nav-info">
           <div class="chat__nav-title" id="nav-title"></div>
           <div class="chat__nav-status chat__nav-status--connecting" id="nav-status">connecting…</div>
+          </div>
         </div>
         <div class="chat__nav-actions" id="nav-actions">
-          <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
+          <button type="button" class="chat__call-btn" id="video-btn" aria-label="Start video call" disabled>${CALL_VIDEO_ICON}</button>
+          <button type="button" class="chat__call-btn" id="call-btn" aria-label="Start audio call" disabled>${CALL_PHONE_ICON}</button>
+          <button type="button" class="chat__menu-btn" id="menu-btn" aria-label="More options"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
         </div>
       </div>
       <div class="chat__search" id="chat-search" style="display: none;">
-        <input id="search-input" placeholder="Search messages…" autocomplete="off" />
+        <input id="search-input" aria-label="Search messages" placeholder="Search messages…" autocomplete="off" />
         <span class="chat__search-count" id="search-count">0/0</span>
         <button type="button" class="chat__search-nav" id="search-prev" title="Older match">▲</button>
         <button type="button" class="chat__search-nav" id="search-next" title="Newer match">▼</button>
-        <button type="button" class="chat__search-close" id="search-close">✕</button>
+        <button type="button" class="chat__search-close" id="search-close" aria-label="Close search">✕</button>
       </div>
       <div class="chat__leave-banner" id="leave-banner" style="display: none;"></div>
-      <div class="chat__log" id="chat-log"></div>
+      <div class="chat__log" id="chat-log">
+        <div class="chat__enc-note chat__system-line">
+          <svg class="chat__enc-note-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <span>Messages are encrypted</span>
+        </div>
+      </div>
+      <div class="chat__composer-area">
       <div class="chat__reply-bar" id="reply-bar">
         <div class="chat__reply-bar-info">
           <div class="chat__reply-bar-name" id="reply-bar-name"></div>
           <div class="chat__reply-bar-snippet" id="reply-bar-snippet"></div>
         </div>
-        <button type="button" class="chat__reply-bar-cancel" id="reply-bar-cancel">✕</button>
-      </div>
-      <div class="chat__enc-note">
-        <svg class="chat__enc-note-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-        <span>Messages are encrypted</span>
+        <button type="button" class="chat__reply-bar-cancel" id="reply-bar-cancel" aria-label="Cancel reply">✕</button>
       </div>
       <form class="chat__input-bar" id="composer">
-        <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach">+</button>
-        <textarea id="message-input" placeholder="Type a message…" autocomplete="off" enterkeyhint="send" rows="1"></textarea>
+        <div class="chat__input-pill">
+        <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5L13 2a4 4 0 0 1 6 6l-9 9a2 2 0 0 1-3-3l8-8"/></svg></button>
+        <textarea id="message-input" aria-label="Message" placeholder="Message" autocomplete="off" enterkeyhint="send" rows="1"></textarea>
         <div class="chat__recording-bar" id="recording-bar" hidden>
           <span class="chat__recording-dot"></span>
           <span class="chat__recording-time" id="recording-time">0:00</span>
           <button type="button" class="chat__recording-cancel" id="recording-cancel">Cancel</button>
+        </div>
         </div>
         <button type="button" class="chat__icon-btn" id="mic-btn"></button>
         <button class="primary chat__send-btn" id="send-btn" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg></button>
         <input type="file" id="attach-image-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
         <input type="file" id="attach-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden />
       </form>
+      </div>
     </div>
   `
 
   root.querySelector<HTMLDivElement>('#nav-title')!.textContent = displayName
+  root.querySelector<HTMLElement>('#nav-avatar')!.textContent = Array.from(displayName.trim())[0]?.toUpperCase() ?? '?'
 }

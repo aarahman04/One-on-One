@@ -1,5 +1,7 @@
 # Architecture
 
+**Chat presentation (2026-10-06):** chat rows always use bubbles, even for legacy shared `messageStyle: line` (client interpretation only). Each message row keeps its existing `data-id`, `data-at`, type/receipt hooks; the clock gutter and sender label nodes are removed. `data-sender` / `data-group-start` control adjacent same-sender grouping within 60 seconds. `.chat__message-body` contains optional quote, content and inline time/ticks; `.chat__reaction-badge` remains below it. The log begins with one encryption system chip; `.chat__composer-area` owns reply bar plus the input pill and external send/mic button. Header call controls exist disabled from first paint; call/controller reuses those nodes without changing call behavior.
+
 Diagrams updated as the system grows. Additive — don't rewrite existing diagrams from scratch when a phase adds structure, extend them.
 
 ## System architecture (V1)

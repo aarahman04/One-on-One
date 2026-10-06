@@ -13,7 +13,12 @@ export function formatMessageTime(date: Date): string {
 
 export function formatDateSeparator(date: Date): string {
   if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()
+  const today = new Date()
+  if (isSameDay(date, today)) return 'Today'
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  if (isSameDay(date, yesterday)) return 'Yesterday'
+  return date.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
 export function formatFullTimestamp(date: Date): string {

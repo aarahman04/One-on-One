@@ -53,14 +53,14 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   const actions = nav.querySelector('.chat__nav-actions')
   const menuBtn = nav.querySelector('.chat__menu-btn')
 
-  const videoBtn = document.createElement('button')
+  const videoBtn = nav.querySelector<HTMLButtonElement>('#video-btn') ?? document.createElement('button')
   videoBtn.type = 'button'
   videoBtn.className = 'chat__call-btn'
   videoBtn.title = 'Video call'
   videoBtn.setAttribute('aria-label', 'Start video call')
   videoBtn.innerHTML = CALL_VIDEO_ICON
 
-  const callBtn = document.createElement('button')
+  const callBtn = nav.querySelector<HTMLButtonElement>('#call-btn') ?? document.createElement('button')
   callBtn.type = 'button'
   callBtn.className = 'chat__call-btn'
   callBtn.title = 'Audio call'
