@@ -495,7 +495,7 @@ export const ChatPage: Page = (root, go) => {
     let presenceActive = false
     let connLabel: string | null = null
     const renderStatus = (): void => {
-      for (const button of nav.querySelectorAll<HTMLButtonElement>('.chat__call-btn')) button.disabled = connLabel !== null
+      for (const button of nav.querySelectorAll<HTMLButtonElement>('.chat__call-btn')) button.disabled = !transport || connLabel !== null
       if (connLabel) {
         navStatus.textContent = connLabel
         navStatus.classList.add('chat__nav-status--connecting')
@@ -1401,10 +1401,7 @@ export const ChatPage: Page = (root, go) => {
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
 
-      // Time + receipt render as one unit (WhatsApp-style): in line mode
-      // `.chat__meta` is `display: contents`, so its children lay out exactly
-      // as if appended to body directly (unchanged from before); in bubble
-      // mode it becomes a single flex row pinned to the bubble's bottom-right.
+      // Time and ticks share the bubble's bottom-right footer.
       const meta = document.createElement('div')
       meta.className = 'chat__meta'
 
@@ -1460,8 +1457,7 @@ export const ChatPage: Page = (root, go) => {
           if (!pending) row.dataset.delivered = '1'
           const receipt = document.createElement('span')
           receipt.className = 'chat__receipt'
-          // WhatsApp-shaped tick glyph (line mode ignores this and renders its
-          // own dot via .chat__receipt's background — see applyReceipt).
+          // Tick state is filled by applyReceipt.
           const ticks = document.createElement('span')
           ticks.className = 'chat__receipt-ticks'
           receipt.append(ticks)
@@ -1477,9 +1473,7 @@ export const ChatPage: Page = (root, go) => {
       else body.append(meta)
       body.append(fullTime)
       row.append(body)
-      // Scoped to the message content itself, not the row/body — .chat__message-body
-      // stretches to fill the row (flex: 1) in line mode, so listening on it would
-      // still toggle on clicks in the empty space beside a short message.
+      // Tapping content reveals the full timestamp.
       content.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
       return row
     }
@@ -1590,19 +1584,12 @@ export const ChatPage: Page = (root, go) => {
       return row
     }
 
-    // --- Read receipts: a small per-message indicator on my own messages, at
-    // the end of the message. Line mode renders it as a dot; bubble mode
-    // renders WhatsApp ticks — both driven by these classes, styled in
-    // global.css. Three states: pending (not yet acked by the server),
-    // delivered (reached the other member's device — gray double tick), seen
-    // (they've had the chat open since — blue double tick).
+    // --- Read receipts: sent/delivered gray ticks; seen uses the read color.
     const myRows: HTMLElement[] = []
     let otherLastRead: string | null = current.otherLastReadAt
     let otherLastDelivered: string | null = current.otherLastDeliveredAt
 
-    // WhatsApp's actual tick paths (bubble mode only — line mode's dot never
-    // reads this markup). fill="currentColor" so the existing color rules
-    // (seen = WhatsApp blue, per-wallpaper recolors) keep working unchanged.
+    // Tick paths inherit the receipt state color.
     const TICK_SINGLE =
       '<svg viewBox="0 0 16 15" width="14" height="13"><path fill="currentColor" d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.266c.143.14.361.125.484-.033l6.272-8.048a.366.366 0 0 0-.064-.512z"/></svg>'
     const TICK_DOUBLE =

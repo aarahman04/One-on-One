@@ -1,7 +1,15 @@
 # Progress Log
 
 ## RESUME HERE — feat/whatsapp-ui (2026-10-06)
-Sections 1 and 2 complete; build and expanded browser fixture checks pass. Next: commit section 2, push `feat/whatsapp-ui`, open a PR to main with docs/ui-whatsapp before/after screenshots and unverified/device checks. Do not merge. Protected alarm/notification/send/ack/retry/dedupe/resync/receipt logic and android/backend/service files remain unchanged (only a DOM row-index assignment accompanies existing optimistic ID reconciliation).
+Sections 1 and 2 committed; final build and expanded browser fixture checks pass. Next: push `feat/whatsapp-ui` and open a PR to main with docs/ui-whatsapp before/after screenshots and unverified/device checks. Do not merge. Protected alarm/notification/send/ack/retry/dedupe/resync/receipt logic and android/backend/service files remain unchanged (only a DOM row-index assignment accompanies existing optimistic ID reconciliation).
+
+## [WhatsApp UI 3] Final verification — 2026-10-06
+Status: done (build + fixture QA pass; device/live checks remain as listed below).
+What shipped: final header guard keeps call controls disabled before the transport exists; remaining chat layout dimensions use tokens. Refreshed final dev screenshots after visual QA. Cleaned obsolete line-style render comments.
+Files: client/src/pages/ChatPage.ts, styles/global.css; docs/ui-whatsapp/after, docs/PROGRESS.md.
+Verified: final npm run build in client, complete chat-ui-check.mjs after run, git diff --check. Changed-path audit confirms no android/backend/alarm/alarmNative/pushNotifications/transport/messageService/authService file changes. Existing Vite warning about the notification module's mixed static/dynamic imports is unchanged.
+Deliberately left out: native build/release and live account/device verification; no DB migration or stored preference mutation. Theme palette overrides retained because manual chat themes must override OS preference. No requested UI/render feature was deferred.
+Next step: open PR to main with before/after screenshots; do not merge. Then real-phone keyboard and two-account regression checks before release.
 
 ## [WhatsApp UI 2] Render smoothness — 2026-10-06
 Status: done (client build and expanded browser fixture checks pass; not Android/live verified).
