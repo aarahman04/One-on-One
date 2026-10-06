@@ -69,11 +69,6 @@ import { animateOutAndRemove } from '../utils/animateOut'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
-// CSS.escape is absent on older Safari; message ids are UUIDs, so a minimal
-// attribute-value escape is enough for the `[data-id="…"]` selectors below.
-const cssEsc = (s: string): string =>
-  typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&')
-
 interface ChatMessage {
   id?: string
   senderId: string
@@ -172,6 +167,10 @@ export const ChatPage: Page = (root, go) => {
   let searchDebounce: ReturnType<typeof setTimeout> | null = null
   let focusHandler: (() => void) | null = null
   let viewportResizeHandler: (() => void) | null = null
+  let viewportFrame = 0
+  let rowRemovalObserver: MutationObserver | null = null
+  const rowsById = new Map<string, HTMLElement>()
+  const rowResources = new Map<HTMLElement, () => void>()
   let alarmController: AlarmController | null = null
   let disposed = false
 
@@ -187,6 +186,11 @@ export const ChatPage: Page = (root, go) => {
   const cleanup = (): void => {
     if (disposed) return
     disposed = true
+    cancelAnimationFrame(viewportFrame)
+    rowRemovalObserver?.disconnect()
+    for (const dispose of rowResources.values()) dispose()
+    rowResources.clear()
+    rowsById.clear()
     disposePopover?.()
     disposeMenuDropdown?.()
     callBar?.dispose()
@@ -233,6 +237,21 @@ export const ChatPage: Page = (root, go) => {
 
     renderChat(root, otherName)
     const log = root.querySelector<HTMLDivElement>('#chat-log')!
+    // Relocation removes/reinserts synchronously: only dispose truly removed rows.
+    rowRemovalObserver = new MutationObserver((records) => {
+      for (const record of records) for (const node of record.removedNodes) {
+        if (!(node instanceof HTMLElement)) continue
+        const removed = [node, ...node.querySelectorAll<HTMLElement>('.chat__message, .chat__system-line, .countdown-card, .location-card')]
+        for (const el of removed) {
+          if (log.contains(el)) continue
+          const id = el.dataset.id
+          if (id && rowsById.get(id) === el) rowsById.delete(id)
+          rowResources.get(el)?.()
+          rowResources.delete(el)
+        }
+      }
+    })
+    rowRemovalObserver.observe(log, { childList: true })
 
     // Keyboard open/close shrinks/grows #app (main.ts pins its height to
     // visualViewport), which changes log's clientHeight without moving its
@@ -249,7 +268,11 @@ export const ChatPage: Page = (root, go) => {
       { passive: true },
     )
     viewportResizeHandler = (): void => {
-      if (stickToBottom) log.scrollTop = log.scrollHeight
+      if (viewportFrame) return
+      viewportFrame = requestAnimationFrame(() => {
+        viewportFrame = 0
+        if (!disposed && stickToBottom) log.scrollTop = log.scrollHeight
+      })
     }
     window.visualViewport?.addEventListener('resize', viewportResizeHandler)
 
@@ -512,7 +535,7 @@ export const ChatPage: Page = (root, go) => {
     // never drawn over the bubble's own background). One reaction per user
     // per message, so a 1:1 chat needs at most two emoji here (me + other).
     const renderReactionChips = (messageId: string): void => {
-      const row = log.querySelector<HTMLElement>(`[data-id="${cssEsc(messageId)}"]`)
+      const row = rowsById.get(messageId)
       if (!row) return
       const list = reactionsByMessage.get(messageId) ?? []
       let badge = row.querySelector<HTMLElement>('.chat__reaction-badge')
@@ -595,7 +618,7 @@ export const ChatPage: Page = (root, go) => {
       q.append(name, snippet)
       q.addEventListener('click', (e) => {
         e.stopPropagation()
-        const target = log.querySelector<HTMLElement>(`[data-id="${cssEsc(replyTo)}"]`)
+        const target = rowsById.get(replyTo)
         if (!target) return
         target.scrollIntoView({ block: 'center' })
         target.classList.add('chat__message--flash')
@@ -630,9 +653,7 @@ export const ChatPage: Page = (root, go) => {
 
     // A countdown renders as a live-ticking card; no separate viewer to open —
     // the card itself is always live, ticking down for as long as it's on
-    // screen. The interval self-clears the first time it finds the card
-    // detached (e.g. after navigating away), rather than needing page-level
-    // teardown tracking.
+    // screen. Row removal and page cleanup clear its interval immediately.
     const countdownCard = (message: ChatMessage): HTMLElement => {
       const p = (message.payload ?? {}) as Partial<CountdownPayload>
       const card = document.createElement('div')
@@ -654,12 +675,9 @@ export const ChatPage: Page = (root, go) => {
       if (targetIso) {
         ticker.textContent = formatCountdown(targetIso)
         const timer = setInterval(() => {
-          if (!card.isConnected) {
-            clearInterval(timer)
-            return
-          }
           ticker.textContent = formatCountdown(targetIso)
         }, 1000)
+        rowResources.set(card, () => clearInterval(timer))
       }
       return card
     }
@@ -725,9 +743,11 @@ export const ChatPage: Page = (root, go) => {
           if (!entry.isIntersecting) continue
           img.src = tileUrl
           observer.disconnect()
+          rowResources.delete(card)
         }
       })
       observer.observe(card)
+      rowResources.set(card, () => observer.disconnect())
 
       const info = document.createElement('div')
       info.className = 'location-card__info'
@@ -1128,6 +1148,7 @@ export const ChatPage: Page = (root, go) => {
       const playBtn = document.createElement('button')
       playBtn.type = 'button'
       playBtn.className = 'voice-bubble__play'
+      playBtn.setAttribute('aria-label', 'Play or pause voice message')
       playBtn.innerHTML = playIcon
       playBtn.disabled = true
 
@@ -1366,6 +1387,7 @@ export const ChatPage: Page = (root, go) => {
       row.dataset.at = message.createdAt
       row.dataset.type = message.type // lets CSS give image/voice/file their own bubble treatment
       row.dataset.sender = message.senderId
+      if (message.type === 'image' && message.content) row.dataset.caption = '1'
       if (message.id) row.dataset.id = message.id
 
       const body = document.createElement('div')
@@ -1464,6 +1486,7 @@ export const ChatPage: Page = (root, go) => {
 
     // Side effects after a row is in the DOM (receipts, id map, reaction chips).
     const registerMessageRow = (message: ChatMessage, row: HTMLElement): void => {
+      if (message.id) rowsById.set(message.id, row)
       // Call logs and system (appearance-change) notices carry no receipt,
       // and can't be quoted or reacted to — so they stay out of myRows and
       // the quotable-message map entirely.
@@ -1522,6 +1545,8 @@ export const ChatPage: Page = (root, go) => {
     // The server echo replaces an optimistic row's client time; if that crosses
     // midnight the row must move to the right day (and orphan separators go).
     const relocateIfDayChanged = (row: HTMLElement, oldAt: string | undefined, newAt: string): void => {
+      updateGroup(row)
+      updateGroup(row.nextElementSibling)
       const o = oldAt ? new Date(oldAt) : null
       const n = new Date(newAt)
       if (!o || Number.isNaN(o.getTime()) || Number.isNaN(n.getTime()) || isSameDay(o, n)) return
@@ -1560,7 +1585,7 @@ export const ChatPage: Page = (root, go) => {
       else log.appendChild(row)
       updateGroup(row)
       updateGroup(row.nextElementSibling)
-      if (atBottom || isMine) log.scrollTop = log.scrollHeight
+      if (atBottom) log.scrollTo({ top: log.scrollHeight, behavior: isMine && animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant' })
       registerMessageRow(message, row)
       return row
     }
@@ -1693,29 +1718,31 @@ export const ChatPage: Page = (root, go) => {
       const prevHeight = log.scrollHeight
       const prevTop = log.scrollTop
       const firstSep = loadOlderBtn.nextSibling // the original leading date separator
+      const firstRow = log.querySelector<HTMLElement>('.chat__message')
+      const fragment = document.createDocumentFragment()
       let batchDate: Date | null = null
       for (const m of older) {
         const at = new Date(m.createdAt)
         if (!Number.isNaN(at.getTime()) && (!batchDate || !isSameDay(batchDate, at))) {
-          log.insertBefore(dateSeparator(at), firstSep)
+          fragment.appendChild(dateSeparator(at))
           batchDate = at
         }
         const row = buildMessageRow(m, false)
-        log.insertBefore(row, firstSep)
+        fragment.appendChild(row)
         updateGroup(row)
         registerMessageRow(m, row)
       }
+      log.insertBefore(fragment, firstSep)
       // Drop the pre-existing leading separator if the batch already ended on that day.
       if (
         firstSep instanceof HTMLElement &&
         firstSep.classList.contains('chat__date-separator') &&
         batchDate &&
-        isSameDay(batchDate, new Date(older[older.length - 1].createdAt))
+        firstRow?.dataset.at && isSameDay(batchDate, new Date(firstRow.dataset.at))
       ) {
         firstSep.remove()
       }
-      updateGroup(log.querySelector('.chat__message'))
-      if (firstSep) updateGroup(firstSep.nextSibling as Element | null)
+      updateGroup(firstRow)
       oldestLoadedAt = older[0].createdAt
       log.scrollTop = prevTop + (log.scrollHeight - prevHeight)
       if (older.length < HISTORY_PAGE) loadOlderBtn.remove()
@@ -1740,8 +1767,25 @@ export const ChatPage: Page = (root, go) => {
       if (ackOf?.ack) ackedRaises.set(ackOf.ack, ackOf.cancelled === true)
     }
     for (const m of history) noteServerTime(m.createdAt)
-    for (const message of history) appendMessage(message)
-    if (!history.length) appendSystemLine('Say hello — this is the start of your one-on-one.')
+    const historyFragment = document.createDocumentFragment()
+    for (const message of history) {
+      const at = new Date(message.createdAt)
+      if (!Number.isNaN(at.getTime()) && (!lastDate || !isSameDay(lastDate, at))) {
+        historyFragment.appendChild(dateSeparator(at))
+        lastDate = at
+      }
+      const row = buildMessageRow(message, false)
+      historyFragment.appendChild(row)
+      updateGroup(row)
+      registerMessageRow(message, row)
+    }
+    if (!history.length) {
+      const empty = document.createElement('div')
+      empty.className = 'chat__system-line'
+      empty.textContent = 'Say hello — this is the start of your one-on-one.'
+      historyFragment.appendChild(empty)
+    }
+    log.appendChild(historyFragment)
     // Resume the alert on reopen only if the latest raise is still live: newer
     // than the auto-clear window, with no ack/cancel anywhere in history (an
     // ack is its own reply-linked alarm message, not necessarily the latest
@@ -1769,10 +1813,11 @@ export const ChatPage: Page = (root, go) => {
       }
     }
     oldestLoadedAt = history[0]?.createdAt ?? null
-    if (history.length >= HISTORY_PAGE) log.prepend(loadOlderBtn)
+    if (history.length >= HISTORY_PAGE) log.querySelector('.chat__enc-note')!.after(loadOlderBtn)
     refreshReceipts()
     renderBanner(current)
     reconcileLeave(current)
+    log.scrollTop = log.scrollHeight
     updatePresence(current.otherLastReadAt)
     markReadNow()
 
@@ -1901,21 +1946,9 @@ export const ChatPage: Page = (root, go) => {
 
     root.querySelector<HTMLButtonElement>('#reply-bar-cancel')!.addEventListener('click', cancelReply)
 
-    // "Launch" animation on the send button icon: the class is re-added
-    // (with a forced reflow so rapid sends restart it) and removed after
-    // the animation's own duration, rather than an instant icon swap.
-    const SEND_ANIMATION_MS = 380
-    const triggerSendAnimation = (): void => {
-      sendBtn.classList.remove('chat__send-btn--launch')
-      void sendBtn.offsetWidth
-      sendBtn.classList.add('chat__send-btn--launch')
-      window.setTimeout(() => sendBtn.classList.remove('chat__send-btn--launch'), SEND_ANIMATION_MS)
-    }
-
     const send = (): void => {
       const content = input.value.trim()
       if (!content) return
-      triggerSendAnimation()
       input.value = ''
       syncComposer()
       const replyTo = replyTarget?.id ?? null
@@ -2583,6 +2616,9 @@ export const ChatPage: Page = (root, go) => {
     let swipeStartY = 0
     let swiping = false
     let swipeIcon: HTMLElement | null = null
+    let swipeFrame = 0
+    let swipeDistance = 0
+    let swipeIconTop = 0
     let longPressTimer: ReturnType<typeof setTimeout> | null = null
     // Android fires a native contextmenu ~right after the long-press timer;
     // this dedupes so the menu isn't built twice for the same message.
@@ -2614,14 +2650,18 @@ export const ChatPage: Page = (root, go) => {
         swipeStartX = e.touches[0].clientX
         swipeStartY = e.touches[0].clientY
         swiping = false
+        swipeDistance = 0
+        const rowRect = row.getBoundingClientRect()
+        const logRect = log.getBoundingClientRect()
+        swipeIconTop = rowRect.top - logRect.top + log.scrollTop + rowRect.height / 2 - 8
+        const bubbleRect = (row.querySelector<HTMLElement>('.chat__message-body') ?? row).getBoundingClientRect()
         const id = row.dataset.id
         longPressTimer = setTimeout(() => {
           longPressTimer = null
           swipeRow = null // cancel any in-progress reply-swipe tracking
           suppressClickUntil = Date.now() + 600 // eat the trailing touchend->click
           lastMenuFor = id
-          const bubble = row.querySelector<HTMLElement>('.chat__message-body') ?? row
-          openPopover(bubble.getBoundingClientRect(), (menu) => buildMessageMenu(menu, id, false))
+          openPopover(bubbleRect, (menu) => buildMessageMenu(menu, id, false))
         }, LONG_PRESS_MS)
       },
       { passive: true },
@@ -2641,6 +2681,7 @@ export const ChatPage: Page = (root, go) => {
             return
           }
           swiping = true
+          swipeRow.style.transition = 'none'
         }
         // Axis committed horizontal — block native scroll for the rest of this
         // gesture so a diagonal swipe can't scroll the page and reply at once.
@@ -2648,37 +2689,40 @@ export const ChatPage: Page = (root, go) => {
         // touch-action: pan-y on .chat__log keeps vertical scroll native/smooth
         // for gestures that never reach here.
         e.preventDefault()
-        if (dx <= 0) {
-          swipeRow.style.transform = ''
-          return
-        }
-        const clamped = Math.min(dx, SWIPE_MAX)
-        swipeRow.style.transform = `translateX(${clamped}px)`
-        const ready = clamped >= SWIPE_TRIGGER
-        swipeRow.classList.toggle('chat__message--swipe-ready', ready)
-
-        const icon = ensureSwipeIcon()
-        const rowRect = swipeRow.getBoundingClientRect()
-        const logRect = log.getBoundingClientRect()
-        icon.style.top = `${rowRect.top - logRect.top + log.scrollTop + rowRect.height / 2 - 8}px`
-        icon.style.opacity = String(Math.min(clamped / SWIPE_TRIGGER, 1))
-        icon.classList.toggle('chat__swipe-icon--ready', ready)
+        swipeDistance = Math.max(0, Math.min(dx, SWIPE_MAX))
+        if (!swipeFrame) swipeFrame = requestAnimationFrame(() => {
+          swipeFrame = 0
+          if (!swipeRow || disposed) return
+          swipeRow.style.transform = `translateX(${swipeDistance}px)`
+          const ready = swipeDistance >= SWIPE_TRIGGER
+          swipeRow.classList.toggle('chat__message--swipe-ready', ready)
+          const icon = ensureSwipeIcon()
+          icon.style.top = `${swipeIconTop}px`
+          icon.style.opacity = String(Math.min(swipeDistance / SWIPE_TRIGGER, 1))
+          icon.classList.toggle('chat__swipe-icon--ready', ready)
+        })
       },
       { passive: false },
     )
 
-    log.addEventListener('touchend', () => {
+    const finishSwipe = (reply: boolean): void => {
       cancelLongPress()
+      cancelAnimationFrame(swipeFrame)
+      swipeFrame = 0
       if (!swipeRow) return
-      const triggered = swipeRow.classList.contains('chat__message--swipe-ready')
+      const triggered = reply && swipeDistance >= SWIPE_TRIGGER
       const id = swipeRow.dataset.id!
+      swipeRow.style.transition = ''
       swipeRow.style.transform = ''
       swipeRow.classList.remove('chat__message--swipe-ready')
       swipeIcon?.remove()
       swipeIcon = null
       swipeRow = null
       if (triggered) startReply(id)
-    })
+    }
+    log.addEventListener('touchend', () => finishSwipe(true))
+    log.addEventListener('touchcancel', () => finishSwipe(false))
+    overlays.add(() => finishSwipe(false))
 
     log.addEventListener('contextmenu', (e) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
@@ -2720,6 +2764,7 @@ export const ChatPage: Page = (root, go) => {
           entry.row.dataset.at = message.createdAt
           relocateIfDayChanged(entry.row, oldAt, message.createdAt)
           entry.row.dataset.id = message.id
+          rowsById.set(message.id, entry.row) // index the existing DOM row; reconciliation is unchanged
           if (message.type === 'alarm' && !(message.payload as { ack?: string } | null)?.ack) {
             alarmController?.setId(message.id) // own raise: later ack/cancel/silence can now target it
           }

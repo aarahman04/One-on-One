@@ -55,6 +55,7 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-emphasized: cubic-bezier(0.3, 0, 0.1, 1);
   --duration-fast: 120ms;
+  --duration-enter: 160ms;
   --duration-base: 200ms;
   --duration-slow: 320ms;
 }
@@ -527,7 +528,6 @@ input:focus {
   text-align: left;
   background: var(--bg);
   color: var(--text);
-  animation: screen-enter 280ms var(--ease-standard);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -632,7 +632,7 @@ input:focus {
   overflow-x: hidden;
   overscroll-behavior: contain;
   touch-action: pan-y;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--radius-sm);
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -764,37 +764,24 @@ input:focus {
   flex: none;
   flex-wrap: wrap;
   min-width: 0;
+  /* Paint containment needs an inner gutter for bubble tails. */
+  padding-inline: var(--radius-sm);
   margin-top: var(--space-2);
   cursor: default;
   transition: transform var(--duration-fast) var(--ease-standard);
+  content-visibility: auto;
+  contain-intrinsic-size: auto calc(var(--space-6) * 2);
 }
 
 .chat__message[data-group-start='0'] { margin-top: var(--space-half); }
 
-/* A message arriving live (sent or received) pops in — never applied to
-   history/pagination, see appendMessage's `animate` param. Grows from the
-   corner nearest where it "came from": bottom-right (near the composer) for
-   a message you just sent, default bottom-left for one you received. The
-   overshoot easing gives the small-to-big "pop" WhatsApp/iMessage have,
-   rather than a flat fade. */
+/* Live rows fade up; history never animates. */
 .chat__message--enter {
-  transform-origin: bottom left;
-  animation: message-enter 340ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: message-enter var(--duration-enter) var(--ease-standard);
 }
-
-.chat__message--enter[data-mine='1'] {
-  transform-origin: bottom right;
-}
-
 @keyframes message-enter {
-  from {
-    opacity: 0;
-    transform: scale(0.6) translateY(var(--radius-md));
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
+  from { opacity: 0; transform: translateY(var(--space-2)); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -874,33 +861,31 @@ input:focus {
   opacity: 0.85;
 }
 
+.chat__composer-area { position: relative; flex: none; }
+.chat__composer-area:has(.chat__reply-bar--visible) { margin-top: var(--size-header); }
 .chat__reply-bar {
+  position: absolute;
+  bottom: 100%;
+  width: 100%;
+  height: var(--size-header);
   display: flex;
   align-items: center;
-  gap: var(--radius-md);
-  padding: 0 var(--text-lg);
-  max-height: 0;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   overflow: hidden;
-  border-top: calc(var(--space-half) / 2) solid transparent;
   background: var(--bg-raised);
   opacity: 0;
+  visibility: hidden;
   transform: translateY(var(--space-2));
   pointer-events: none;
-  /* Slower than --duration-base on purpose — a quick reply-bar reveal read as
-     a flicker rather than a visible confirmation that the swipe registered. */
   transition:
-    max-height 360ms var(--ease-standard),
-    padding 360ms var(--ease-standard),
-    opacity 360ms var(--ease-standard),
-    transform 360ms var(--ease-standard),
-    border-color 360ms var(--ease-standard);
+    opacity var(--duration-enter) var(--ease-standard),
+    transform var(--duration-enter) var(--ease-standard),
+    visibility var(--duration-enter);
 }
-
 .chat__reply-bar--visible {
-  max-height: calc(var(--space-6) * 2);
-  padding: var(--space-2) var(--text-lg);
-  border-top-color: var(--border);
   opacity: 1;
+  visibility: visible;
   transform: translateY(0);
   pointer-events: auto;
 }
@@ -1128,37 +1113,8 @@ input:focus {
   transform: scale(0.94) translate(calc(var(--space-half) / 2), calc(-1 * calc(var(--space-half) / 2)));
 }
 
-@keyframes send-launch {
-  0% {
-    transform: translate(0, 0) scale(1);
-    opacity: 1;
-  }
-  45% {
-    transform: translate(var(--radius-md), calc(-1 * var(--radius-md))) scale(0.7);
-    opacity: 0;
-  }
-  46% {
-    transform: translate(calc(-1 * var(--radius-md)), var(--radius-md)) scale(0.7);
-    opacity: 0;
-  }
-  100% {
-    transform: translate(0, 0) scale(1);
-    opacity: 1;
-  }
-}
-
-.chat__send-btn--launch svg {
-  animation: send-launch 380ms ease;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .chat__send-btn:active {
-    transform: none;
-  }
-
-  .chat__send-btn--launch svg {
-    animation: none;
-  }
+  .chat__send-btn:active { transform: none; }
 }
 
 .chat__input-bar-btn--hidden {
@@ -2112,7 +2068,6 @@ input:focus {
 .chat--bubbles .chat__message[data-type='image'] .chat__message-body {
   position: relative;
   padding: 0;
-  overflow: hidden;
 }
 
 .chat--bubbles .chat__message[data-type='image'] .image-bubble {
@@ -2121,20 +2076,21 @@ input:focus {
 }
 
 .chat--bubbles .chat__message[data-type='image'] .image-bubble__img {
-  border-radius: 0;
+  border-radius: var(--radius-bubble);
 }
 
 .chat--bubbles .chat__message[data-type='image'] .image-bubble__caption {
-  padding: 6px 10px 2px;
+  padding: var(--radius-sm) var(--radius-md) var(--space-half);
+  color: inherit;
 }
 
 .chat--bubbles .chat__message[data-type='image'] .chat__meta {
   position: absolute;
-  right: 8px;
-  bottom: 6px;
+  right: var(--space-2);
+  bottom: var(--radius-sm);
   margin-top: 0;
-  padding: 1px 6px;
-  border-radius: 8px;
+  padding: calc(var(--space-half) / 2) var(--radius-sm);
+  border-radius: var(--radius-bubble);
   /* dark scrim behind the meta only — legible over any photo, not a bar
      across the whole image */
   background: linear-gradient(to top, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
@@ -3013,8 +2969,50 @@ input:focus {
 .chat .alarm-card__title { color: inherit; }
 .chat .alarm-card__icon { color: var(--danger); }
 .chat .voice-bubble, .chat .file-card { min-width: 0; }
+.chat .chat__quote { min-height: var(--size-touch); }
+.chat .voice-bubble__track {
+  position: relative;
+  min-width: var(--size-touch);
+  height: var(--size-touch);
+  background: transparent;
+}
+.chat .voice-bubble__track::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  height: var(--space-1);
+  background: currentColor;
+  opacity: 0.3;
+  border-radius: var(--radius-pill);
+}
+.chat .voice-bubble__progress {
+  position: absolute;
+  top: 50%;
+  height: var(--space-1);
+  background: currentColor;
+  border-radius: var(--radius-pill);
+}
 .chat__message:is([data-type='letter'], [data-type='countdown'], [data-type='checkin'], [data-type='ask'], [data-type='thisorthat'], [data-type='alarm'], [data-type='location'], [data-type='voice'], [data-type='file']) .chat__message-body {
   min-width: min(80%, calc(var(--space-6) * 7));
 }
+.chat :is(.letter-card, .countdown-card, .checkin-card, .ask-card, .thisorthat-card, .alarm-card, .location-card, .file-card) { font-size: var(--text-base); }
+.chat :is(.chat__quote-name, .chat__quote-snippet, .voice-bubble__time) { font-size: var(--text-sm); }
+.chat--bubbles .chat__message[data-type='image'][data-caption='1'] .chat__meta {
+  position: static;
+  padding: var(--space-1) var(--space-2) var(--radius-sm);
+  background: transparent;
+}
+.chat--bubbles .chat__message[data-type='image'][data-caption='1'] .chat__bubble-time,
+.chat--bubbles .chat__message[data-type='image'][data-caption='1'] .chat__receipt {
+  color: inherit;
+  opacity: 0.8;
+}
+.chat--bubbles .chat__message[data-type='image'][data-caption='1'] .chat__receipt--seen { color: var(--bubble-read); opacity: 1; }
 .chat__ctx-menu .chat__emoji-picker-btn { min-width: var(--size-touch); min-height: var(--size-touch); padding: 0; }
 .menu__item { min-height: var(--size-touch); }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat__reply-bar, .chat__message { transition: none; }
+  .chat__message--enter { animation: none; }
+}
