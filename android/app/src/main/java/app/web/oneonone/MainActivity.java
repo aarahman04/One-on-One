@@ -34,19 +34,32 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     // Launched from the alarm notification: a tap (SILENCE) stops the ring and
     // opens the chat; the full-screen intent (SHOW) keeps ringing but lets the
     // activity appear over the lock screen and wake the display.
+    // This activity is exported (launcher), so every extra is untrusted: nothing
+    // happens unless the per-ring token our own service put in its
+    // PendingIntents matches AND an alarm is actually live; the alarm id is
+    // length-checked and must match the ringing alarm. None of this navigates:
+    // the app still resolves its normal session/login screen.
     private void handleAlarmIntent(Intent intent) {
         if (intent == null) return;
+        String token = intent.getStringExtra(AlarmForegroundService.EXTRA_TOKEN);
         boolean silence = intent.getBooleanExtra(AlarmForegroundService.EXTRA_SILENCE, false);
         boolean show = intent.getBooleanExtra(AlarmForegroundService.EXTRA_SHOW, false);
+        // Strip regardless, so a recreate/re-delivery can't replay them.
+        intent.removeExtra(AlarmForegroundService.EXTRA_SILENCE);
+        intent.removeExtra(AlarmForegroundService.EXTRA_SHOW);
+        intent.removeExtra(AlarmForegroundService.EXTRA_TOKEN);
+        if (!(silence || show) || !AlarmForegroundService.tokenValid(token)) return;
+        String alarmId = intent.getStringExtra(AlarmForegroundService.EXTRA_ALARM_ID);
+        if (!AlarmForegroundService.alarmIdAcceptable(alarmId)) return;
+
         if (silence) {
             try {
-                startService(AlarmForegroundService.stopIntent(this, intent.getStringExtra(AlarmForegroundService.EXTRA_ALARM_ID)));
+                startService(AlarmForegroundService.stopIntent(this, alarmId));
             } catch (IllegalStateException e) {
                 /* ignore */
             }
-            intent.removeExtra(AlarmForegroundService.EXTRA_SILENCE); // don't re-silence on a later recreate
             clearShowOverLock(this);
-        } else if (show && Build.VERSION.SDK_INT >= 27) {
+        } else if (Build.VERSION.SDK_INT >= 27) {
             setShowWhenLocked(true);
             setTurnScreenOn(true);
         }

@@ -21,6 +21,8 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 
+import java.util.UUID;
+
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
@@ -40,6 +42,7 @@ public class AlarmForegroundService extends Service {
     // chat); SHOW = the full-screen intent (show over the lock screen, keep ringing).
     static final String EXTRA_SILENCE = "alarmSilence";
     static final String EXTRA_SHOW = "alarmShow";
+    static final String EXTRA_TOKEN = "alarmToken";
 
     private static final String CHANNEL_ID = "alarm";
     private static final String FALLBACK_CHANNEL_ID = "alarm_fallback";
@@ -52,6 +55,28 @@ public class AlarmForegroundService extends Service {
     static volatile boolean ringing = false;
     static volatile String ringingAlarmId = null;
     static volatile String lastStoppedAlarmId = null;
+    // Per-ring secret embedded only in PendingIntents built by this service.
+    // MainActivity is exported (launcher), so any app can send it intents with
+    // our extras; it acts on them only if the token matches the live one.
+    // Non-null only while an alarm is ringing or its fallback notification is up.
+    static volatile String activeToken = null;
+
+    static boolean tokenValid(@Nullable String token) {
+        String active = activeToken;
+        return active != null && active.equals(token);
+    }
+
+    // Untrusted-extra check: bounded length, and must match the live alarm when one is known.
+    static boolean alarmIdAcceptable(@Nullable String alarmId) {
+        if (alarmId == null) return true;
+        if (alarmId.length() > 64) return false;
+        String live = ringingAlarmId;
+        return live == null || live.equals(alarmId);
+    }
+
+    static void newToken() {
+        activeToken = UUID.randomUUID().toString();
+    }
 
     private MediaPlayer player;
     private Vibrator vibrator;
@@ -75,6 +100,7 @@ public class AlarmForegroundService extends Service {
 
         ringingAlarmId = alarmId;
         ringing = true;
+        newToken();
         Notification notification = buildNotification(this, alarmId, false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // No dedicated "alarm" foreground-service type exists pre-API 34;
@@ -143,6 +169,7 @@ public class AlarmForegroundService extends Service {
         if (ringingAlarmId != null) lastStoppedAlarmId = ringingAlarmId;
         ringing = false;
         ringingAlarmId = null;
+        activeToken = null;
         stopForeground(STOP_FOREGROUND_REMOVE);
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) manager.cancel(NOTIFICATION_ID); // also clears a fallback notification
@@ -169,6 +196,7 @@ public class AlarmForegroundService extends Service {
         Intent tapIntent = new Intent(context, MainActivity.class);
         tapIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         tapIntent.putExtra(EXTRA_SILENCE, true);
+        tapIntent.putExtra(EXTRA_TOKEN, activeToken);
         if (alarmId != null) tapIntent.putExtra(EXTRA_ALARM_ID, alarmId);
         PendingIntent tapPending = PendingIntent.getActivity(context, 0, tapIntent, flags);
 
@@ -176,6 +204,7 @@ public class AlarmForegroundService extends Service {
         Intent showIntent = new Intent(context, MainActivity.class);
         showIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         showIntent.putExtra(EXTRA_SHOW, true);
+        showIntent.putExtra(EXTRA_TOKEN, activeToken);
         PendingIntent showPending = PendingIntent.getActivity(context, 1, showIntent, flags);
 
         PendingIntent silencePending = PendingIntent.getService(context, 2, stopIntent(context, alarmId), flags);

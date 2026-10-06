@@ -63,6 +63,7 @@ public class AlarmMessagingService extends MessagingService {
     private void postFallbackNotification(String alarmId) {
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager == null) return;
+        AlarmForegroundService.newToken(); // fallback intents carry a token too
         try {
             manager.notify(AlarmForegroundService.NOTIFICATION_ID, AlarmForegroundService.buildNotification(this, alarmId, true));
         } catch (SecurityException e) {
