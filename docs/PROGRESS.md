@@ -1,7 +1,13 @@
 # Progress Log
 
-## RESUME HERE — feat/whatsapp-ui (2026-10-06)
-Sections 1 and 2 committed; final build and expanded browser fixture checks pass. [PR #87](https://github.com/aarahman04/One-on-One/pull/87) is open to main, not merged, with before/after screenshots and unverified/device checks. Next: review the PR and run real-phone keyboard / two-account regression checks listed in docs/ui-whatsapp/README.md before release. Do not merge automatically. Protected alarm/notification/send/ack/retry/dedupe/resync/receipt logic and android/backend/service files remain unchanged (only a DOM row-index assignment accompanies existing optimistic ID reconciliation).
+## RESUME HERE — all fix PRs merged (2026-10-06)
+PR #86 (alarm/notification/reliability) and PR #87 (WhatsApp-style UI) are merged to main, plus the small own-send scroll fix below. Nothing has been verified on a real device. Next: run the android-build workflow (versionCode 2 / 1.0.1), install on two phones, run the 17-step test script in PR #86's description, then upload to Play and add the versionCode 2 row to docs/RELEASING.md. Before testing, confirm the Railway log shows `fcm: configured for project one-on-one-508202`.
+
+## [Scroll fix] Own sends always scroll to bottom — 2026-10-06
+Status: done (tsc passes; not device-verified).
+What shipped: appendMessage scrolls to the bottom whenever the message is your own (smooth when animated), as before the WhatsApp UI pass; incoming messages still only scroll when you are already near the bottom.
+Files: client/src/pages/ChatPage.ts (one condition), docs/PROGRESS.md.
+Next step: confirm on a phone by scrolling up in a long chat and sending.
 
 ## [WhatsApp UI 3] Final verification — 2026-10-06
 Status: done (build + fixture QA pass; device/live checks remain as listed below).
