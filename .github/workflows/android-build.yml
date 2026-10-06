@@ -25,7 +25,7 @@ on:
       versionCode:
         description: "versionCode (integer, must strictly increase per Play upload)"
         required: true
-        default: "3"
+        default: "4"
       versionName:
         description: "versionName (e.g. 1.0.0)"
         required: true
