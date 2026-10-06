@@ -13,7 +13,7 @@ Notes/deviations:
 
 ## RESUME HERE (fix/alarm-notify-reliability)
 Branch `fix/alarm-notify-reliability` (from origin/main). Sections A -> B -> C -> D, one commit + PROGRESS entry each.
-Done: A, B. Next: C (message notifications), then D, then final PR with device test script.
+Done: A, B, security hardening, C. Next: D (message reliability: reconnect resync, idempotent send, receipt:update, ordered insert), then ARCHITECTURE additions for C/D, then push + `gh pr create` with the device test script.
 
 ## [Alarm A] Silence / re-pop fix (native stop bridge) — 2026-10-06
 Status: done (tsc client+backend clean, `gradlew :app:compileDebugJavaWithJavac` OK); NOT device-verified
@@ -22,6 +22,19 @@ Files: android/.../AlarmPlugin.java (new), AlarmForegroundService.java, AlarmMes
 Verified: builds above. Unverified: everything on device (ring, Silence button, tap, lock-screen), live FCM.
 Included early from B: MediaPlayer rebuild, WAKE mode, lock-screen flags, FCM-start fallback notification, full-screen-intent hint (B2, B3, B1, B5 — see B entry if added).
 Next step: B4 (backend FCM ttl 120s + priority) then C.
+
+## [Alarm security hardening] Exported MainActivity intent handling — 2026-10-06
+Status: done (gradle compileDebugJavaWithJavac OK); not device-verified
+What shipped: MainActivity is exported (launcher), so its alarm extras are untrusted. `AlarmForegroundService` mints a per-ring random token (`activeToken`, non-null only while ringing or while the fallback notification is up, cleared on stop) embedded only in PendingIntents (FLAG_IMMUTABLE) it builds. `MainActivity.handleAlarmIntent` acts (silence / setShowWhenLocked+setTurnScreenOn) only if the token matches the live one and the alarmId is <= 64 chars and equals the ringing alarm; extras are stripped after reading; nothing navigates, the normal session/login resolution is unchanged. `AlarmForegroundService` stays `exported="false"` (the Silence action is a PendingIntent.getService). Fallback notification (no service ringing) also mints a token so its full-screen intent can show over the lock screen.
+Files: AlarmForegroundService.java, AlarmMessagingService.java, MainActivity.java.
+Next step: none (verify on device).
+
+## [Notify C] Message notifications register on launch — 2026-10-06
+Status: done (tsc client+backend, vite build, gradle compile OK); NOT device-verified; no live FCM
+What shipped: C1 `initNativePush()` (main.ts at start + on SIGNED_IN/INITIAL_SESSION via `authService.onSessionReady`): creates the `messages` channel, then if signed in and not opted out: permission granted -> register + POST token every launch; permission 'prompt' -> request once (flag `nativePushPrompted`). C2 one permanent `registration` listener uploads any new/rotated token (per-toggle listener removed; `registrationError` logged). C3 `authService.signOut` (all paths funnel through it) first calls `clearPushOnSignOut` (unregister FCM + POST /api/push/token/unregister + clear `nativePushToken`/opt-out), bounded to 4s; 401 handler and delete-account pass `skipPush` (session already gone). C4 menu shows "Notifications: On/Off" from real permission + token + opt-out (MenuDropdown got an optional trailing label callback; no styling change); toggling Off sets `nativePushOptOut` so launch registration doesn't undo it. C5 pushService prunes only on 404 / UNREGISTERED / SENDER_ID_MISMATCH, logs status+body otherwise (was: any 400). C6 syncDelivery logs errors; markDelivered failure no longer skips the push. C7 confirmed: AlarmMessagingService calls `super.onMessageReceived` first for every message (plugin relay intact) and only adds the alarm branch; background notification-messages are auto-displayed by the FCM SDK on channel `messages`, which now exists from startup.
+Files: client/src/features/pushNotifications.ts, services/authService.ts, main.ts, features/deleteAccount.ts, pages/DeleteAccountPage.ts, components/MenuDropdown.ts, pages/ChatPage.ts; backend/src/services/pushService.ts, websocket/socketServer.ts.
+Verified: builds. Unverified: fresh-install auto-register, token rotation, sign-out/sign-in as another account, Android 13 prompt, real FCM delivery. Web/PWA push path untouched.
+Next step: D.
 
 ## [Alarm B] Alarm when app killed/backgrounded — 2026-10-06
 Status: done (tsc clean, gradle compileDebugJavaWithJavac OK); NOT device-verified

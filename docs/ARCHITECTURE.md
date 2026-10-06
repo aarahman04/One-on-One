@@ -519,3 +519,19 @@ flowchart LR
 ```
 
 Rules: native rings unless the app is visible AND ChatPage is mounted; an ack/stop with a non-matching `alarmId` is ignored; history resume only if the raise is younger than 2 min, un-acked (any ack with `payload.ack === raise id`), and not in the persisted silenced set.
+
+## Notification registration lifecycle (native, since 2026-10 — section C)
+
+```mermaid
+flowchart TD
+  Start[App start / SIGNED_IN] --> Init[initNativePush]
+  Init --> Chan[create 'messages' channel + permanent registration listener]
+  Chan --> Sess{session and not opted out?}
+  Sess -->|no| Stop[stop]
+  Sess -->|yes| Perm{permission}
+  Perm -->|granted| Reg[register -> POST /api/push/token every launch]
+  Perm -->|prompt, never asked| Ask[request once] --> Reg
+  Perm -->|denied| Stop
+  FCM[FCM onNewToken] --> Listener[registration listener] --> Post[POST /api/push/token]
+  Out[signOut] --> Clear[unregister + POST /api/push/token/unregister + clear local token] --> SB[supabase signOut]
+```

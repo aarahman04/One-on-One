@@ -30,7 +30,7 @@ import {
 } from '../features/alarmNative'
 import { writeLocationFlow, type LocationPayload } from '../features/location'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
-import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
+import { getNotificationsLabel, isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
   getCurrentConnection,
   getMessages,
@@ -460,6 +460,7 @@ export const ChatPage: Page = (root, go) => {
           onBlocked: () => go('connection-id'),
         }),
       () => openDeleteAccountDialog(),
+      getNotificationsLabel,
     )
 
     // --- Presence: the other side marks read every ~4s while the chat is on

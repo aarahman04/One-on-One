@@ -15,7 +15,8 @@ import { PrivacyPage } from './pages/PrivacyPage'
 import { TermsPage } from './pages/TermsPage'
 import { ChildSafetyPage } from './pages/ChildSafetyPage'
 import { DeleteAccountPage } from './pages/DeleteAccountPage'
-import { onSignedOut, signOut } from './services/authService'
+import { onSessionReady, onSignedOut, signOut } from './services/authService'
+import { initNativePush } from './features/pushNotifications'
 import { setUnauthorizedHandler } from './services/apiClient'
 import { resolveScreenForSession } from './state/boot'
 import { ensureFirstRunGates } from './features/ageGate'
@@ -120,7 +121,7 @@ window.addEventListener('error', (e) => console.error('window error:', e.error ?
 
 // A 401 from the API (revoked/rotated session) → sign out and reload to login.
 setUnauthorizedHandler(() => {
-  void signOut()
+  void signOut({ skipPush: true })
   location.assign('/')
 })
 
@@ -185,3 +186,8 @@ if (legalScreen) {
 
 // Cross-tab sign-out → back to login.
 onSignedOut(() => location.assign('/'))
+
+// Native: register for message notifications on every launch / sign-in (not
+// only from the menu toggle), and keep the rotated-token listener attached.
+void initNativePush()
+onSessionReady(() => void initNativePush())

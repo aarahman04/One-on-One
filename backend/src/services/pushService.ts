@@ -135,7 +135,7 @@ export async function removeToken(userId: string, token: string): Promise<void> 
 }
 
 // Sends a payload to every FCM token the user has registered; prunes any token
-// FCM reports as UNREGISTERED / INVALID_ARGUMENT (mirrors the 404/410 pruning
+// FCM reports as UNREGISTERED / SENDER_ID_MISMATCH / 404 (mirrors the 404/410 pruning
 // on the web-push side).
 async function sendFcmToUser(userId: string, payload: PushPayload): Promise<void> {
   if (!fcmConfigured) {
@@ -193,13 +193,20 @@ async function sendFcmToUser(userId: string, payload: PushPayload): Promise<void
           console.log(`fcm: sent to ${row.token.slice(0, 12)}…`)
           return
         }
-        const errBody = (await res.json().catch(() => ({}))) as { error?: { status?: string } }
-        const status = errBody.error?.status
-        if (res.status === 404 || status === 'UNREGISTERED' || status === 'INVALID_ARGUMENT' || res.status === 400) {
+        const errText = await res.text().catch(() => '')
+        let status: string | undefined
+        try {
+          status = (JSON.parse(errText) as { error?: { status?: string } }).error?.status
+        } catch {
+          /* non-JSON body — logged raw below */
+        }
+        // Prune only when FCM says the token is permanently dead. A 400 can also
+        // mean a malformed payload (our bug) and must not wipe every user's token.
+        if (res.status === 404 || status === 'UNREGISTERED' || status === 'SENDER_ID_MISMATCH') {
           await supabaseAdmin.from('push_tokens').delete().eq('id', row.id)
           console.log(`fcm: pruned dead token ${row.id} (status ${res.status} ${status ?? ''})`)
         } else {
-          console.error(`fcm: send failed (status ${res.status} ${status ?? ''})`)
+          console.error(`fcm: send failed (status ${res.status} ${status ?? ''}) body: ${errText.slice(0, 500)}`)
         }
       } catch (err) {
         console.error('fcm: send error:', err instanceof Error ? err.message : err)

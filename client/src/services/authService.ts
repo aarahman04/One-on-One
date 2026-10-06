@@ -35,8 +35,34 @@ export async function getSession() {
   return data.session
 }
 
-export async function signOut(): Promise<void> {
-  await supabase.auth.signOut().catch(() => {})
+// Every sign-out path funnels through here. The push token must be deleted
+// server-side BEFORE the session is dropped (the delete needs auth), or the
+// next account on this device would inherit the previous one's notifications.
+// `skipPush` is for paths where the session is already gone (401 handler,
+// deleted account) — the call would only 401 again.
+let signingOut = false
+export async function signOut(opts: { skipPush?: boolean } = {}): Promise<void> {
+  if (signingOut) return
+  signingOut = true
+  try {
+    if (!opts.skipPush) {
+      const { clearPushOnSignOut } = await import('../features/pushNotifications')
+      await clearPushOnSignOut()
+    }
+    await supabase.auth.signOut().catch(() => {})
+  } finally {
+    signingOut = false
+  }
+}
+
+// Fires when a session becomes available (fresh sign-in or restored on app
+// start). Deferred a tick: supabase-js deadlocks if its own auth callback
+// awaits another supabase call.
+export function onSessionReady(callback: () => void): () => void {
+  const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    if (session && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) setTimeout(callback, 0)
+  })
+  return () => data.subscription.unsubscribe()
 }
 
 // Fires on an actual sign-out transition only (not the initial no-session

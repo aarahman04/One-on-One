@@ -143,13 +143,20 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
     }
 
     if (recipientOnline) {
-      await markDelivered(connection.id, recipientId)
+      // Separate try: a markDelivered failure must not skip the push.
+      try {
+        await markDelivered(connection.id, recipientId)
+      } catch (err) {
+        console.error(`syncDelivery: markDelivered failed for connection ${connection.id}:`, err)
+      }
       await sendNativeToUser(recipientId, payload)
       return
     }
     await sendToUser(recipientId, payload)
-  } catch {
-    /* best-effort — never fail the send because delivery-sync/push failed */
+  } catch (err) {
+    // Best-effort — never fail the send because delivery-sync/push failed —
+    // but never silently either.
+    console.error(`syncDelivery failed for message ${message.id}:`, err)
   }
 }
 

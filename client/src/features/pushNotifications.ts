@@ -6,6 +6,7 @@
 // bundle's initial load (same pattern as native Google sign-in).
 import { Capacitor } from '@capacitor/core'
 import { authedFetch } from '../services/apiClient'
+import { getSession } from '../services/authService'
 
 const isNative = Capacitor.isNativePlatform()
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined
@@ -41,10 +42,13 @@ async function getRegistration(): Promise<ServiceWorkerRegistration | null> {
 export async function isPushSubscribed(): Promise<boolean> {
   if (!isPushSupported()) return false
   if (isNative) {
-    // We only have a server record if we successfully registered — track that
-    // locally; the plugin exposes no "is registered" query.
+    // "On" = OS permission granted AND we hold an uploaded token AND the user
+    // hasn't switched it off. The plugin exposes no "is registered" query, so the
+    // token is tracked locally (cleared on sign-out / unsubscribe).
     try {
-      return localStorage.getItem(NATIVE_TOKEN_KEY) !== null
+      if (localStorage.getItem(NATIVE_TOKEN_KEY) === null || localStorage.getItem(OPT_OUT_KEY) === '1') return false
+      const { PushNotifications } = await import('@capacitor/push-notifications')
+      return (await PushNotifications.checkPermissions()).receive === 'granted'
     } catch {
       return false
     }
@@ -99,52 +103,46 @@ export async function unsubscribeFromPush(): Promise<void> {
 }
 
 // --- Native (FCM) -----------------------------------------------------------
+//
+// Lifecycle: initNativePush() runs at app start / on sign-in. It creates the
+// "messages" channel, attaches ONE permanent `registration` listener (so a
+// rotated FCM token is always re-sent to the backend), and — if notification
+// permission is granted (or can be asked once) and the user hasn't turned
+// notifications off — registers and POSTs the token on EVERY launch. The menu
+// toggle reuses the same registration path. clearPushOnSignOut() removes the
+// server token before the session is dropped.
 
-async function subscribeNative(): Promise<void> {
-  const { PushNotifications } = await import('@capacitor/push-notifications')
+type PushPlugin = typeof import('@capacitor/push-notifications').PushNotifications
 
-  // This is the one runtime prompt for POST_NOTIFICATIONS. Stage 3's
-  // CallServicePlugin also *can* request it, but only when a call starts and
-  // only if not already granted — so in practice this path owns the prompt and
-  // the call path finds it already answered.
-  let perm = await PushNotifications.checkPermissions()
-  if (perm.receive === 'prompt' || perm.receive === 'prompt-with-rationale') {
-    perm = await PushNotifications.requestPermissions()
+let pluginPromise: Promise<PushPlugin> | null = null
+function getPlugin(): Promise<PushPlugin> {
+  pluginPromise ??= import('@capacitor/push-notifications').then((m) => m.PushNotifications)
+  return pluginPromise
+}
+
+const OPT_OUT_KEY = 'nativePushOptOut' // user explicitly turned notifications off on this device
+const PROMPTED_KEY = 'nativePushPrompted' // we already asked for permission once automatically
+
+function lsGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
   }
-  if (perm.receive !== 'granted') throw new Error('permission denied')
-
-  await PushNotifications.createChannel({
-    id: MESSAGES_CHANNEL,
-    name: 'Messages',
-    description: 'New messages and missed calls',
-    importance: 5,
-    visibility: 1,
-  })
-
-  let settled = false
-  let resolveToken: (value: string) => void
-  let rejectToken: (reason: Error) => void
-  const tokenPromise = new Promise<string>((resolve, reject) => {
-    resolveToken = resolve
-    rejectToken = reject
-  })
-  const finish = (fn: () => void): void => {
-    if (settled) return
-    settled = true
-    fn()
+}
+function lsSet(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  } catch {
+    /* private mode */
   }
+}
 
-  // Await the listener handles BEFORE register() — Capacitor doesn't buffer an
-  // event fired before its JS listener is attached, so registering first can
-  // lose the token entirely and strand this on the timeout.
-  await PushNotifications.addListener('registration', (t) => finish(() => resolveToken(t.value)))
-  await PushNotifications.addListener('registrationError', (e) =>
-    finish(() => rejectToken(new Error(typeof e?.error === 'string' ? e.error : 'registration failed'))),
-  )
-  void PushNotifications.register()
-  setTimeout(() => finish(() => rejectToken(new Error('registration timed out'))), 10000)
-  const token = await tokenPromise
-
+async function postNativeToken(token: string): Promise<void> {
+  // Never go through authedFetch without a session: it would trigger the 401
+  // handler (sign-out + reload) — a token event can arrive while signed out.
+  if (!(await getSession())) throw new Error('not signed in')
   const res = await authedFetch('/api/push/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -154,48 +152,161 @@ async function subscribeNative(): Promise<void> {
   // without the Stage 4 routes, which is otherwise indistinguishable from a
   // real save failure.
   if (!res.ok) throw new Error(`failed to save token (${res.status})`)
-  try {
-    localStorage.setItem(NATIVE_TOKEN_KEY, token)
-  } catch {
-    /* private mode — the toggle still worked server-side */
-  }
+  lsSet(NATIVE_TOKEN_KEY, token)
 }
 
-async function unsubscribeNative(): Promise<void> {
-  const { PushNotifications } = await import('@capacitor/push-notifications')
-  let token: string | null = null
-  try {
-    token = localStorage.getItem(NATIVE_TOKEN_KEY)
-  } catch {
-    /* ignore */
+interface TokenWaiter {
+  resolve: (upload: Promise<void>) => void
+  reject: (err: Error) => void
+}
+let tokenWaiters: TokenWaiter[] = []
+
+let setupPromise: Promise<void> | null = null
+function ensureNativeSetup(): Promise<void> {
+  setupPromise ??= (async () => {
+    const PN = await getPlugin()
+    await PN.createChannel({
+      id: MESSAGES_CHANNEL,
+      name: 'Messages',
+      description: 'New messages and missed calls',
+      importance: 5,
+      visibility: 1,
+    })
+    // Await the listener handles BEFORE register() — Capacitor doesn't buffer an
+    // event fired before its JS listener is attached.
+    await PN.addListener('registration', (t) => {
+      const upload = postNativeToken(t.value)
+      upload.catch((err) => console.warn('push: token upload failed', err))
+      for (const w of tokenWaiters.splice(0)) w.resolve(upload)
+    })
+    await PN.addListener('registrationError', (e) => {
+      const err = new Error(typeof e?.error === 'string' ? e.error : 'registration failed')
+      console.warn('push: registration error', err.message)
+      for (const w of tokenWaiters.splice(0)) w.reject(err)
+    })
+    // Tapping a notification relaunches the singleTask MainActivity and boot
+    // state re-resolves the screen, so there is nothing to route here. A
+    // foreground receipt needs no extra notification — the socket has already
+    // delivered the message live.
+    await PN.addListener('pushNotificationReceived', () => {})
+    await PN.addListener('pushNotificationActionPerformed', () => {})
+  })().catch((err) => {
+    setupPromise = null // retry next time
+    throw err
+  })
+  return setupPromise
+}
+
+// register() re-emits `registration` with the current token each call; resolves
+// once that token has been uploaded to the backend.
+async function registerNative(): Promise<void> {
+  await ensureNativeSetup()
+  const PN = await getPlugin()
+  const done = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('registration timed out')), 10000)
+    tokenWaiters.push({
+      resolve: (upload) => {
+        clearTimeout(timer)
+        upload.then(resolve, reject)
+      },
+      reject: (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    })
+  })
+  done.catch(() => {}) // callers that don't await (launch path) must not leak an unhandled rejection
+  await PN.register()
+  return done
+}
+
+let initInFlight: Promise<void> | null = null
+export function initNativePush(): Promise<void> {
+  if (!isNative) return Promise.resolve()
+  initInFlight ??= (async () => {
+    try {
+      await ensureNativeSetup() // channel exists even before a session does
+      if (!(await getSession())) return
+      if (lsGet(OPT_OUT_KEY) === '1') return
+      const PN = await getPlugin()
+      let perm = (await PN.checkPermissions()).receive
+      if (perm === 'prompt' || perm === 'prompt-with-rationale') {
+        if (lsGet(PROMPTED_KEY) === '1') return // asked once already — the menu toggle is the way back in
+        lsSet(PROMPTED_KEY, '1')
+        perm = (await PN.requestPermissions()).receive
+      }
+      if (perm !== 'granted') return
+      await registerNative()
+    } catch (err) {
+      console.warn('push: native init failed', err)
+    } finally {
+      initInFlight = null
+    }
+  })()
+  return initInFlight
+}
+
+async function subscribeNative(): Promise<void> {
+  await ensureNativeSetup()
+  const PN = await getPlugin()
+  // Explicit user action: always allowed to ask (this is also the way back in
+  // after the one automatic prompt was dismissed).
+  let perm = await PN.checkPermissions()
+  if (perm.receive === 'prompt' || perm.receive === 'prompt-with-rationale') {
+    perm = await PN.requestPermissions()
   }
-  await PushNotifications.unregister().catch(() => {})
-  if (token) {
+  if (perm.receive !== 'granted') throw new Error('permission denied')
+  lsSet(OPT_OUT_KEY, null)
+  await registerNative()
+}
+
+async function removeServerToken(): Promise<void> {
+  const token = lsGet(NATIVE_TOKEN_KEY)
+  if (token && (await getSession())) {
     await authedFetch('/api/push/token/unregister', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
-    }).catch(() => {})
+    }).catch((err) => console.warn('push: token unregister failed', err))
   }
-  try {
-    localStorage.removeItem(NATIVE_TOKEN_KEY)
-  } catch {
-    /* ignore */
-  }
+  lsSet(NATIVE_TOKEN_KEY, null)
 }
 
-// Foreground / tap listeners. Tapping a notification relaunches the singleTask
-// MainActivity and boot state re-resolves the screen, so there is nothing to
-// route here. A foreground receipt needs no extra notification — the socket has
-// already delivered the message live. Registered once, lazily.
-if (isNative) {
-  void (async () => {
-    const { PushNotifications } = await import('@capacitor/push-notifications')
-    void PushNotifications.addListener('pushNotificationReceived', () => {
-      /* app is open — live delivery already handled it */
-    })
-    void PushNotifications.addListener('pushNotificationActionPerformed', () => {
-      /* singleTask relaunch + boot screen resolution handle navigation */
-    })
-  })()
+async function unsubscribeNative(): Promise<void> {
+  const PN = await getPlugin()
+  lsSet(OPT_OUT_KEY, '1')
+  await PN.unregister().catch(() => {})
+  await removeServerToken()
+}
+
+// Called by authService.signOut BEFORE the session is dropped (the delete needs
+// auth). Best-effort and bounded: sign-out must never hang on push cleanup.
+export async function clearPushOnSignOut(): Promise<void> {
+  if (!isNative) return
+  try {
+    await Promise.race([
+      (async () => {
+        const PN = await getPlugin()
+        await PN.unregister().catch(() => {})
+        await removeServerToken()
+      })(),
+      new Promise<void>((resolve) => setTimeout(resolve, 4000)),
+    ])
+  } catch (err) {
+    console.warn('push: sign-out cleanup failed', err)
+  }
+  // Local state is per-account: the next login re-evaluates from scratch.
+  lsSet(NATIVE_TOKEN_KEY, null)
+  lsSet(OPT_OUT_KEY, null)
+}
+
+// Menu label from the REAL state (permission + registration), not just a flag.
+export async function getNotificationsLabel(): Promise<string> {
+  let on = false
+  try {
+    on = await isPushSubscribed()
+  } catch {
+    /* treat as off */
+  }
+  return on ? 'Notifications: On' : 'Notifications: Off'
 }
