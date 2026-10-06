@@ -58,8 +58,9 @@ export async function getCurrentConnection(): Promise<CurrentConnection | null> 
   return body.connection
 }
 
-export async function getMessages(connectionId: string, before?: string): Promise<HistoryMessage[]> {
-  const qs = before ? `?before=${encodeURIComponent(before)}` : ''
+// `after`: messages strictly newer than that createdAt, oldest first (reconnect resync).
+export async function getMessages(connectionId: string, before?: string, after?: string): Promise<HistoryMessage[]> {
+  const qs = after ? `?after=${encodeURIComponent(after)}` : before ? `?before=${encodeURIComponent(before)}` : ''
   const res = await authedFetch(`/api/connections/${connectionId}/messages${qs}`)
   const body = await unwrap<{ messages: HistoryMessage[] }>(res)
   return Array.isArray(body?.messages) ? body.messages : []

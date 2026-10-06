@@ -250,14 +250,24 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
 
 // Mark the conversation read up to now for this member (drives the other
 // member's "Seen" indicator). Connection state, not a message — kept off Transport.
+export type ReceiptPatch = { lastReadAt?: string; lastDeliveredAt?: string }
+let receiptEmitter: ((connectionId: string, userId: string, patch: ReceiptPatch) => void) | null = null
+
+// Registered by socketServer so this module needn't import it (circular).
+export function setReceiptEmitter(fn: typeof receiptEmitter): void {
+  receiptEmitter = fn
+}
+
 export async function markRead(connectionId: string, userId: string): Promise<void> {
   await getConnectionForMember(connectionId, userId, { requireLive: true })
+  const now = new Date().toISOString()
   const { error } = await supabaseAdmin
     .from('connection_members')
-    .update({ last_read_at: new Date().toISOString() })
+    .update({ last_read_at: now })
     .eq('connection_id', connectionId)
     .eq('user_id', userId)
   if (error) throw error
+  receiptEmitter?.(connectionId, userId, { lastReadAt: now })
 }
 
 // Mark messages as delivered to this member as of now (drives the other
@@ -265,12 +275,14 @@ export async function markRead(connectionId: string, userId: string): Promise<vo
 // connection room and, inline, when a message is sent to an already-live
 // recipient — see socketServer.ts. Kept off Transport, same as markRead.
 export async function markDelivered(connectionId: string, userId: string): Promise<void> {
+  const now = new Date().toISOString()
   const { error } = await supabaseAdmin
     .from('connection_members')
-    .update({ last_delivered_at: new Date().toISOString() })
+    .update({ last_delivered_at: now })
     .eq('connection_id', connectionId)
     .eq('user_id', userId)
   if (error) throw error
+  receiptEmitter?.(connectionId, userId, { lastDeliveredAt: now })
 }
 
 async function getMemberLeave(connectionId: string, userId: string): Promise<MemberLeaveRow> {

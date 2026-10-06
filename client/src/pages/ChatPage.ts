@@ -53,6 +53,7 @@ import {
   type MessageType,
   type ReactionUpdate,
   type Transport,
+  type TransportState,
 } from '../services/messageService'
 import { mountCallBar, type CallBarHandle } from '../features/call/controller'
 import {
@@ -372,6 +373,13 @@ export const ChatPage: Page = (root, go) => {
       chatEl.classList.toggle('chat--alarm', active)
     }
     alarmController.onAutoClear(() => setAlarmGlow(false))
+    // Single place that marks read. The poll below only calls it as a
+    // presence heartbeat (see MARK_HEARTBEAT_MS), not on every 4s tick.
+    let lastMarkAt = 0
+    const markReadNow = (): void => {
+      lastMarkAt = Date.now()
+      void markRead(connectionId).catch(() => {})
+    }
     // Native rings whenever the app is open on any screen EXCEPT this one.
     void setNativeChatActive(true)
     void maybePromptFullScreenIntent()
@@ -467,15 +475,38 @@ export const ChatPage: Page = (root, go) => {
     // screen, so a fresh last_read_at means they're actually here right now.
     const navStatus = root.querySelector<HTMLDivElement>('#nav-status')!
     const PRESENCE_WINDOW_MS = 15000
-    const updatePresence = (otherLastReadAt: string | null): void => {
-      const active = !!otherLastReadAt && Date.now() - new Date(otherLastReadAt).getTime() < PRESENCE_WINDOW_MS
-      navStatus.textContent = active ? 'in chat' : 'away'
+    // The one header status element shows connection trouble ("connecting…" /
+    // "waiting for network") while the socket is down, else the other side's presence.
+    let presenceActive = false
+    let connLabel: string | null = null
+    const renderStatus = (): void => {
+      if (connLabel) {
+        navStatus.textContent = connLabel
+        navStatus.classList.add('chat__nav-status--connecting')
+        navStatus.classList.remove('chat__nav-status--away')
+        return
+      }
+      navStatus.textContent = presenceActive ? 'in chat' : 'away'
       navStatus.classList.remove('chat__nav-status--connecting')
-      navStatus.classList.toggle('chat__nav-status--away', !active)
+      navStatus.classList.toggle('chat__nav-status--away', !presenceActive)
+    }
+    const updatePresence = (otherLastReadAt: string | null): void => {
+      presenceActive = !!otherLastReadAt && Date.now() - new Date(otherLastReadAt).getTime() < PRESENCE_WINDOW_MS
+      renderStatus()
+    }
+    const setConnState = (state: TransportState): void => {
+      connLabel = state === 'connected' ? null : state === 'offline' ? 'waiting for network' : 'connecting…'
+      renderStatus()
     }
 
     // --- Message rendering -------------------------------------------------
     let lastDate: Date | null = null
+    // Newest server createdAt we hold — the cursor for the reconnect resync.
+    let newestServerAt: string | null = null
+    const noteServerTime = (iso: string): void => {
+      if (!newestServerAt || Date.parse(iso) > Date.parse(newestServerAt)) newestServerAt = iso
+    }
+    const resolvedTempIds = new Set<string>() // sends already reconciled — a late/duplicate echo is dropped
     const messagesById = new Map<string, QuotableMessage>()
 
     // --- Reactions: rendered as chips under the message body, updated live
@@ -1454,17 +1485,69 @@ export const ChatPage: Page = (root, go) => {
     // animate: true only for a message arriving live (sent or received) this
     // session — never for history/pagination, or every past message would
     // cascade-animate in on load.
+    const messageRows = (): NodeListOf<HTMLElement> => log.querySelectorAll<HTMLElement>('.chat__message[data-at]')
+    // First rendered message strictly later than `iso` (so a message that
+    // arrives out of order — e.g. after a resync — lands where it belongs).
+    const findNextRow = (iso: string): HTMLElement | null => {
+      const t = Date.parse(iso)
+      if (Number.isNaN(t)) return null
+      const rows = messageRows()
+      let next: HTMLElement | null = null
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (Date.parse(rows[i].dataset.at!) > t) next = rows[i]
+        else break
+      }
+      return next
+    }
+    // Insert `row` before `next`, keeping date separators right.
+    const insertOrdered = (row: HTMLElement, at: Date, next: HTMLElement): void => {
+      let anchor: Element = next
+      const nextSep = next.previousElementSibling
+      if (nextSep?.classList.contains('chat__date-separator') && !isSameDay(new Date(next.dataset.at!), at)) anchor = nextSep
+      log.insertBefore(row, anchor)
+      if (!row.previousElementSibling?.classList.contains('chat__date-separator')) {
+        let prev = row.previousElementSibling
+        while (prev && !(prev.classList.contains('chat__message') && (prev as HTMLElement).dataset.at)) prev = prev.previousElementSibling
+        if (!prev || !isSameDay(new Date((prev as HTMLElement).dataset.at!), at)) log.insertBefore(dateSeparator(at), row)
+      }
+    }
+    // The server echo replaces an optimistic row's client time; if that crosses
+    // midnight the row must move to the right day (and orphan separators go).
+    const relocateIfDayChanged = (row: HTMLElement, oldAt: string | undefined, newAt: string): void => {
+      const o = oldAt ? new Date(oldAt) : null
+      const n = new Date(newAt)
+      if (!o || Number.isNaN(o.getTime()) || Number.isNaN(n.getTime()) || isSameDay(o, n)) return
+      const prev = row.previousElementSibling
+      const after = row.nextElementSibling
+      row.remove()
+      if (prev?.classList.contains('chat__date-separator') && (!after || after.classList.contains('chat__date-separator'))) prev.remove()
+      const next = findNextRow(newAt)
+      if (next) insertOrdered(row, n, next)
+      else {
+        const rows = messageRows()
+        const last = rows[rows.length - 1]
+        if (!last || !isSameDay(new Date(last.dataset.at!), n)) log.appendChild(dateSeparator(n))
+        log.appendChild(row)
+      }
+      const rows = messageRows()
+      lastDate = rows.length ? new Date(rows[rows.length - 1].dataset.at!) : null
+    }
+
     const appendMessage = (message: ChatMessage, pending = false, animate = false): HTMLElement => {
       const at = new Date(message.createdAt)
       const isMine = message.senderId === myUserId
       const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80
-      if (!Number.isNaN(at.getTime()) && (!lastDate || !isSameDay(lastDate, at))) {
+      // Live (animate) messages that sort before what's already shown are
+      // inserted in order rather than appended.
+      const orderedNext = !pending && animate && !Number.isNaN(at.getTime()) ? findNextRow(message.createdAt) : null
+      if (!orderedNext && !Number.isNaN(at.getTime()) && (!lastDate || !isSameDay(lastDate, at))) {
         log.appendChild(dateSeparator(at))
         lastDate = at
       }
       const row = buildMessageRow(message, pending)
       if (animate) row.classList.add('chat__message--enter')
-      log.appendChild(row)
+      if (orderedNext) insertOrdered(row, at, orderedNext)
+      else log.appendChild(row)
       if (atBottom || isMine) log.scrollTop = log.scrollHeight
       registerMessageRow(message, row)
       return row
@@ -1641,6 +1724,7 @@ export const ChatPage: Page = (root, go) => {
       const ackOf = m.type === 'alarm' ? (m.payload as { ack?: string; cancelled?: boolean } | null) : null
       if (ackOf?.ack) ackedRaises.set(ackOf.ack, ackOf.cancelled === true)
     }
+    for (const m of history) noteServerTime(m.createdAt)
     for (const message of history) appendMessage(message)
     if (!history.length) appendSystemLine('Say hello — this is the start of your one-on-one.')
     // Resume the alert on reopen only if the latest raise is still live: newer
@@ -1675,24 +1759,30 @@ export const ChatPage: Page = (root, go) => {
     renderBanner(current)
     reconcileLeave(current)
     updatePresence(current.otherLastReadAt)
-    void markRead(connectionId).catch(() => {})
+    markReadNow()
 
     // --- Outgoing (optimistic) --------------------------------------------
     const pending: Pending[] = []
 
-    const trySend = (entry: Pending): void => {
-      if (!transport) return // stays queued; flushed on (re)connect
+    const trySend = (entry: Pending): Promise<void> => {
+      if (!transport) return Promise.resolve() // stays queued; flushed on (re)connect
       entry.sent = true
       entry.row.classList.remove('chat__message--failed')
-      transport.sendMessage(entry.content, entry.type, entry.payload, entry.replyTo, entry.tempId).catch(() => {
-        entry.sent = false
-        entry.row.classList.add('chat__message--failed')
-      })
+      return transport.sendMessage(entry.content, entry.type, entry.payload, entry.replyTo, entry.tempId).then(
+        (saved) => {
+          // The ack carries the saved message (the original one on a deduped
+          // resend), so the optimistic row reconciles even if the echo was lost.
+          if (saved && pending.includes(entry)) onIncoming({ ...saved, tempId: entry.tempId })
+        },
+        () => {
+          entry.sent = false
+          entry.row.classList.add('chat__message--failed')
+        },
+      )
     }
 
-    const flushPending = (): void => {
-      for (const entry of pending) if (!entry.sent) trySend(entry)
-    }
+    const flushPending = (): Promise<void> =>
+      Promise.allSettled(pending.filter((entry) => !entry.sent).map(trySend)).then(() => undefined)
 
     const input = root.querySelector<HTMLTextAreaElement>('#message-input')!
     const composer = root.querySelector<HTMLFormElement>('#composer')!
@@ -2596,14 +2686,20 @@ export const ChatPage: Page = (root, go) => {
 
     // --- Incoming ----------------------------------------------------------
     const onIncoming = (message: IncomingMessage): void => {
+      // A send already reconciled (via the ack or an earlier echo) — drop the repeat.
+      if (message.tempId && resolvedTempIds.has(message.tempId)) return
       // Reconcile our own optimistic row by the client tempId echoed back —
       // never by content (server may normalise it) which duplicated rows.
       if (message.senderId === myUserId && message.tempId) {
         const idx = pending.findIndex((p) => p.tempId === message.tempId)
         if (idx >= 0) {
           const [entry] = pending.splice(idx, 1)
+          resolvedTempIds.add(message.tempId)
+          noteServerTime(message.createdAt)
           entry.row.classList.remove('chat__message--pending', 'chat__message--failed')
+          const oldAt = entry.row.dataset.at
           entry.row.dataset.at = message.createdAt
+          relocateIfDayChanged(entry.row, oldAt, message.createdAt)
           entry.row.dataset.id = message.id
           if (message.type === 'alarm' && !(message.payload as { ack?: string } | null)?.ack) {
             alarmController?.setId(message.id) // own raise: later ack/cancel/silence can now target it
@@ -2616,6 +2712,7 @@ export const ChatPage: Page = (root, go) => {
       }
       // Dedup: a reconnect can re-deliver recent message:new events.
       if (message.id && messagesById.has(message.id)) return
+      noteServerTime(message.createdAt)
 
       if (message.type === 'alarm') {
         const alarmPayload = message.payload as { ack?: string; cancelled?: boolean } | null
@@ -2627,7 +2724,7 @@ export const ChatPage: Page = (root, go) => {
             alarmController?.stopAll(alarmPayload.ack)
             setAlarmGlow(false)
           }
-        } else if (message.senderId !== myUserId) {
+        } else if (message.senderId !== myUserId && Date.now() - Date.parse(message.createdAt) < ALARM_AUTO_CLEAR_MS) {
           setAlarmGlow(true)
           // Hidden/backgrounded or native already ringing: native owns the sound,
           // so this layer shows the glow only (never two rings).
@@ -2656,12 +2753,38 @@ export const ChatPage: Page = (root, go) => {
 
       appendMessage(message, false, true)
       if (message.senderId !== myUserId) {
-        void markRead(connectionId).catch(() => {})
+        markReadNow()
       }
     }
 
     // --- Connect (non-blocking: chat is already usable) --------------------
     let connecting = false
+    // After a reconnect: resend anything unacked FIRST (the server dedupes by
+    // tempId and the ack reconciles the optimistic row), then fetch everything
+    // newer than our newest server message and merge by id.
+    let resyncing = false
+    const resyncAfterReconnect = async (): Promise<void> => {
+      if (resyncing || disposed) return
+      resyncing = true
+      try {
+        await flushPending()
+        let cursor = newestServerAt
+        for (let pass = 0; pass < 10 && !disposed; pass++) {
+          const batch = (await getMessages(connectionId, undefined, cursor ?? undefined))
+            .slice()
+            .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+          for (const m of batch) {
+            if (!messagesById.has(m.id)) onIncoming(m as IncomingMessage)
+            if (!cursor || Date.parse(m.createdAt) > Date.parse(cursor)) cursor = m.createdAt
+          }
+          if (!cursor || batch.length < HISTORY_PAGE) break
+        }
+      } catch (err) {
+        console.warn('resync after reconnect failed', err)
+      } finally {
+        resyncing = false
+      }
+    }
     const attachTransport = (t: Transport): void => {
       transport = t
       unsubscribe = t.onMessage(onIncoming)
@@ -2669,8 +2792,27 @@ export const ChatPage: Page = (root, go) => {
       unsubscribeEnded = t.onConnectionEnded(() => {
         if (!disposed) go('connection-id')
       })
-      flushPending()
-      void markRead(connectionId).catch(() => {})
+      setConnState(t.getState())
+      t.onStateChange((state, reconnected) => {
+        if (disposed) return
+        setConnState(state)
+        if (state === 'connected' && reconnected) void resyncAfterReconnect()
+      })
+      // Receipts pushed over the socket flip ticks/presence instantly; the 4s
+      // poll below stays as the fallback.
+      t.onReceipt((u) => {
+        if (disposed || u.userId === myUserId) return
+        if (u.lastReadAt && (!otherLastRead || Date.parse(u.lastReadAt) > Date.parse(otherLastRead))) {
+          otherLastRead = u.lastReadAt
+          updatePresence(u.lastReadAt)
+        }
+        if (u.lastDeliveredAt && (!otherLastDelivered || Date.parse(u.lastDeliveredAt) > Date.parse(otherLastDelivered))) {
+          otherLastDelivered = u.lastDeliveredAt
+        }
+        refreshReceipts()
+      })
+      void flushPending()
+      markReadNow()
       // Mount once — ensureConnected can call attachTransport again on a
       // later successful reconnect after an earlier attempt failed.
       if (!callBar) callBar = mountCallBar(nav, getCallTransport(), otherName)
@@ -2687,6 +2829,7 @@ export const ChatPage: Page = (root, go) => {
         attachTransport(t)
       } catch {
         /* chat stays usable; retried on the next poll tick */
+        setConnState(navigator.onLine === false ? 'offline' : 'connecting')
       } finally {
         connecting = false
       }
@@ -2698,7 +2841,7 @@ export const ChatPage: Page = (root, go) => {
     // the chat no longer silences it, so a raise can't be missed by glancing
     // at the tab.
     focusHandler = () => {
-      void markRead(connectionId).catch(() => {})
+      markReadNow()
       // Back in the app while native is ringing: never let this layer ring too.
       void getNativeAlarmState().then((native) => {
         if (native.ringing) alarmController?.silenceLocal()
@@ -2707,9 +2850,10 @@ export const ChatPage: Page = (root, go) => {
     window.addEventListener('focus', focusHandler)
 
     // --- Poll: leave state, termination, seen, reconnect ------------------
+    const MARK_HEARTBEAT_MS = 10_000
     const poll = async (): Promise<void> => {
       void ensureConnected() // recover a failed initial transport
-      if (transport && pending.some((p) => !p.sent)) flushPending() // retry stuck sends
+      if (transport && pending.some((p) => !p.sent)) void flushPending() // retry stuck sends
 
       let next: CurrentConnection | null
       try {
@@ -2735,8 +2879,11 @@ export const ChatPage: Page = (root, go) => {
       }
       // Keep marking read while the chat is actually on screen — makes the
       // other side's "seen" tick reliable even if a discrete event was missed.
-      if (document.visibilityState === 'visible') {
-        void markRead(connectionId).catch(() => {})
+      // Only a presence heartbeat now (the other side's "in chat" window is
+      // 15s): new messages and focus already mark read immediately, and the
+      // receipt:update event delivers the result without waiting for a poll.
+      if (document.visibilityState === 'visible' && Date.now() - lastMarkAt > MARK_HEARTBEAT_MS) {
+        markReadNow()
       }
     }
 

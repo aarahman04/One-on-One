@@ -22,6 +22,16 @@ export interface ReactionUpdate {
   op: 'add' | 'remove'
 }
 
+export interface ReceiptUpdate {
+  userId: string // whose read/delivered position moved
+  lastReadAt?: string
+  lastDeliveredAt?: string
+}
+
+// 'connected' | 'connecting' (reconnecting, network up) | 'offline' (no network).
+// UI text: "connecting…" / "waiting for network".
+export type TransportState = 'connected' | 'connecting' | 'offline'
+
 export interface Transport {
   connect(): Promise<void>
   disconnect(): void
@@ -31,9 +41,15 @@ export interface Transport {
     payload?: unknown,
     replyTo?: string | null,
     tempId?: string,
-  ): Promise<void>
+  ): Promise<IncomingMessage | undefined>
   onMessage(callback: (message: IncomingMessage) => void): () => void
   sendReaction(messageId: string, emoji: string, op: 'add' | 'remove'): Promise<void>
   onReaction(callback: (update: ReactionUpdate) => void): () => void
   onConnectionEnded(callback: () => void): () => void
+  onReceipt(callback: (update: ReceiptUpdate) => void): () => void
+  // Fires on every state change. `reconnected` is true when state becomes
+  // 'connected' again after having been connected before (the signal to resync
+  // anything missed while away).
+  onStateChange(callback: (state: TransportState, reconnected: boolean) => void): () => void
+  getState(): TransportState
 }

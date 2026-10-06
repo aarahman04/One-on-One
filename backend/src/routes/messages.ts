@@ -11,7 +11,8 @@ messagesRouter.use(requireAuth)
 messagesRouter.get('/connections/:id/messages', async (req, res) => {
   const user = req.appUser!
   const before = typeof req.query.before === 'string' ? req.query.before : undefined
-  const messages = await getHistory(req.params.id, user.id, before)
+  const after = typeof req.query.after === 'string' ? req.query.after : undefined
+  const messages = await getHistory(req.params.id, user.id, before, after)
   res.json({ messages })
 })
 

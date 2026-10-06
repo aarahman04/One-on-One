@@ -535,3 +535,25 @@ flowchart TD
   FCM[FCM onNewToken] --> Listener[registration listener] --> Post[POST /api/push/token]
   Out[signOut] --> Clear[unregister + POST /api/push/token/unregister + clear local token] --> SB[supabase signOut]
 ```
+
+## Reconnect resync, idempotent send, receipt:update (since 2026-10 — section D)
+
+```mermaid
+sequenceDiagram
+  participant C as ChatPage
+  participant T as InternetTransport
+  participant S as socketServer
+  participant API as GET /connections/:id/messages
+  C->>T: sendMessage(tempId)
+  T->>S: message:send {tempId}
+  S-->>T: ack {ok, message} (and message:new broadcast)
+  Note over T,S: ack lost / timeout, socket drops
+  T-->>C: onStateChange(connecting | offline) -> header "connecting…" / "waiting for network"
+  T-->>C: onStateChange(connected, reconnected=true)
+  C->>T: flush unacked (same tempId)
+  T->>S: message:send {tempId}
+  S-->>T: ack {ok, duplicate, original message} (no re-save, no re-broadcast)
+  C->>API: ?after=newest server createdAt (loop while full page)
+  API-->>C: missed messages, merged by id, inserted by createdAt
+  S-->>C: receipt:update {userId, lastReadAt | lastDeliveredAt} (from markRead / markDelivered)
+```
