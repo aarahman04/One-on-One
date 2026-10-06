@@ -1,6 +1,8 @@
 package app.web.oneonone;
 
+import android.app.Activity;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
@@ -18,7 +20,44 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(CallServicePlugin.class);
+        registerPlugin(AlarmPlugin.class);
         super.onCreate(savedInstanceState);
+        handleAlarmIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        handleAlarmIntent(intent);
+    }
+
+    // Launched from the alarm notification: a tap (SILENCE) stops the ring and
+    // opens the chat; the full-screen intent (SHOW) keeps ringing but lets the
+    // activity appear over the lock screen and wake the display.
+    private void handleAlarmIntent(Intent intent) {
+        if (intent == null) return;
+        boolean silence = intent.getBooleanExtra(AlarmForegroundService.EXTRA_SILENCE, false);
+        boolean show = intent.getBooleanExtra(AlarmForegroundService.EXTRA_SHOW, false);
+        if (silence) {
+            try {
+                startService(AlarmForegroundService.stopIntent(this, intent.getStringExtra(AlarmForegroundService.EXTRA_ALARM_ID)));
+            } catch (IllegalStateException e) {
+                /* ignore */
+            }
+            intent.removeExtra(AlarmForegroundService.EXTRA_SILENCE); // don't re-silence on a later recreate
+            clearShowOverLock(this);
+        } else if (show && Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+        }
+    }
+
+    static void clearShowOverLock(Activity activity) {
+        if (activity == null || Build.VERSION.SDK_INT < 27) return;
+        activity.runOnUiThread(() -> {
+            activity.setShowWhenLocked(false);
+            activity.setTurnScreenOn(false);
+        });
     }
 
     @Override
@@ -31,6 +70,13 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     public void onPause() {
         super.onPause();
         AppState.foreground = false;
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        // Alarm is over (or the user left): stop forcing the screen on/over the lock.
+        if (!AlarmForegroundService.ringing) clearShowOverLock(this);
     }
 
     @Override

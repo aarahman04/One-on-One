@@ -21,7 +21,13 @@ import { formatCountdown, openCountdownComposer, type CountdownPayload } from '.
 import { moodEmoji, openCheckinComposer, type CheckinPayload } from '../features/checkin'
 import { openAskAnswerModal, openAskComposer, type AskPayload } from '../features/ask'
 import { openThisOrThatAnswerModal, openThisOrThatComposer, type ThisOrThatPayload } from '../features/thisorthat'
-import { confirmSendAlarm, createAlarmController, type AlarmController } from '../features/alarm'
+import { AUTO_CLEAR_MS as ALARM_AUTO_CLEAR_MS, confirmSendAlarm, createAlarmController, type AlarmController } from '../features/alarm'
+import {
+  getNativeAlarmState,
+  isAlarmSilenced,
+  maybePromptFullScreenIntent,
+  setNativeChatActive,
+} from '../features/alarmNative'
 import { writeLocationFlow, type LocationPayload } from '../features/location'
 import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
@@ -207,6 +213,7 @@ export const ChatPage: Page = (root, go) => {
     viewportResizeHandler = null
     alarmController?.dispose()
     alarmController = null
+    void setNativeChatActive(false)
   }
 
   root.innerHTML = loadingScreenHtml()
@@ -365,6 +372,20 @@ export const ChatPage: Page = (root, go) => {
       chatEl.classList.toggle('chat--alarm', active)
     }
     alarmController.onAutoClear(() => setAlarmGlow(false))
+    // Native rings whenever the app is open on any screen EXCEPT this one.
+    void setNativeChatActive(true)
+    void maybePromptFullScreenIntent()
+    // Raise ids that already have an ack/cancel (raise id -> cancelled?), so a
+    // raise card renders as answered after a reload and can't be re-tapped.
+    const ackedRaises = new Map<string, boolean>()
+    const markRaiseAcked = (raiseId: string, cancelled: boolean): void => {
+      ackedRaises.set(raiseId, cancelled)
+      const card = chatEl.querySelector<HTMLButtonElement>(`.chat__message[data-id="${CSS.escape(raiseId)}"] .alarm-card--raise`)
+      if (!card) return
+      card.disabled = true
+      const hint = card.querySelector('.alarm-card__hint')
+      if (hint) hint.textContent = cancelled ? 'cancelled' : 'acknowledged'
+    }
 
     // Wallpaper and message style are both shared per-connection (either
     // member's pick applies to both); theme stays per-device. Synced via the
@@ -927,6 +948,10 @@ export const ChatPage: Page = (root, go) => {
       hint.textContent = isMine ? 'tap to cancel' : 'tap to acknowledge'
       body.append(title, hint)
       card.append(icon, body)
+      if (message.id && ackedRaises.has(message.id)) {
+        card.disabled = true
+        hint.textContent = ackedRaises.get(message.id) ? 'cancelled' : 'acknowledged'
+      }
 
       // Both branches send the same reply-linked {ack} shape (see
       // validateAlarmPayload) — a raiser's cancel just adds cancelled:true so
@@ -936,6 +961,7 @@ export const ChatPage: Page = (root, go) => {
         e.stopPropagation() // don't also toggle the row's timestamp
         if (card.disabled) return
         card.disabled = true
+        if (message.id) ackedRaises.set(message.id, isMine)
         if (isMine) {
           hint.textContent = 'cancelled'
           sendMessage('', 'alarm', { ack: message.id, cancelled: true }, message.id ?? null)
@@ -1610,15 +1636,37 @@ export const ChatPage: Page = (root, go) => {
     // firing its own request.
     const historyMediaPaths = history.map(mediaPathOf).filter((p): p is string => !!p)
     if (historyMediaPaths.length) void getSignedUrls(connectionId, historyMediaPaths).catch(() => {})
+    for (const m of history) {
+      const ackOf = m.type === 'alarm' ? (m.payload as { ack?: string; cancelled?: boolean } | null) : null
+      if (ackOf?.ack) ackedRaises.set(ackOf.ack, ackOf.cancelled === true)
+    }
     for (const message of history) appendMessage(message)
     if (!history.length) appendSystemLine('Say hello — this is the start of your one-on-one.')
-    // Resume the alert on reopen: if the most recent alarm-type message in
-    // history is a raise (not yet followed by an ack — an ack would itself
-    // be the more recent alarm message), the emergency is still live.
-    const lastAlarm = [...history].reverse().find((m) => m.type === 'alarm')
-    if (lastAlarm && !(lastAlarm.payload as { ack?: string } | null)?.ack) {
-      setAlarmGlow(true)
-      alarmController?.start(lastAlarm.senderId === myUserId ? { silent: true } : undefined)
+    // Resume the alert on reopen only if the latest raise is still live: newer
+    // than the auto-clear window, with no ack/cancel anywhere in history (an
+    // ack is its own reply-linked alarm message, not necessarily the latest
+    // alarm row), and not already silenced/auto-cleared on this device.
+    const lastRaise = [...history].reverse().find(
+      (m) => m.type === 'alarm' && !(m.payload as { ack?: string } | null)?.ack,
+    )
+    if (lastRaise?.id && !ackedRaises.has(lastRaise.id) && !isAlarmSilenced(lastRaise.id)) {
+      const age = Date.now() - new Date(lastRaise.createdAt).getTime()
+      if (age < ALARM_AUTO_CLEAR_MS) {
+        const raiseId = lastRaise.id
+        const mine = lastRaise.senderId === myUserId
+        void getNativeAlarmState().then((native) => {
+          if (disposed || isAlarmSilenced(raiseId) || ackedRaises.has(raiseId)) return
+          // Native already ringing (or the user silenced it there): show the glow
+          // and the acknowledge card but never start a second, JS ring.
+          const nativeHandled = native.ringing || native.lastStoppedAlarmId === raiseId
+          setAlarmGlow(true)
+          alarmController?.start({
+            silent: mine || nativeHandled,
+            alarmId: raiseId,
+            remainingMs: ALARM_AUTO_CLEAR_MS - age,
+          })
+        })
+      }
     }
     oldestLoadedAt = history[0]?.createdAt ?? null
     if (history.length >= HISTORY_PAGE) log.prepend(loadOlderBtn)
@@ -1700,8 +1748,10 @@ export const ChatPage: Page = (root, go) => {
       // Alarm glow/sound react to your OWN send optimistically too — no
       // reason to wait on the round trip for state you already know.
       if (type === 'alarm') {
-        if ((payload as { ack?: string } | null)?.ack) {
-          alarmController?.stopAll()
+        const sentAck = payload as { ack?: string; cancelled?: boolean } | null
+        if (sentAck?.ack) {
+          markRaiseAcked(sentAck.ack, sentAck.cancelled === true)
+          alarmController?.stopAll(sentAck.ack)
           setAlarmGlow(false)
         } else {
           setAlarmGlow(true)
@@ -2554,6 +2604,9 @@ export const ChatPage: Page = (root, go) => {
           entry.row.classList.remove('chat__message--pending', 'chat__message--failed')
           entry.row.dataset.at = message.createdAt
           entry.row.dataset.id = message.id
+          if (message.type === 'alarm' && !(message.payload as { ack?: string } | null)?.ack) {
+            alarmController?.setId(message.id) // own raise: later ack/cancel/silence can now target it
+          }
           entry.row.dataset.delivered = '1'
           messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
           applyReceipt(entry.row)
@@ -2564,12 +2617,25 @@ export const ChatPage: Page = (root, go) => {
       if (message.id && messagesById.has(message.id)) return
 
       if (message.type === 'alarm') {
-        if ((message.payload as { ack?: string } | null)?.ack) {
-          alarmController?.stopAll()
-          setAlarmGlow(false)
+        const alarmPayload = message.payload as { ack?: string; cancelled?: boolean } | null
+        if (alarmPayload?.ack) {
+          markRaiseAcked(alarmPayload.ack, alarmPayload.cancelled === true)
+          // An ack for a different alarm than the live one must not silence it.
+          const live = alarmController?.currentId()
+          if (!live || live === alarmPayload.ack) {
+            alarmController?.stopAll(alarmPayload.ack)
+            setAlarmGlow(false)
+          }
         } else if (message.senderId !== myUserId) {
           setAlarmGlow(true)
-          alarmController?.start() // the real alert — sound + vibration + glow
+          // Hidden/backgrounded or native already ringing: native owns the sound,
+          // so this layer shows the glow only (never two rings).
+          const raiseId = message.id
+          const hidden = document.visibilityState === 'hidden'
+          void getNativeAlarmState().then((native) => {
+            if (disposed || isAlarmSilenced(raiseId) || ackedRaises.has(raiseId)) return
+            alarmController?.start({ silent: hidden || native.ringing, alarmId: raiseId })
+          })
         }
       }
 
@@ -2632,6 +2698,10 @@ export const ChatPage: Page = (root, go) => {
     // at the tab.
     focusHandler = () => {
       void markRead(connectionId).catch(() => {})
+      // Back in the app while native is ringing: never let this layer ring too.
+      void getNativeAlarmState().then((native) => {
+        if (native.ringing) alarmController?.silenceLocal()
+      })
     }
     window.addEventListener('focus', focusHandler)
 

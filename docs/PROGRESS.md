@@ -11,6 +11,18 @@ Notes/deviations:
 
 ---
 
+## RESUME HERE (fix/alarm-notify-reliability)
+Branch `fix/alarm-notify-reliability` (from origin/main). Sections A -> B -> C -> D, one commit + PROGRESS entry each.
+Done: A. Next: B (alarm when app killed/backgrounded). Then C, D, then final PR with device test script.
+
+## [Alarm A] Silence / re-pop fix (native stop bridge) — 2026-10-06
+Status: done (tsc client+backend clean, `gradlew :app:compileDebugJavaWithJavac` OK); NOT device-verified
+What shipped: new `AlarmPlugin` (stop / isRinging / setChatActive / canUseFullScreenIntent / openFullScreenIntentSettings); `AlarmForegroundService` tracks ringing + alarm id, Silence notification action, tap silences then opens chat, stop ignores a mismatched alarmId; `alarmController.stopAll` now also stops native and records the id in localStorage `silencedAlarmIds`; ack/cancel/auto-clear/send-ack all stop native; history re-ring only when raise < 2 min old, un-acked (any ack with payload.ack === raise id), not silenced; raise card renders acknowledged after reload; JS stays silent when native is ringing or the tab is hidden; FCM data carries `alarmId` and `cancelled`; native ring gated on foreground AND chat active (`AppState.chatActive`).
+Files: android/.../AlarmPlugin.java (new), AlarmForegroundService.java, AlarmMessagingService.java, AppState.java, MainActivity.java, res/values/strings.xml; client/src/features/alarmNative.ts (new), alarm.ts, pages/ChatPage.ts; backend/src/websocket/socketServer.ts (alarmFcmData).
+Verified: builds above. Unverified: everything on device (ring, Silence button, tap, lock-screen), live FCM.
+Included early from B: MediaPlayer rebuild, WAKE mode, lock-screen flags, FCM-start fallback notification, full-screen-intent hint (B2, B3, B1, B5 — see B entry if added).
+Next step: B4 (backend FCM ttl 120s + priority) then C.
+
 ## [Device fixes] Composer keyboard scroll, native alarm wake, notification icon — 2026-09-21
 Status: done (builds clean; alarm wake and notification icon are Android-native — need a versionCode-3 AAB and real-device verification; composer scroll also fixed on web/PWA)
 What shipped: Three device-reported issues.

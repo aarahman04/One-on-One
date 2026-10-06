@@ -500,3 +500,22 @@ graph TD
 ```
 
 Calling follows the same rule: `features/call/*` never touches Socket.IO — signaling goes through `CallTransport`, reached only via `messageService.getCallTransport()`. A future non-internet transport adds a matching call transport without touching call UI or `CallSession`.
+
+## Native alarm bridge (since 2026-10 — fix/alarm-notify-reliability, section A)
+
+`features/alarmNative.ts` is the only JS door to `AlarmPlugin` (Capacitor, Android). `AlarmForegroundService` holds the ring state in statics (`ringing`, `ringingAlarmId`, `lastStoppedAlarmId`) which `isRinging()` exposes so JS never double-rings.
+
+```mermaid
+flowchart LR
+  FCM[FCM data-only: type, ack, cancelled, alarmId] --> AMS[AlarmMessagingService]
+  AMS -->|"not (foreground AND chatActive)"| AFS[AlarmForegroundService<br/>MediaPlayer ALARM stream + vibrate]
+  AMS -->|ack/cancel + alarmId| AFS
+  AFS -->|notification: Silence action / tap| AFS
+  Chat[ChatPage] -->|setChatActive| AP[AlarmPlugin]
+  Chat -->|stop / isRinging| AP
+  AP --> AFS
+  Chat --> AC[alarmController JS audio]
+  AC -->|stopAll: also native stop + silenced-ids in localStorage| AP
+```
+
+Rules: native rings unless the app is visible AND ChatPage is mounted; an ack/stop with a non-matching `alarmId` is ignored; history resume only if the raise is younger than 2 min, un-acked (any ack with `payload.ack === raise id`), and not in the persisted silenced set.

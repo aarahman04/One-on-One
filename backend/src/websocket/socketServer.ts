@@ -93,6 +93,19 @@ function alarmRaiseAllowed(userId: string): boolean {
   return true
 }
 
+// FCM data for an alarm send. `alarmId` is always the RAISE's message id (for an
+// ack/cancel that is payload.ack), so native stop/ack can target the right
+// alarm and ignore a late one for an older raise.
+function alarmFcmData(message: Message): Record<string, string> {
+  const p = message.payload as { ack?: string; cancelled?: boolean } | null
+  return {
+    type: 'alarm',
+    ack: p?.ack ? 'true' : 'false',
+    cancelled: p?.cancelled ? 'true' : 'false',
+    alarmId: p?.ack ?? message.id,
+  }
+}
+
 // One fetchSockets() decides both delivery paths for a just-sent message: if
 // the recipient has a live socket in the room, the message reached them over
 // the open connection right now — mark it delivered immediately rather than
@@ -125,7 +138,7 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
       // (see pushService.sendFcmToUser). `ack` mirrors the same payload
       // shape messageService.validateAlarmPayload already validates.
       ...(isAlarm
-        ? { data: { type: 'alarm', ack: (message.payload as { ack?: string } | null)?.ack ? 'true' : 'false' } }
+        ? { data: alarmFcmData(message) }
         : {}),
     }
 
