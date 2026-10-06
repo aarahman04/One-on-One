@@ -1,7 +1,7 @@
 # Progress Log
 
-## RESUME HERE — all fix PRs merged (2026-10-06)
-PR #86 (alarm/notification/reliability) and PR #87 (WhatsApp-style UI) are merged to main, plus the small own-send scroll fix below. Nothing has been verified on a real device. Next: run the android-build workflow (versionCode 2 / 1.0.1), install on two phones, run the 17-step test script in PR #86's description, then upload to Play and add the versionCode 2 row to docs/RELEASING.md. Before testing, confirm the Railway log shows `fcm: configured for project one-on-one-508202`.
+## RESUME HERE — build 3 / 1.0.2 running (2026-10-06)
+PRs #86, #87, #88 merged to main. android-build workflow dispatched on main with versionCode 3 / versionName 1.0.2 (user asked for a bump beyond 2 / 1.0.1; neither has been uploaded to Play). Workflow defaults bumped to 3 / 1.0.2 in this branch. Next: download the android-release artifact (app-release.aab / .apk), install the APK on two phones, run the 17-step test script from PR #86, then upload the AAB to Play and add the versionCode 3 row to docs/RELEASING.md. Check Railway log for `fcm: configured for project one-on-one-508202` first.
 
 ## [Scroll fix] Own sends always scroll to bottom — 2026-10-06
 Status: done (tsc passes; not device-verified).
