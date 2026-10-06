@@ -112,6 +112,9 @@ throwaway test build):
 | versionCode | versionName | date | git SHA | track | notes |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 1.0.0 | (pending) | | closed testing | first upload |
+| 3 | 1.0.3 | 2026-10-06 (built, not yet uploaded) | main after PR #89 | closed testing | alarm/notification/reliability (PR #86) + WhatsApp-style UI (PR #87) + scroll fix (#88). Built by the android-build workflow with inputs 3 / 1.0.3. |
+
+**Version state (read this first):** the next build must use versionCode **4** or higher. versionCode **2** and versionNames **1.0.1 / 1.0.2** were never uploaded to Play and were skipped on purpose; the current release candidate is **versionCode 3 / versionName 1.0.3**, and the workflow defaults match it. If 3 / 1.0.3 is rejected or replaced, bump again and add a row.
 
 ### `targetSdkVersion`
 
