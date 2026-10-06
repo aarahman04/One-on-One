@@ -1,5 +1,24 @@
 # Architecture
 
+**Chat presentation (2026-10-06):** chat rows always use bubbles, even for legacy shared `messageStyle: line` (client interpretation only). Each message row keeps its existing `data-id`, `data-at`, type/receipt hooks; the clock gutter and sender label nodes are removed. `data-sender` / `data-group-start` control adjacent same-sender grouping within 60 seconds. `.chat__message-body` contains optional quote, content and inline time/ticks; `.chat__reaction-badge` remains below it. The log begins with one encryption system chip; `.chat__composer-area` owns reply bar plus the input pill and external send/mic button. Header call controls exist disabled from first paint; call/controller reuses those nodes without changing call behavior.
+
+**Chat rendering (2026-10-06):** `buildMessageRow` builds detached rows; `registerMessageRow` maintains `rowsById: Map<string, HTMLElement>` separately from the existing quotable-message data Map. Reactions/quote jumps use that index; optimistic reconciliation only adds the saved ID to the DOM index, preserving the existing send/ack/dedupe/resync/receipt flow. Initial history and pagination register rows inside a DocumentFragment, then insert the batch once. Live rows still use the existing createdAt-ordered insertion and midnight relocation; relocation retains the same row/Map entry. A direct-child MutationObserver evicts truly removed rows and disposes countdown/location resources from `rowResources`; synchronous remove/reinsert is detected as still contained and survives. Page cleanup disconnects the observer and clears all remaining resources and the row index. Viewport writes and swipe transforms are coalesced with requestAnimationFrame; content-visibility skips offscreen row paint.
+
+```mermaid
+flowchart LR
+  History[History / older page] --> Build[Build detached rows]
+  Build --> Register[Register row ID + quote / reactions]
+  Register --> Fragment[DocumentFragment]
+  Fragment --> Log[Single insertion into chat log]
+  Live[Live / resync message] --> Ordered[Existing ordered insert / relocation]
+  Ordered --> Log
+  Register --> RowMap[rowsById DOM Map]
+  Ack[Existing optimistic ID assignment] --> RowMap
+  RowMap --> UI[Reaction chips / quote jumps]
+  Log --> Removal[Permanent removal / page cleanup]
+  Removal --> Dispose[Evict row Map / clear intervals / disconnect observers]
+```
+
 Diagrams updated as the system grows. Additive — don't rewrite existing diagrams from scratch when a phase adds structure, extend them.
 
 ## System architecture (V1)

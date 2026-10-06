@@ -2,7 +2,6 @@ import type { Page } from '../state/router'
 import { pushBackHandler } from '../state/backHandlers'
 import { openPanel } from '../state/activePanel'
 import {
-  formatClock,
   formatDateSeparator,
   formatCallDuration,
   formatDuration,
@@ -37,7 +36,6 @@ import {
   markRead,
   reportConnectionUser,
   reportMessage,
-  setMessageStyle,
   setWallpaper,
   blockAndEnd,
   type CurrentConnection,
@@ -61,6 +59,8 @@ import {
   CALL_LOG_OUT_ICON,
   CALL_LOG_VIDEO_IN_ICON,
   CALL_LOG_VIDEO_OUT_ICON,
+  CALL_PHONE_ICON,
+  CALL_VIDEO_ICON,
 } from '../features/call/icons'
 import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
 import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
@@ -68,11 +68,6 @@ import { linkifyInto } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
-
-// CSS.escape is absent on older Safari; message ids are UUIDs, so a minimal
-// attribute-value escape is enough for the `[data-id="…"]` selectors below.
-const cssEsc = (s: string): string =>
-  typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&')
 
 interface ChatMessage {
   id?: string
@@ -172,6 +167,10 @@ export const ChatPage: Page = (root, go) => {
   let searchDebounce: ReturnType<typeof setTimeout> | null = null
   let focusHandler: (() => void) | null = null
   let viewportResizeHandler: (() => void) | null = null
+  let viewportFrame = 0
+  let rowRemovalObserver: MutationObserver | null = null
+  const rowsById = new Map<string, HTMLElement>()
+  const rowResources = new Map<HTMLElement, () => void>()
   let alarmController: AlarmController | null = null
   let disposed = false
 
@@ -187,6 +186,11 @@ export const ChatPage: Page = (root, go) => {
   const cleanup = (): void => {
     if (disposed) return
     disposed = true
+    cancelAnimationFrame(viewportFrame)
+    rowRemovalObserver?.disconnect()
+    for (const dispose of rowResources.values()) dispose()
+    rowResources.clear()
+    rowsById.clear()
     disposePopover?.()
     disposeMenuDropdown?.()
     callBar?.dispose()
@@ -227,12 +231,27 @@ export const ChatPage: Page = (root, go) => {
       return
     }
 
-    const otherName = (current.otherNickname ?? 'them').toUpperCase()
+    const otherName = current.otherNickname ?? 'them'
     const myUserId = current.myUserId
     const connectionId = current.id
 
     renderChat(root, otherName)
     const log = root.querySelector<HTMLDivElement>('#chat-log')!
+    // Relocation removes/reinserts synchronously: only dispose truly removed rows.
+    rowRemovalObserver = new MutationObserver((records) => {
+      for (const record of records) for (const node of record.removedNodes) {
+        if (!(node instanceof HTMLElement)) continue
+        const removed = [node, ...node.querySelectorAll<HTMLElement>('.chat__message, .chat__system-line, .countdown-card, .location-card')]
+        for (const el of removed) {
+          if (log.contains(el)) continue
+          const id = el.dataset.id
+          if (id && rowsById.get(id) === el) rowsById.delete(id)
+          rowResources.get(el)?.()
+          rowResources.delete(el)
+        }
+      }
+    })
+    rowRemovalObserver.observe(log, { childList: true })
 
     // Keyboard open/close shrinks/grows #app (main.ts pins its height to
     // visualViewport), which changes log's clientHeight without moving its
@@ -249,7 +268,11 @@ export const ChatPage: Page = (root, go) => {
       { passive: true },
     )
     viewportResizeHandler = (): void => {
-      if (stickToBottom) log.scrollTop = log.scrollHeight
+      if (viewportFrame) return
+      viewportFrame = requestAnimationFrame(() => {
+        viewportFrame = 0
+        if (!disposed && stickToBottom) log.scrollTop = log.scrollHeight
+      })
     }
     window.visualViewport?.addEventListener('resize', viewportResizeHandler)
 
@@ -411,14 +434,6 @@ export const ChatPage: Page = (root, go) => {
       })
     }
 
-    const onStyleChange = (value: string): void => {
-      currentStyle = value
-      applyAppearance(chatEl, currentWallpaper, currentStyle) // optimistic
-      void setMessageStyle(connectionId, value).catch(() => {
-        showNotice('Could not update the message style — try again.')
-      })
-    }
-
     // Push notifications: a menu toggle rather than an automatic prompt-on-load
     // (unsolicited permission prompts get auto-denied by browsers/users alike).
     // Feedback is a popup, not the quiet in-chat system line — a subscribe
@@ -459,7 +474,7 @@ export const ChatPage: Page = (root, go) => {
           return true
         })
       },
-      () => openAppearance(nav, menuBtn, chatEl, currentWallpaper, currentStyle, onWallpaperChange, onStyleChange),
+      () => openAppearance(nav, menuBtn, chatEl, currentWallpaper, currentStyle, onWallpaperChange),
       isPushSupported() ? () => void toggleNotifications() : undefined,
       () =>
         openBlockConfirm({
@@ -480,6 +495,7 @@ export const ChatPage: Page = (root, go) => {
     let presenceActive = false
     let connLabel: string | null = null
     const renderStatus = (): void => {
+      for (const button of nav.querySelectorAll<HTMLButtonElement>('.chat__call-btn')) button.disabled = !transport || connLabel !== null
       if (connLabel) {
         navStatus.textContent = connLabel
         navStatus.classList.add('chat__nav-status--connecting')
@@ -519,7 +535,7 @@ export const ChatPage: Page = (root, go) => {
     // never drawn over the bubble's own background). One reaction per user
     // per message, so a 1:1 chat needs at most two emoji here (me + other).
     const renderReactionChips = (messageId: string): void => {
-      const row = log.querySelector<HTMLElement>(`[data-id="${cssEsc(messageId)}"]`)
+      const row = rowsById.get(messageId)
       if (!row) return
       const list = reactionsByMessage.get(messageId) ?? []
       let badge = row.querySelector<HTMLElement>('.chat__reaction-badge')
@@ -602,7 +618,7 @@ export const ChatPage: Page = (root, go) => {
       q.append(name, snippet)
       q.addEventListener('click', (e) => {
         e.stopPropagation()
-        const target = log.querySelector<HTMLElement>(`[data-id="${cssEsc(replyTo)}"]`)
+        const target = rowsById.get(replyTo)
         if (!target) return
         target.scrollIntoView({ block: 'center' })
         target.classList.add('chat__message--flash')
@@ -637,9 +653,7 @@ export const ChatPage: Page = (root, go) => {
 
     // A countdown renders as a live-ticking card; no separate viewer to open —
     // the card itself is always live, ticking down for as long as it's on
-    // screen. The interval self-clears the first time it finds the card
-    // detached (e.g. after navigating away), rather than needing page-level
-    // teardown tracking.
+    // screen. Row removal and page cleanup clear its interval immediately.
     const countdownCard = (message: ChatMessage): HTMLElement => {
       const p = (message.payload ?? {}) as Partial<CountdownPayload>
       const card = document.createElement('div')
@@ -661,12 +675,9 @@ export const ChatPage: Page = (root, go) => {
       if (targetIso) {
         ticker.textContent = formatCountdown(targetIso)
         const timer = setInterval(() => {
-          if (!card.isConnected) {
-            clearInterval(timer)
-            return
-          }
           ticker.textContent = formatCountdown(targetIso)
         }, 1000)
+        rowResources.set(card, () => clearInterval(timer))
       }
       return card
     }
@@ -732,9 +743,11 @@ export const ChatPage: Page = (root, go) => {
           if (!entry.isIntersecting) continue
           img.src = tileUrl
           observer.disconnect()
+          rowResources.delete(card)
         }
       })
       observer.observe(card)
+      rowResources.set(card, () => observer.disconnect())
 
       const info = document.createElement('div')
       info.className = 'location-card__info'
@@ -1135,6 +1148,7 @@ export const ChatPage: Page = (root, go) => {
       const playBtn = document.createElement('button')
       playBtn.type = 'button'
       playBtn.className = 'voice-bubble__play'
+      playBtn.setAttribute('aria-label', 'Play or pause voice message')
       playBtn.innerHTML = playIcon
       playBtn.disabled = true
 
@@ -1338,7 +1352,7 @@ export const ChatPage: Page = (root, go) => {
     // Payload carries {event, value}; only ever server-sent (socketServer.ts
     // rejects a client-sent 'system' type).
     const WALLPAPER_LABELS: Record<string, string> = { off: 'Off', love: 'Love', samurai: 'Samurai' }
-    const STYLE_LABELS: Record<string, string> = { line: 'Lines', bubbles: 'Bubbles' }
+    const STYLE_LABELS: Record<string, string> = { line: 'Bubbles', bubbles: 'Bubbles' }
 
     const systemNoticeText = (message: ChatMessage): string => {
       const p = (message.payload ?? {}) as { event?: string; value?: string }
@@ -1372,18 +1386,12 @@ export const ChatPage: Page = (root, go) => {
       row.className = 'chat__message' + (pending ? ' chat__message--pending' : '')
       row.dataset.at = message.createdAt
       row.dataset.type = message.type // lets CSS give image/voice/file their own bubble treatment
+      row.dataset.sender = message.senderId
+      if (message.type === 'image' && message.content) row.dataset.caption = '1'
       if (message.id) row.dataset.id = message.id
-
-      const time = document.createElement('div')
-      time.className = 'chat__message-time'
-      time.textContent = formatClock(at)
 
       const body = document.createElement('div')
       body.className = 'chat__message-body'
-
-      const sender = document.createElement('div')
-      sender.className = `chat__message-sender chat__message-sender--${isMine ? 'you' : 'other'}`
-      sender.textContent = isMine ? 'YOU' : otherName
 
       const text = document.createElement('div')
       text.className = 'chat__message-text'
@@ -1393,10 +1401,7 @@ export const ChatPage: Page = (root, go) => {
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
 
-      // Time + receipt render as one unit (WhatsApp-style): in line mode
-      // `.chat__meta` is `display: contents`, so its children lay out exactly
-      // as if appended to body directly (unchanged from before); in bubble
-      // mode it becomes a single flex row pinned to the bubble's bottom-right.
+      // Time and ticks share the bubble's bottom-right footer.
       const meta = document.createElement('div')
       meta.className = 'chat__meta'
 
@@ -1430,7 +1435,18 @@ export const ChatPage: Page = (root, go) => {
                               ? locationCard(message)
                               : text
 
-      body.append(sender)
+      const cardTitles: Partial<Record<MessageType, string>> = {
+        letter: 'Letter', countdown: 'Countdown', checkin: 'Check-in', ask: 'Ask', thisorthat: 'This or that',
+      }
+      const cardTitle = cardTitles[message.type]
+      if (cardTitle) {
+        const heading = document.createElement('div')
+        heading.className = 'chat__card-heading'
+        const icon = content.querySelector<HTMLElement>('[class$="__icon"]')
+        if (icon) heading.append(icon)
+        heading.append(document.createTextNode(cardTitle))
+        content.prepend(heading)
+      }
       if (message.replyTo) body.append(quoteBlock(message.replyTo))
       body.append(content)
       if (isMine) {
@@ -1441,8 +1457,7 @@ export const ChatPage: Page = (root, go) => {
           if (!pending) row.dataset.delivered = '1'
           const receipt = document.createElement('span')
           receipt.className = 'chat__receipt'
-          // WhatsApp-shaped tick glyph (line mode ignores this and renders its
-          // own dot via .chat__receipt's background — see applyReceipt).
+          // Tick state is filled by applyReceipt.
           const ticks = document.createElement('span')
           ticks.className = 'chat__receipt-ticks'
           receipt.append(ticks)
@@ -1457,16 +1472,15 @@ export const ChatPage: Page = (root, go) => {
       if (message.type === 'text') text.append(meta)
       else body.append(meta)
       body.append(fullTime)
-      row.append(time, body)
-      // Scoped to the message content itself, not the row/body — .chat__message-body
-      // stretches to fill the row (flex: 1) in line mode, so listening on it would
-      // still toggle on clicks in the empty space beside a short message.
+      row.append(body)
+      // Tapping content reveals the full timestamp.
       content.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
       return row
     }
 
     // Side effects after a row is in the DOM (receipts, id map, reaction chips).
     const registerMessageRow = (message: ChatMessage, row: HTMLElement): void => {
+      if (message.id) rowsById.set(message.id, row)
       // Call logs and system (appearance-change) notices carry no receipt,
       // and can't be quoted or reacted to — so they stay out of myRows and
       // the quotable-message map entirely.
@@ -1486,6 +1500,15 @@ export const ChatPage: Page = (root, go) => {
     // session — never for history/pagination, or every past message would
     // cascade-animate in on load.
     const messageRows = (): NodeListOf<HTMLElement> => log.querySelectorAll<HTMLElement>('.chat__message[data-at]')
+    // Presentation only: adjacent messages from one sender within a minute.
+    const updateGroup = (row: Element | null): void => {
+      if (!(row instanceof HTMLElement) || !row.classList.contains('chat__message')) return
+      const prev = row.previousElementSibling as HTMLElement | null
+      const delta = Date.parse(row.dataset.at ?? '') - Date.parse(prev?.dataset.at ?? '')
+      row.dataset.groupStart = prev?.classList.contains('chat__message') &&
+        prev.dataset.sender === row.dataset.sender && delta >= 0 && delta <= 60_000 &&
+        isSameDay(new Date(prev.dataset.at!), new Date(row.dataset.at!)) ? '0' : '1'
+    }
     // First rendered message strictly later than `iso` (so a message that
     // arrives out of order — e.g. after a resync — lands where it belongs).
     const findNextRow = (iso: string): HTMLElement | null => {
@@ -1510,16 +1533,21 @@ export const ChatPage: Page = (root, go) => {
         while (prev && !(prev.classList.contains('chat__message') && (prev as HTMLElement).dataset.at)) prev = prev.previousElementSibling
         if (!prev || !isSameDay(new Date((prev as HTMLElement).dataset.at!), at)) log.insertBefore(dateSeparator(at), row)
       }
+      updateGroup(row)
+      updateGroup(row.nextElementSibling)
     }
     // The server echo replaces an optimistic row's client time; if that crosses
     // midnight the row must move to the right day (and orphan separators go).
     const relocateIfDayChanged = (row: HTMLElement, oldAt: string | undefined, newAt: string): void => {
+      updateGroup(row)
+      updateGroup(row.nextElementSibling)
       const o = oldAt ? new Date(oldAt) : null
       const n = new Date(newAt)
       if (!o || Number.isNaN(o.getTime()) || Number.isNaN(n.getTime()) || isSameDay(o, n)) return
       const prev = row.previousElementSibling
       const after = row.nextElementSibling
       row.remove()
+      updateGroup(after)
       if (prev?.classList.contains('chat__date-separator') && (!after || after.classList.contains('chat__date-separator'))) prev.remove()
       const next = findNextRow(newAt)
       if (next) insertOrdered(row, n, next)
@@ -1528,6 +1556,7 @@ export const ChatPage: Page = (root, go) => {
         const last = rows[rows.length - 1]
         if (!last || !isSameDay(new Date(last.dataset.at!), n)) log.appendChild(dateSeparator(n))
         log.appendChild(row)
+        updateGroup(row)
       }
       const rows = messageRows()
       lastDate = rows.length ? new Date(rows[rows.length - 1].dataset.at!) : null
@@ -1548,24 +1577,19 @@ export const ChatPage: Page = (root, go) => {
       if (animate) row.classList.add('chat__message--enter')
       if (orderedNext) insertOrdered(row, at, orderedNext)
       else log.appendChild(row)
-      if (atBottom || isMine) log.scrollTop = log.scrollHeight
+      updateGroup(row)
+      updateGroup(row.nextElementSibling)
+      if (atBottom) log.scrollTo({ top: log.scrollHeight, behavior: isMine && animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant' })
       registerMessageRow(message, row)
       return row
     }
 
-    // --- Read receipts: a small per-message indicator on my own messages, at
-    // the end of the message. Line mode renders it as a dot; bubble mode
-    // renders WhatsApp ticks — both driven by these classes, styled in
-    // global.css. Three states: pending (not yet acked by the server),
-    // delivered (reached the other member's device — gray double tick), seen
-    // (they've had the chat open since — blue double tick).
+    // --- Read receipts: sent/delivered gray ticks; seen uses the read color.
     const myRows: HTMLElement[] = []
     let otherLastRead: string | null = current.otherLastReadAt
     let otherLastDelivered: string | null = current.otherLastDeliveredAt
 
-    // WhatsApp's actual tick paths (bubble mode only — line mode's dot never
-    // reads this markup). fill="currentColor" so the existing color rules
-    // (seen = WhatsApp blue, per-wallpaper recolors) keep working unchanged.
+    // Tick paths inherit the receipt state color.
     const TICK_SINGLE =
       '<svg viewBox="0 0 16 15" width="14" height="13"><path fill="currentColor" d="M15.01 3.316l-.478-.372a.365.365 0 0 0-.51.063L8.666 9.879a.32.32 0 0 1-.484.033l-.358-.325a.319.319 0 0 0-.484.032l-.378.483a.418.418 0 0 0 .036.541l1.32 1.266c.143.14.361.125.484-.033l6.272-8.048a.366.366 0 0 0-.064-.512z"/></svg>'
     const TICK_DOUBLE =
@@ -1681,26 +1705,31 @@ export const ChatPage: Page = (root, go) => {
       const prevHeight = log.scrollHeight
       const prevTop = log.scrollTop
       const firstSep = loadOlderBtn.nextSibling // the original leading date separator
+      const firstRow = log.querySelector<HTMLElement>('.chat__message')
+      const fragment = document.createDocumentFragment()
       let batchDate: Date | null = null
       for (const m of older) {
         const at = new Date(m.createdAt)
         if (!Number.isNaN(at.getTime()) && (!batchDate || !isSameDay(batchDate, at))) {
-          log.insertBefore(dateSeparator(at), firstSep)
+          fragment.appendChild(dateSeparator(at))
           batchDate = at
         }
         const row = buildMessageRow(m, false)
-        log.insertBefore(row, firstSep)
+        fragment.appendChild(row)
+        updateGroup(row)
         registerMessageRow(m, row)
       }
+      log.insertBefore(fragment, firstSep)
       // Drop the pre-existing leading separator if the batch already ended on that day.
       if (
         firstSep instanceof HTMLElement &&
         firstSep.classList.contains('chat__date-separator') &&
         batchDate &&
-        isSameDay(batchDate, new Date(older[older.length - 1].createdAt))
+        firstRow?.dataset.at && isSameDay(batchDate, new Date(firstRow.dataset.at))
       ) {
         firstSep.remove()
       }
+      updateGroup(firstRow)
       oldestLoadedAt = older[0].createdAt
       log.scrollTop = prevTop + (log.scrollHeight - prevHeight)
       if (older.length < HISTORY_PAGE) loadOlderBtn.remove()
@@ -1725,8 +1754,25 @@ export const ChatPage: Page = (root, go) => {
       if (ackOf?.ack) ackedRaises.set(ackOf.ack, ackOf.cancelled === true)
     }
     for (const m of history) noteServerTime(m.createdAt)
-    for (const message of history) appendMessage(message)
-    if (!history.length) appendSystemLine('Say hello — this is the start of your one-on-one.')
+    const historyFragment = document.createDocumentFragment()
+    for (const message of history) {
+      const at = new Date(message.createdAt)
+      if (!Number.isNaN(at.getTime()) && (!lastDate || !isSameDay(lastDate, at))) {
+        historyFragment.appendChild(dateSeparator(at))
+        lastDate = at
+      }
+      const row = buildMessageRow(message, false)
+      historyFragment.appendChild(row)
+      updateGroup(row)
+      registerMessageRow(message, row)
+    }
+    if (!history.length) {
+      const empty = document.createElement('div')
+      empty.className = 'chat__system-line'
+      empty.textContent = 'Say hello — this is the start of your one-on-one.'
+      historyFragment.appendChild(empty)
+    }
+    log.appendChild(historyFragment)
     // Resume the alert on reopen only if the latest raise is still live: newer
     // than the auto-clear window, with no ack/cancel anywhere in history (an
     // ack is its own reply-linked alarm message, not necessarily the latest
@@ -1754,10 +1800,11 @@ export const ChatPage: Page = (root, go) => {
       }
     }
     oldestLoadedAt = history[0]?.createdAt ?? null
-    if (history.length >= HISTORY_PAGE) log.prepend(loadOlderBtn)
+    if (history.length >= HISTORY_PAGE) log.querySelector('.chat__enc-note')!.after(loadOlderBtn)
     refreshReceipts()
     renderBanner(current)
     reconcileLeave(current)
+    log.scrollTop = log.scrollHeight
     updatePresence(current.otherLastReadAt)
     markReadNow()
 
@@ -1886,21 +1933,9 @@ export const ChatPage: Page = (root, go) => {
 
     root.querySelector<HTMLButtonElement>('#reply-bar-cancel')!.addEventListener('click', cancelReply)
 
-    // "Launch" animation on the send button icon: the class is re-added
-    // (with a forced reflow so rapid sends restart it) and removed after
-    // the animation's own duration, rather than an instant icon swap.
-    const SEND_ANIMATION_MS = 380
-    const triggerSendAnimation = (): void => {
-      sendBtn.classList.remove('chat__send-btn--launch')
-      void sendBtn.offsetWidth
-      sendBtn.classList.add('chat__send-btn--launch')
-      window.setTimeout(() => sendBtn.classList.remove('chat__send-btn--launch'), SEND_ANIMATION_MS)
-    }
-
     const send = (): void => {
       const content = input.value.trim()
       if (!content) return
-      triggerSendAnimation()
       input.value = ''
       syncComposer()
       const replyTo = replyTarget?.id ?? null
@@ -2332,6 +2367,10 @@ export const ChatPage: Page = (root, go) => {
       const M = 8 // safe margin from every viewport edge
       const menu = document.createElement('div')
       menu.className = 'menu chat__ctx-menu'
+      const theme = getComputedStyle(chatEl)
+      for (const token of ['--bg', '--bg-raised', '--border', '--text', '--text-dim', '--muted', '--accent-you', '--danger']) {
+        menu.style.setProperty(token, theme.getPropertyValue(token))
+      }
       menu.style.visibility = 'hidden'
       menu.style.left = '0'
       menu.style.top = '0'
@@ -2564,6 +2603,9 @@ export const ChatPage: Page = (root, go) => {
     let swipeStartY = 0
     let swiping = false
     let swipeIcon: HTMLElement | null = null
+    let swipeFrame = 0
+    let swipeDistance = 0
+    let swipeIconTop = 0
     let longPressTimer: ReturnType<typeof setTimeout> | null = null
     // Android fires a native contextmenu ~right after the long-press timer;
     // this dedupes so the menu isn't built twice for the same message.
@@ -2595,14 +2637,18 @@ export const ChatPage: Page = (root, go) => {
         swipeStartX = e.touches[0].clientX
         swipeStartY = e.touches[0].clientY
         swiping = false
+        swipeDistance = 0
+        const rowRect = row.getBoundingClientRect()
+        const logRect = log.getBoundingClientRect()
+        swipeIconTop = rowRect.top - logRect.top + log.scrollTop + rowRect.height / 2 - 8
+        const bubbleRect = (row.querySelector<HTMLElement>('.chat__message-body') ?? row).getBoundingClientRect()
         const id = row.dataset.id
         longPressTimer = setTimeout(() => {
           longPressTimer = null
           swipeRow = null // cancel any in-progress reply-swipe tracking
           suppressClickUntil = Date.now() + 600 // eat the trailing touchend->click
           lastMenuFor = id
-          const bubble = row.querySelector<HTMLElement>('.chat__message-body') ?? row
-          openPopover(bubble.getBoundingClientRect(), (menu) => buildMessageMenu(menu, id, false))
+          openPopover(bubbleRect, (menu) => buildMessageMenu(menu, id, false))
         }, LONG_PRESS_MS)
       },
       { passive: true },
@@ -2622,6 +2668,7 @@ export const ChatPage: Page = (root, go) => {
             return
           }
           swiping = true
+          swipeRow.style.transition = 'none'
         }
         // Axis committed horizontal — block native scroll for the rest of this
         // gesture so a diagonal swipe can't scroll the page and reply at once.
@@ -2629,37 +2676,40 @@ export const ChatPage: Page = (root, go) => {
         // touch-action: pan-y on .chat__log keeps vertical scroll native/smooth
         // for gestures that never reach here.
         e.preventDefault()
-        if (dx <= 0) {
-          swipeRow.style.transform = ''
-          return
-        }
-        const clamped = Math.min(dx, SWIPE_MAX)
-        swipeRow.style.transform = `translateX(${clamped}px)`
-        const ready = clamped >= SWIPE_TRIGGER
-        swipeRow.classList.toggle('chat__message--swipe-ready', ready)
-
-        const icon = ensureSwipeIcon()
-        const rowRect = swipeRow.getBoundingClientRect()
-        const logRect = log.getBoundingClientRect()
-        icon.style.top = `${rowRect.top - logRect.top + log.scrollTop + rowRect.height / 2 - 8}px`
-        icon.style.opacity = String(Math.min(clamped / SWIPE_TRIGGER, 1))
-        icon.classList.toggle('chat__swipe-icon--ready', ready)
+        swipeDistance = Math.max(0, Math.min(dx, SWIPE_MAX))
+        if (!swipeFrame) swipeFrame = requestAnimationFrame(() => {
+          swipeFrame = 0
+          if (!swipeRow || disposed) return
+          swipeRow.style.transform = `translateX(${swipeDistance}px)`
+          const ready = swipeDistance >= SWIPE_TRIGGER
+          swipeRow.classList.toggle('chat__message--swipe-ready', ready)
+          const icon = ensureSwipeIcon()
+          icon.style.top = `${swipeIconTop}px`
+          icon.style.opacity = String(Math.min(swipeDistance / SWIPE_TRIGGER, 1))
+          icon.classList.toggle('chat__swipe-icon--ready', ready)
+        })
       },
       { passive: false },
     )
 
-    log.addEventListener('touchend', () => {
+    const finishSwipe = (reply: boolean): void => {
       cancelLongPress()
+      cancelAnimationFrame(swipeFrame)
+      swipeFrame = 0
       if (!swipeRow) return
-      const triggered = swipeRow.classList.contains('chat__message--swipe-ready')
+      const triggered = reply && swipeDistance >= SWIPE_TRIGGER
       const id = swipeRow.dataset.id!
+      swipeRow.style.transition = ''
       swipeRow.style.transform = ''
       swipeRow.classList.remove('chat__message--swipe-ready')
       swipeIcon?.remove()
       swipeIcon = null
       swipeRow = null
       if (triggered) startReply(id)
-    })
+    }
+    log.addEventListener('touchend', () => finishSwipe(true))
+    log.addEventListener('touchcancel', () => finishSwipe(false))
+    overlays.add(() => finishSwipe(false))
 
     log.addEventListener('contextmenu', (e) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
@@ -2701,6 +2751,7 @@ export const ChatPage: Page = (root, go) => {
           entry.row.dataset.at = message.createdAt
           relocateIfDayChanged(entry.row, oldAt, message.createdAt)
           entry.row.dataset.id = message.id
+          rowsById.set(message.id, entry.row) // index the existing DOM row; reconciliation is unchanged
           if (message.type === 'alarm' && !(message.payload as { ack?: string } | null)?.ack) {
             alarmController?.setId(message.id) // own raise: later ack/cancel/silence can now target it
           }
@@ -2906,49 +2957,60 @@ function renderChat(root: HTMLElement, displayName: string): void {
   root.innerHTML = `
     <div class="chat">
       <div class="chat__nav">
-        <div>
+        <div class="chat__nav-peer">
+          <span class="chat__avatar" id="nav-avatar" aria-hidden="true"></span>
+          <div class="chat__nav-info">
           <div class="chat__nav-title" id="nav-title"></div>
           <div class="chat__nav-status chat__nav-status--connecting" id="nav-status">connecting…</div>
+          </div>
         </div>
         <div class="chat__nav-actions" id="nav-actions">
-          <button class="chat__menu-btn" id="menu-btn">&bull;&bull;&bull;</button>
+          <button type="button" class="chat__call-btn" id="video-btn" aria-label="Start video call" disabled>${CALL_VIDEO_ICON}</button>
+          <button type="button" class="chat__call-btn" id="call-btn" aria-label="Start audio call" disabled>${CALL_PHONE_ICON}</button>
+          <button type="button" class="chat__menu-btn" id="menu-btn" aria-label="More options"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
         </div>
       </div>
       <div class="chat__search" id="chat-search" style="display: none;">
-        <input id="search-input" placeholder="Search messages…" autocomplete="off" />
+        <input id="search-input" aria-label="Search messages" placeholder="Search messages…" autocomplete="off" />
         <span class="chat__search-count" id="search-count">0/0</span>
         <button type="button" class="chat__search-nav" id="search-prev" title="Older match">▲</button>
         <button type="button" class="chat__search-nav" id="search-next" title="Newer match">▼</button>
-        <button type="button" class="chat__search-close" id="search-close">✕</button>
+        <button type="button" class="chat__search-close" id="search-close" aria-label="Close search">✕</button>
       </div>
       <div class="chat__leave-banner" id="leave-banner" style="display: none;"></div>
-      <div class="chat__log" id="chat-log"></div>
+      <div class="chat__log" id="chat-log">
+        <div class="chat__enc-note chat__system-line">
+          <svg class="chat__enc-note-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <span>Messages are encrypted</span>
+        </div>
+      </div>
+      <div class="chat__composer-area">
       <div class="chat__reply-bar" id="reply-bar">
         <div class="chat__reply-bar-info">
           <div class="chat__reply-bar-name" id="reply-bar-name"></div>
           <div class="chat__reply-bar-snippet" id="reply-bar-snippet"></div>
         </div>
-        <button type="button" class="chat__reply-bar-cancel" id="reply-bar-cancel">✕</button>
-      </div>
-      <div class="chat__enc-note">
-        <svg class="chat__enc-note-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-        <span>Messages are encrypted</span>
+        <button type="button" class="chat__reply-bar-cancel" id="reply-bar-cancel" aria-label="Cancel reply">✕</button>
       </div>
       <form class="chat__input-bar" id="composer">
-        <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach">+</button>
-        <textarea id="message-input" placeholder="Type a message…" autocomplete="off" enterkeyhint="send" rows="1"></textarea>
+        <div class="chat__input-pill">
+        <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5L13 2a4 4 0 0 1 6 6l-9 9a2 2 0 0 1-3-3l8-8"/></svg></button>
+        <textarea id="message-input" aria-label="Message" placeholder="Message" autocomplete="off" enterkeyhint="send" rows="1"></textarea>
         <div class="chat__recording-bar" id="recording-bar" hidden>
           <span class="chat__recording-dot"></span>
           <span class="chat__recording-time" id="recording-time">0:00</span>
           <button type="button" class="chat__recording-cancel" id="recording-cancel">Cancel</button>
+        </div>
         </div>
         <button type="button" class="chat__icon-btn" id="mic-btn"></button>
         <button class="primary chat__send-btn" id="send-btn" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg></button>
         <input type="file" id="attach-image-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
         <input type="file" id="attach-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden />
       </form>
+      </div>
     </div>
   `
 
   root.querySelector<HTMLDivElement>('#nav-title')!.textContent = displayName
+  root.querySelector<HTMLElement>('#nav-avatar')!.textContent = Array.from(displayName.trim())[0]?.toUpperCase() ?? '?'
 }

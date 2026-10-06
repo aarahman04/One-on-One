@@ -1,5 +1,4 @@
-// Appearance settings: chat wallpaper, message style (line/bubbles), and
-// bubble-mode light/dark theme.
+// Appearance settings: shared wallpaper and per-device light/dark theme.
 //
 // Wallpaper and message style are both shared per-connection (either
 // member's choice applies to both — synced server-side via
@@ -35,10 +34,11 @@ function write(a: Appearance): void {
   }
 }
 
-export function applyAppearance(chat: HTMLElement, wallpaper: string, style: string): void {
+export function applyAppearance(chat: HTMLElement, wallpaper: string, _style: string): void {
   chat.classList.toggle('chat--wallpaper-love', wallpaper === 'love')
   chat.classList.toggle('chat--wallpaper-samurai', wallpaper === 'samurai')
-  chat.classList.toggle('chat--bubbles', style === 'bubbles')
+  // Legacy shared 'line' values render as bubbles without writing to the DB.
+  chat.classList.add('chat--bubbles')
   chat.dataset.theme = read().theme
 }
 
@@ -66,7 +66,6 @@ export function openAppearance(
   wallpaper: string,
   style: string,
   onWallpaperChange: (value: string) => void,
-  onStyleChange: (value: string) => void,
 ): void {
   const panel = document.createElement('div')
   panel.className = 'menu appearance'
@@ -76,12 +75,6 @@ export function openAppearance(
       <button class="appearance__opt" data-value="off">Off</button>
       <button class="appearance__opt" data-value="love">Love</button>
       <button class="appearance__opt" data-value="samurai">Samurai</button>
-    </div>
-    <div class="menu__divider"></div>
-    <div class="menu__group-label">MESSAGE STYLE (shared)</div>
-    <div class="appearance__row" data-group="style">
-      <button class="appearance__opt" data-value="line">Line</button>
-      <button class="appearance__opt" data-value="bubbles">Bubbles</button>
     </div>
     <div class="menu__divider"></div>
     <div class="menu__group-label">THEME</div>
@@ -118,13 +111,6 @@ export function openAppearance(
     if (group === 'wallpaper') {
       currentWallpaper = value
       onWallpaperChange(value)
-      mark()
-      return
-    }
-    if (group === 'style') {
-      currentStyle = value
-      onStyleChange(value)
-      applyAppearance(chat, currentWallpaper, currentStyle)
       mark()
       return
     }

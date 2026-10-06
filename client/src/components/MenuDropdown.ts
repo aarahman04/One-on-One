@@ -44,23 +44,24 @@ export function mountMenuDropdown(
     panel = document.createElement('div')
     panel.className = 'menu'
     panel.innerHTML = `
-      <div class="menu__group-label">CONNECTION</div>
-      <button class="menu__item" data-action="rename">Rename connection</button>
-      <div class="menu__divider"></div>
-      <div class="menu__group-label">CONVERSATION</div>
-      <button class="menu__item" data-action="export">Export</button>
       <button class="menu__item" data-action="search"${onSearch ? '' : ' disabled'}>Search</button>
       ${onAppearance ? '<button class="menu__item" data-action="appearance">Appearance</button>' : ''}
       ${onNotifications ? '<button class="menu__item" data-action="notifications">Notifications</button>' : ''}
+      <button class="menu__item" data-action="rename">Rename</button>
+      <button class="menu__item" data-action="export">Export</button>
       <div class="menu__divider"></div>
+      <details class="menu__subgroup">
+      <summary class="menu__item">Connection &amp; account</summary>
       <button class="menu__item menu__item--danger" data-action="leave">Leave connection</button>
       ${onBlock ? '<button class="menu__item menu__item--danger" data-action="block">Block &amp; end</button>' : ''}
       ${onDeleteAccount ? '<button class="menu__item menu__item--danger" data-action="delete-account">Delete account</button>' : ''}
-      <div class="menu__divider"></div>
-      <div class="menu__group-label">ABOUT</div>
+      </details>
+      <details class="menu__subgroup">
+      <summary class="menu__item">About</summary>
       <button class="menu__item" data-action="privacy">Privacy Policy</button>
       <button class="menu__item" data-action="terms">Terms</button>
       <button class="menu__item" data-action="child-safety">Child Safety</button>
+      </details>
     `
     nav.appendChild(panel)
     if (getNotificationsLabel) {

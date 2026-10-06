@@ -105,15 +105,30 @@ const LEGAL_ROUTES: Record<string, Screen> = {
 // between the composer and the keyboard until something forces a recompute.
 // Track both the size AND position of the true visible area ourselves via
 // visualViewport, and pin #app (position: fixed in CSS) to exactly that.
+let viewportFrame = 0
+let viewportHeight = ''
+let viewportTop = ''
 function syncViewport(): void {
+  viewportFrame = 0
   const vv = window.visualViewport
-  document.documentElement.style.setProperty('--app-height', `${vv?.height ?? window.innerHeight}px`)
-  document.documentElement.style.setProperty('--app-offset-top', `${vv?.offsetTop ?? 0}px`)
+  const height = `${vv?.height ?? window.innerHeight}px`
+  const top = `${vv?.offsetTop ?? 0}px`
+  if (height !== viewportHeight) {
+    document.documentElement.style.setProperty('--app-height', height)
+    viewportHeight = height
+  }
+  if (top !== viewportTop) {
+    document.documentElement.style.setProperty('--app-offset-top', top)
+    viewportTop = top
+  }
+}
+function scheduleViewport(): void {
+  if (!viewportFrame) viewportFrame = requestAnimationFrame(syncViewport)
 }
 syncViewport()
-window.visualViewport?.addEventListener('resize', syncViewport)
-window.visualViewport?.addEventListener('scroll', syncViewport)
-window.addEventListener('resize', syncViewport)
+window.visualViewport?.addEventListener('resize', scheduleViewport)
+window.visualViewport?.addEventListener('scroll', scheduleViewport)
+window.addEventListener('resize', scheduleViewport)
 
 // Last-resort visibility for otherwise-silent failures.
 window.addEventListener('unhandledrejection', (e) => console.error('unhandledrejection:', e.reason))
