@@ -1579,7 +1579,7 @@ export const ChatPage: Page = (root, go) => {
       else log.appendChild(row)
       updateGroup(row)
       updateGroup(row.nextElementSibling)
-      if (atBottom) log.scrollTo({ top: log.scrollHeight, behavior: isMine && animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant' })
+      if (atBottom || isMine) log.scrollTo({ top: log.scrollHeight, behavior: isMine && animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant' })
       registerMessageRow(message, row)
       return row
     }
