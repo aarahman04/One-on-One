@@ -1,7 +1,7 @@
 # Progress Log
 
-## RESUME HERE — release candidate 3 / 1.0.3 (2026-10-06)
-PRs #86, #87, #88, #89 merged to main. Release candidate = versionCode 3 / versionName 1.0.3 (2 and 1.0.1 / 1.0.2 were never uploaded; see the version table in docs/RELEASING.md). android-build workflow re-run on main after #89. Next: download the android-release artifact, install the APK on two phones, run the 17-step test script from PR #86, then upload the AAB to Play. Check Railway log for `fcm: configured for project one-on-one-508202` first. Next build after this must use versionCode 4+.
+## RESUME HERE — release candidate 4 / 1.0.3 (2026-10-06)
+PRs #86, #87, #88, #89 merged to main; versionCode bumped to 4 in a follow-up (user request). Release candidate = versionCode 4 / versionName 1.0.3. Versions 2, 3 and 1.0.1 / 1.0.2 were never uploaded; a 3 / 1.0.3 test build exists but must not be uploaded (see the version table in docs/RELEASING.md). Next: download the android-release artifact from the 4 / 1.0.3 run, install the APK on two phones, run the 17-step test script from PR #86, then upload the AAB to Play. Check Railway log for `fcm: configured for project one-on-one-508202` first. Next build after this must use versionCode 5+.
 
 ## [Scroll fix] Own sends always scroll to bottom — 2026-10-06
 Status: done (tsc passes; not device-verified).
