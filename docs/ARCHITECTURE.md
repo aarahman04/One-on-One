@@ -500,3 +500,60 @@ graph TD
 ```
 
 Calling follows the same rule: `features/call/*` never touches Socket.IO — signaling goes through `CallTransport`, reached only via `messageService.getCallTransport()`. A future non-internet transport adds a matching call transport without touching call UI or `CallSession`.
+
+## Native alarm bridge (since 2026-10 — fix/alarm-notify-reliability, section A)
+
+`features/alarmNative.ts` is the only JS door to `AlarmPlugin` (Capacitor, Android). `AlarmForegroundService` holds the ring state in statics (`ringing`, `ringingAlarmId`, `lastStoppedAlarmId`) which `isRinging()` exposes so JS never double-rings.
+
+```mermaid
+flowchart LR
+  FCM[FCM data-only: type, ack, cancelled, alarmId] --> AMS[AlarmMessagingService]
+  AMS -->|"not (foreground AND chatActive)"| AFS[AlarmForegroundService<br/>MediaPlayer ALARM stream + vibrate]
+  AMS -->|ack/cancel + alarmId| AFS
+  AFS -->|notification: Silence action / tap| AFS
+  Chat[ChatPage] -->|setChatActive| AP[AlarmPlugin]
+  Chat -->|stop / isRinging| AP
+  AP --> AFS
+  Chat --> AC[alarmController JS audio]
+  AC -->|stopAll: also native stop + silenced-ids in localStorage| AP
+```
+
+Rules: native rings unless the app is visible AND ChatPage is mounted; an ack/stop with a non-matching `alarmId` is ignored; history resume only if the raise is younger than 2 min, un-acked (any ack with `payload.ack === raise id`), and not in the persisted silenced set.
+
+## Notification registration lifecycle (native, since 2026-10 — section C)
+
+```mermaid
+flowchart TD
+  Start[App start / SIGNED_IN] --> Init[initNativePush]
+  Init --> Chan[create 'messages' channel + permanent registration listener]
+  Chan --> Sess{session and not opted out?}
+  Sess -->|no| Stop[stop]
+  Sess -->|yes| Perm{permission}
+  Perm -->|granted| Reg[register -> POST /api/push/token every launch]
+  Perm -->|prompt, never asked| Ask[request once] --> Reg
+  Perm -->|denied| Stop
+  FCM[FCM onNewToken] --> Listener[registration listener] --> Post[POST /api/push/token]
+  Out[signOut] --> Clear[unregister + POST /api/push/token/unregister + clear local token] --> SB[supabase signOut]
+```
+
+## Reconnect resync, idempotent send, receipt:update (since 2026-10 — section D)
+
+```mermaid
+sequenceDiagram
+  participant C as ChatPage
+  participant T as InternetTransport
+  participant S as socketServer
+  participant API as GET /connections/:id/messages
+  C->>T: sendMessage(tempId)
+  T->>S: message:send {tempId}
+  S-->>T: ack {ok, message} (and message:new broadcast)
+  Note over T,S: ack lost / timeout, socket drops
+  T-->>C: onStateChange(connecting | offline) -> header "connecting…" / "waiting for network"
+  T-->>C: onStateChange(connected, reconnected=true)
+  C->>T: flush unacked (same tempId)
+  T->>S: message:send {tempId}
+  S-->>T: ack {ok, duplicate, original message} (no re-save, no re-broadcast)
+  C->>API: ?after=newest server createdAt (loop while full page)
+  API-->>C: missed messages, merged by id, inserted by createdAt
+  S-->>C: receipt:update {userId, lastReadAt | lastDeliveredAt} (from markRead / markDelivered)
+```

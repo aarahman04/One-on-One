@@ -9,5 +9,7 @@
     <string name="call_notification_text_video">Ongoing video call</string>
     <string name="alarm_notification_channel_name">Emergency alarm</string>
     <string name="alarm_notification_title">Emergency alarm</string>
-    <string name="alarm_notification_text">Tap to open</string>
+    <string name="alarm_notification_text">Tap to silence and open</string>
+    <string name="alarm_notification_silence">Silence</string>
+    <string name="alarm_fallback_channel_name">Emergency alarm (fallback)</string>
 </resources>

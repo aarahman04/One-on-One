@@ -68,7 +68,7 @@ export const DeleteAccountPage: Page = (root) => {
       goBtn.disabled = true
       try {
         await deleteAccount()
-        await signOut()
+        await signOut({ skipPush: true })
         window.location.assign('/')
       } catch (err) {
         showToast(err instanceof Error ? err.message : 'Could not delete the account — try again.')

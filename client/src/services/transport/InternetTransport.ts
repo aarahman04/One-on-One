@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client'
 import { supabase } from '../supabaseClient'
-import type { IncomingMessage, MessageType, ReactionUpdate, Transport } from './Transport'
+import type { IncomingMessage, MessageType, ReactionUpdate, ReceiptUpdate, Transport, TransportState } from './Transport'
 import type { CallTransport } from './CallTransport'
 import { InternetCallTransport } from './InternetCallTransport'
 
@@ -10,6 +10,30 @@ const ACK_TIMEOUT_MS = 10000
 
 export class InternetTransport implements Transport {
   private socket: Socket | null = null
+  private state: TransportState = 'connecting'
+  private connectedOnce = false
+  private stateListeners = new Set<(state: TransportState, reconnected: boolean) => void>()
+  private onlineHandler = (): void => this.setState(this.socket?.connected ? 'connected' : 'connecting', false)
+  private offlineHandler = (): void => {
+    if (!this.socket?.connected) this.setState('offline', false)
+  }
+
+  private setState(next: TransportState, reconnected: boolean): void {
+    if (next === this.state && !reconnected) return
+    this.state = next
+    for (const cb of this.stateListeners) cb(next, reconnected)
+  }
+
+  getState(): TransportState {
+    return this.state
+  }
+
+  onStateChange(callback: (state: TransportState, reconnected: boolean) => void): () => void {
+    this.stateListeners.add(callback)
+    return () => {
+      this.stateListeners.delete(callback)
+    }
+  }
 
   async connect(): Promise<void> {
     // Auth as a callback so socket.io reconnects fetch a *fresh* token — a
@@ -20,6 +44,18 @@ export class InternetTransport implements Transport {
       },
     })
     this.socket = socket
+
+    socket.on('connect', () => {
+      const reconnected = this.connectedOnce
+      this.connectedOnce = true
+      this.setState('connected', reconnected)
+    })
+    socket.on('disconnect', () => this.setState(navigator.onLine === false ? 'offline' : 'connecting', false))
+    socket.io.on('reconnect_attempt', () => {
+      if (this.state === 'connected') this.setState('connecting', false)
+    })
+    window.addEventListener('online', this.onlineHandler)
+    window.addEventListener('offline', this.offlineHandler)
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -37,11 +73,16 @@ export class InternetTransport implements Transport {
       // Don't leave a zombie socket retrying in the background with nobody listening.
       socket.disconnect()
       this.socket = null
+      window.removeEventListener('online', this.onlineHandler)
+      window.removeEventListener('offline', this.offlineHandler)
       throw err
     }
   }
 
   disconnect(): void {
+    window.removeEventListener('online', this.onlineHandler)
+    window.removeEventListener('offline', this.offlineHandler)
+    this.stateListeners.clear()
     this.socket?.disconnect()
     this.socket = null
   }
@@ -54,15 +95,15 @@ export class InternetTransport implements Transport {
     return new InternetCallTransport(this.socket)
   }
 
-  private emitWithAck(event: string, payload: unknown): Promise<void> {
+  private emitWithAck(event: string, payload: unknown): Promise<{ message?: IncomingMessage }> {
     const socket = this.socket
     if (!socket || !socket.connected) throw new Error('not connected')
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<{ message?: IncomingMessage }>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('send timeout')), ACK_TIMEOUT_MS)
-      socket.emit(event, payload, (res: { ok?: boolean; error?: string }) => {
+      socket.emit(event, payload, (res: { ok?: boolean; error?: string; message?: IncomingMessage }) => {
         clearTimeout(timer)
         if (res?.error) reject(new Error(res.error))
-        else resolve()
+        else resolve({ message: res?.message })
       })
     })
   }
@@ -73,8 +114,11 @@ export class InternetTransport implements Transport {
     payload: unknown = null,
     replyTo: string | null = null,
     tempId?: string,
-  ): Promise<void> {
-    await this.emitWithAck('message:send', { content, type, payload, replyTo, tempId })
+  ): Promise<IncomingMessage | undefined> {
+    // The ack carries the saved message (the ORIGINAL one on a deduped resend),
+    // so a sender whose echo was lost can still reconcile its optimistic row.
+    const res = await this.emitWithAck('message:send', { content, type, payload, replyTo, tempId })
+    return res.message
   }
 
   onMessage(callback: (message: IncomingMessage) => void): () => void {
@@ -96,6 +140,15 @@ export class InternetTransport implements Transport {
     socket.on('reaction:update', callback)
     return () => {
       socket.off('reaction:update', callback)
+    }
+  }
+
+  onReceipt(callback: (update: ReceiptUpdate) => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    socket.on('receipt:update', callback)
+    return () => {
+      socket.off('receipt:update', callback)
     }
   }
 

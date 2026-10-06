@@ -1,8 +1,8 @@
 import { InternetTransport } from './transport/InternetTransport'
-import type { IncomingMessage, MessageType, ReactionUpdate, Transport } from './transport/Transport'
+import type { IncomingMessage, MessageType, ReactionUpdate, ReceiptUpdate, Transport, TransportState } from './transport/Transport'
 import type { CallTransport } from './transport/CallTransport'
 
-export type { IncomingMessage, MessageType, ReactionUpdate, Transport, CallTransport }
+export type { IncomingMessage, MessageType, ReactionUpdate, ReceiptUpdate, Transport, TransportState, CallTransport }
 
 let activeTransport: InternetTransport | null = null
 

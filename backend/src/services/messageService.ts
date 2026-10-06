@@ -298,6 +298,7 @@ export async function getHistory(
   connectionId: string,
   userId: string,
   before?: string,
+  after?: string,
 ): Promise<Message[]> {
   await getConnectionForMember(connectionId, userId, { requireLive: true })
 
@@ -305,14 +306,19 @@ export async function getHistory(
     .from('messages')
     .select('id, sender_id, content, created_at, type, payload, reply_to')
     .eq('connection_id', connectionId)
-    .order('created_at', { ascending: false })
-    .limit(HISTORY_PAGE_SIZE)
-  if (before) query = query.lt('created_at', before)
+  // `after`: reconnect resync — everything newer than what the client holds,
+  // oldest first (so a long gap pages forward from the client's last message).
+  // Membership is still authorized above; the cursor only narrows the range.
+  if (after) query = query.gt('created_at', after).order('created_at', { ascending: true }).limit(HISTORY_PAGE_SIZE)
+  else {
+    query = query.order('created_at', { ascending: false }).limit(HISTORY_PAGE_SIZE)
+    if (before) query = query.lt('created_at', before)
+  }
 
   const { data, error } = await query
   if (error) throw error
 
-  const rows = (data ?? []).reverse()
+  const rows = after ? (data ?? []) : (data ?? []).reverse()
   const reactionsByMessage = await getReactionsForMessages(rows.map((r) => r.id))
   return rows.map((row) =>
     toMessage(

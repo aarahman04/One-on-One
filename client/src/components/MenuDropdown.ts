@@ -13,6 +13,7 @@ export function mountMenuDropdown(
   onNotifications?: () => void,
   onBlock?: () => void,
   onDeleteAccount?: () => void,
+  getNotificationsLabel?: () => Promise<string>,
 ): () => void {
   let panel: HTMLDivElement | null = null
   let unregisterBack: (() => void) | null = null
@@ -62,6 +63,12 @@ export function mountMenuDropdown(
       <button class="menu__item" data-action="child-safety">Child Safety</button>
     `
     nav.appendChild(panel)
+    if (getNotificationsLabel) {
+      const item = panel.querySelector<HTMLButtonElement>('[data-action="notifications"]')
+      void getNotificationsLabel().then((label) => {
+        if (item) item.textContent = label
+      })
+    }
 
     panel.querySelector('[data-action="rename"]')!.addEventListener('click', () => {
       close()

@@ -1,4 +1,5 @@
 import { openModal } from '../components/Modal'
+import { markAlarmSilenced, stopNativeAlarm } from './alarmNative'
 
 // The /alarm emergency command: an unmistakable in-app alert (looping siren +
 // vibration + a pulsing red glow, wired in ChatPage) plus a raise/acknowledge
@@ -10,7 +11,7 @@ import { openModal } from '../components/Modal'
 // one reliably intrusive surface available to a PWA.
 
 const VIBRATE_PATTERN = [300, 150, 300, 150, 300, 150, 300]
-const AUTO_CLEAR_MS = 2 * 60_000 // visual auto-clears if nobody acknowledges
+export const AUTO_CLEAR_MS = 2 * 60_000 // visual auto-clears if nobody acknowledges
 
 // Autoplay policies require a prior user gesture on the page before `play()`
 // is allowed to produce sound; that permission is sticky for the tab's
@@ -35,11 +36,19 @@ export interface AlarmController {
    *  `silent` skips sound/vibration (used for your own raise — you don't
    *  need alerting to something you just sent) but still runs the
    *  auto-clear timer. */
-  start: (opts?: { silent?: boolean }) => void
-  /** Full stop — sound, vibration and the auto-clear timer (acknowledged or
-   *  auto-cleared). Sound/vibration run until one of those two things; being
-   *  visible/focused no longer silences them. */
-  stopAll: () => void
+  start: (opts?: { silent?: boolean; alarmId?: string | null; remainingMs?: number }) => void
+  /** Full stop — sound, vibration, the auto-clear timer AND the native ring
+   *  (acknowledged, cancelled or auto-cleared). The alarm is recorded as
+   *  silenced so a reload never re-rings it. Sound/vibration run until one of
+   *  those things; being visible/focused no longer silences them. */
+  stopAll: (alarmId?: string | null) => void
+  /** The alarm id this controller is currently handling (null if unknown yet,
+   *  e.g. your own raise before the server echo). */
+  currentId: () => string | null
+  setId: (alarmId: string) => void
+  /** Stop only this layer's sound/vibration (native is ringing instead); the
+   *  auto-clear timer keeps running. */
+  silenceLocal: () => void
   /** Fires once if nobody acknowledges within the auto-clear window. */
   onAutoClear: (cb: () => void) => void
   dispose: () => void
@@ -74,13 +83,24 @@ export function createAlarmController(): AlarmController {
     }
   }
 
-  const stopAll = (): void => {
+  let currentAlarmId: string | null = null
+
+  const stopLocal = (): void => {
     stopSound()
     clearAutoTimer()
   }
 
-  const start = (opts: { silent?: boolean } = {}): void => {
-    stopAll()
+  const stopAll = (alarmId?: string | null): void => {
+    const target = alarmId ?? currentAlarmId
+    stopLocal()
+    markAlarmSilenced(target)
+    void stopNativeAlarm(target)
+    if (!alarmId || alarmId === currentAlarmId) currentAlarmId = null
+  }
+
+  const start = (opts: { silent?: boolean; alarmId?: string | null; remainingMs?: number } = {}): void => {
+    stopLocal()
+    currentAlarmId = opts.alarmId ?? null
     if (!opts.silent) {
       // Whether this actually makes sound is out of the app's control once
       // the tab is backgrounded: mobile browsers throttle or fully suspend a
@@ -105,17 +125,23 @@ export function createAlarmController(): AlarmController {
     autoClearTimer = setTimeout(() => {
       stopAll()
       autoClearCb?.()
-    }, AUTO_CLEAR_MS)
+    }, opts.remainingMs ?? AUTO_CLEAR_MS)
   }
 
   return {
     start,
     stopAll,
+    currentId: () => currentAlarmId,
+    setId: (alarmId) => {
+      currentAlarmId = alarmId
+    },
+    silenceLocal: stopSound,
     onAutoClear: (cb) => {
       autoClearCb = cb
     },
     dispose: () => {
-      stopAll()
+      // Page teardown only stops this layer — a native ring must outlive it.
+      stopLocal()
       audio.src = ''
     },
   }

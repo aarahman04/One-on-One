@@ -38,7 +38,7 @@ export function openDeleteAccountDialog(): void {
     goBtn.disabled = true
     try {
       await deleteAccount()
-      await signOut()
+      await signOut({ skipPush: true })
       location.assign('/')
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not delete the account — try again.')

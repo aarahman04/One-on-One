@@ -2,7 +2,7 @@ import type { Server as HttpServer } from 'node:http'
 import { Server, type Socket } from 'socket.io'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { resolveUserFromToken } from '../services/authToken.js'
-import { ConnectionError, markDelivered } from '../services/connectionService.js'
+import { ConnectionError, markDelivered, setReceiptEmitter } from '../services/connectionService.js'
 import { getLiveConnectionForUser, type MemberConnection } from '../services/connectionAccess.js'
 import {
   saveMessage,
@@ -93,6 +93,46 @@ function alarmRaiseAllowed(userId: string): boolean {
   return true
 }
 
+// FCM data for an alarm send. `alarmId` is always the RAISE's message id (for an
+// ack/cancel that is payload.ack), so native stop/ack can target the right
+// alarm and ignore a late one for an older raise.
+function alarmFcmData(message: Message): Record<string, string> {
+  const p = message.payload as { ack?: string; cancelled?: boolean } | null
+  return {
+    type: 'alarm',
+    ack: p?.ack ? 'true' : 'false',
+    cancelled: p?.cancelled ? 'true' : 'false',
+    alarmId: p?.ack ?? message.id,
+  }
+}
+
+// Idempotent send: a client whose ack timed out resends the same tempId. The
+// server remembers what it saved for (senderId, tempId) for 5 minutes so a
+// repeat returns the original message in the ack and is NOT saved or
+// broadcast again. In-memory is fine for a single-instance server (same
+// stance as the alarm cooldown above).
+const SENT_TTL_MS = 5 * 60_000
+const SENT_MAX_ENTRIES = 5000 // hard cap, oldest evicted first; per-user growth is bounded by the per-socket 60 events/10s limit
+const TEMP_ID_RE = /^[A-Za-z0-9-]{1,64}$/
+const sentByTempId = new Map<string, { at: number; message: Record<string, unknown> }>()
+const sendsInFlight = new Set<string>()
+function sentKey(userId: string, tempId: string): string {
+  return `${userId}:${tempId}`
+}
+function rememberSent(key: string, message: Record<string, unknown>): void {
+  const now = Date.now()
+  for (const [k, v] of sentByTempId) {
+    if (now - v.at <= SENT_TTL_MS) break // insertion-ordered: the rest are newer
+    sentByTempId.delete(k)
+  }
+  while (sentByTempId.size >= SENT_MAX_ENTRIES) {
+    const oldest = sentByTempId.keys().next().value
+    if (oldest === undefined) break
+    sentByTempId.delete(oldest)
+  }
+  sentByTempId.set(key, { at: now, message })
+}
+
 // One fetchSockets() decides both delivery paths for a just-sent message: if
 // the recipient has a live socket in the room, the message reached them over
 // the open connection right now — mark it delivered immediately rather than
@@ -125,18 +165,25 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
       // (see pushService.sendFcmToUser). `ack` mirrors the same payload
       // shape messageService.validateAlarmPayload already validates.
       ...(isAlarm
-        ? { data: { type: 'alarm', ack: (message.payload as { ack?: string } | null)?.ack ? 'true' : 'false' } }
+        ? { data: alarmFcmData(message) }
         : {}),
     }
 
     if (recipientOnline) {
-      await markDelivered(connection.id, recipientId)
+      // Separate try: a markDelivered failure must not skip the push.
+      try {
+        await markDelivered(connection.id, recipientId)
+      } catch (err) {
+        console.error(`syncDelivery: markDelivered failed for connection ${connection.id}:`, err)
+      }
       await sendNativeToUser(recipientId, payload)
       return
     }
     await sendToUser(recipientId, payload)
-  } catch {
-    /* best-effort — never fail the send because delivery-sync/push failed */
+  } catch (err) {
+    // Best-effort — never fail the send because delivery-sync/push failed —
+    // but never silently either.
+    console.error(`syncDelivery failed for message ${message.id}:`, err)
   }
 }
 
@@ -145,6 +192,19 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
   ioRef = io
   setIo(io) // lets callService.forceEndCall run from outside the socket layer
   setMessageServiceIo(io) // lets messageService.emitAppearanceNotice run from the REST route
+  // markRead/markDelivered (REST + socket paths) push a receipt:update to the
+  // OTHER member so ticks flip instantly; the client's 4s poll stays a fallback.
+  setReceiptEmitter((connectionId, userId, patch) => {
+    void io
+      .in(room(connectionId))
+      .fetchSockets()
+      .then((sockets) => {
+        for (const s of sockets) {
+          if ((s.data as SocketData).userId !== userId) s.emit('receipt:update', { userId, ...patch })
+        }
+      })
+      .catch((err) => console.error('receipt:update emit failed:', err))
+  })
 
   // Auth handshake: verify the Supabase JWT and resolve the app user. The
   // client never gets to name its own connection or sender (spec §20); the
@@ -241,7 +301,24 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         const content = typeof msg?.content === 'string' ? msg.content : ''
         const type = isMessageType(msg?.type) ? msg.type : 'text'
         const replyTo = typeof msg?.replyTo === 'string' ? msg.replyTo : null
-        const tempId = typeof msg?.tempId === 'string' ? msg.tempId : undefined
+        // UUID-shaped only; anything else is treated as "no tempId" (not an error).
+        const tempId = typeof msg?.tempId === 'string' && TEMP_ID_RE.test(msg.tempId) ? msg.tempId : undefined
+        // Idempotency: checked BEFORE the alarm cooldown so a resent raise is
+        // answered from memory instead of being rejected as a second alarm.
+        const dedupeKey = tempId ? sentKey(userId, tempId) : null
+        if (dedupeKey) {
+          const prior = sentByTempId.get(dedupeKey)
+          if (prior && Date.now() - prior.at <= SENT_TTL_MS) {
+            ack?.({ ok: true, duplicate: true, message: prior.message })
+            return
+          }
+          if (sendsInFlight.has(dedupeKey)) {
+            ack?.({ error: 'send already in progress' })
+            return
+          }
+          sendsInFlight.add(dedupeKey)
+        }
+        try {
         // Only a fresh raise is rate-limited — an ack payload replies to
         // someone else's alarm and shouldn't be throttled by the raiser's window.
         const isAlarmRaise = type === 'alarm' && !(msg?.payload as { ack?: unknown } | null)?.ack
@@ -271,10 +348,15 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         }
 
         // tempId echoed so the sender can reconcile its optimistic row exactly.
-        io.to(room(connection.id)).emit('message:new', { ...message, payload: outgoingPayload, tempId })
+        const outgoing = { ...message, payload: outgoingPayload, tempId }
+        if (dedupeKey) rememberSent(dedupeKey, outgoing)
+        io.to(room(connection.id)).emit('message:new', outgoing)
         void syncDelivery(io, connection, userId, message)
         void bumpSenderLastRead(connection.id, userId, message.createdAt)
-        ack?.({ ok: true })
+        ack?.({ ok: true, message: outgoing })
+        } finally {
+          if (dedupeKey) sendsInFlight.delete(dedupeKey)
+        }
       } catch (err) {
         ack?.({ error: clientError(err, 'failed to send message') })
       }
