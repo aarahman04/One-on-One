@@ -112,6 +112,8 @@ function alarmFcmData(message: Message): Record<string, string> {
 // broadcast again. In-memory is fine for a single-instance server (same
 // stance as the alarm cooldown above).
 const SENT_TTL_MS = 5 * 60_000
+const SENT_MAX_ENTRIES = 5000 // hard cap, oldest evicted first; per-user growth is bounded by the per-socket 60 events/10s limit
+const TEMP_ID_RE = /^[A-Za-z0-9-]{1,64}$/
 const sentByTempId = new Map<string, { at: number; message: Record<string, unknown> }>()
 const sendsInFlight = new Set<string>()
 function sentKey(userId: string, tempId: string): string {
@@ -122,6 +124,11 @@ function rememberSent(key: string, message: Record<string, unknown>): void {
   for (const [k, v] of sentByTempId) {
     if (now - v.at <= SENT_TTL_MS) break // insertion-ordered: the rest are newer
     sentByTempId.delete(k)
+  }
+  while (sentByTempId.size >= SENT_MAX_ENTRIES) {
+    const oldest = sentByTempId.keys().next().value
+    if (oldest === undefined) break
+    sentByTempId.delete(oldest)
   }
   sentByTempId.set(key, { at: now, message })
 }
@@ -294,7 +301,8 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         const content = typeof msg?.content === 'string' ? msg.content : ''
         const type = isMessageType(msg?.type) ? msg.type : 'text'
         const replyTo = typeof msg?.replyTo === 'string' ? msg.replyTo : null
-        const tempId = typeof msg?.tempId === 'string' ? msg.tempId : undefined
+        // UUID-shaped only; anything else is treated as "no tempId" (not an error).
+        const tempId = typeof msg?.tempId === 'string' && TEMP_ID_RE.test(msg.tempId) ? msg.tempId : undefined
         // Idempotency: checked BEFORE the alarm cooldown so a resent raise is
         // answered from memory instead of being rejected as a second alarm.
         const dedupeKey = tempId ? sentKey(userId, tempId) : null
