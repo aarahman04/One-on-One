@@ -169,7 +169,13 @@ async function sendFcmToUser(userId: string, payload: PushPayload): Promise<void
               token: row.token,
               ...(dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
               android: {
-                priority: 'high',
+                // Alarm sends: raise + cancel are time-critical (high, and worthless
+                // after 2 min — same as the ring's auto-clear — so ttl 120s). A plain
+                // ack goes to the raiser and shows nothing; a data-only high-priority
+                // send that displays nothing gets the app's high priority downgraded,
+                // so it goes normal.
+                priority: dataOnly && payload.data?.ack === 'true' && payload.data?.cancelled !== 'true' ? 'normal' : 'high',
+                ...(dataOnly ? { ttl: '120s' } : {}),
                 ...(dataOnly
                   ? {}
                   : {

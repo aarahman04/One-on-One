@@ -13,7 +13,7 @@ Notes/deviations:
 
 ## RESUME HERE (fix/alarm-notify-reliability)
 Branch `fix/alarm-notify-reliability` (from origin/main). Sections A -> B -> C -> D, one commit + PROGRESS entry each.
-Done: A. Next: B (alarm when app killed/backgrounded). Then C, D, then final PR with device test script.
+Done: A, B. Next: C (message notifications), then D, then final PR with device test script.
 
 ## [Alarm A] Silence / re-pop fix (native stop bridge) — 2026-10-06
 Status: done (tsc client+backend clean, `gradlew :app:compileDebugJavaWithJavac` OK); NOT device-verified
@@ -22,6 +22,13 @@ Files: android/.../AlarmPlugin.java (new), AlarmForegroundService.java, AlarmMes
 Verified: builds above. Unverified: everything on device (ring, Silence button, tap, lock-screen), live FCM.
 Included early from B: MediaPlayer rebuild, WAKE mode, lock-screen flags, FCM-start fallback notification, full-screen-intent hint (B2, B3, B1, B5 — see B entry if added).
 Next step: B4 (backend FCM ttl 120s + priority) then C.
+
+## [Alarm B] Alarm when app killed/backgrounded — 2026-10-06
+Status: done (tsc clean, gradle compileDebugJavaWithJavac OK); NOT device-verified
+What shipped: (most native pieces landed in the A commit, same files) B1 AlarmMessagingService wraps startForegroundService in try/catch(IllegalStateException, covers ForegroundServiceStartNotAllowedException) and posts a CATEGORY_ALARM full-screen-intent notification on a separate `alarm_fallback` channel (own alarm sound+vibration, since no MediaPlayer runs then; deviation from "the alarm channel" because that channel is deliberately silent); B2 MediaPlayer built via `new MediaPlayer()` -> USAGE_ALARM attrs -> setDataSource(raw AFD) -> setWakeMode(PARTIAL_WAKE_LOCK) -> prepare; B3 MainActivity setShowWhenLocked/setTurnScreenOn on the full-screen intent, cleared on silence/onStop; B4 (this commit) backend FCM alarm sends: android.ttl 120s, high priority for raise+cancel, normal for plain ack (regular message pushes unchanged: high); B5 AlarmPlugin.canUseFullScreenIntent + one-time confirm hint (alarmNative.maybePromptFullScreenIntent, called on ChatPage mount) deep-linking to ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT.
+Files: backend/src/services/pushService.ts (this commit); rest listed under A.
+Verified: builds. Unverified: killed-app ring, lock-screen takeover, fallback path, live FCM ttl/priority.
+Next step: C.
 
 ## [Device fixes] Composer keyboard scroll, native alarm wake, notification icon — 2026-09-21
 Status: done (builds clean; alarm wake and notification icon are Android-native — need a versionCode-3 AAB and real-device verification; composer scroll also fixed on web/PWA)
