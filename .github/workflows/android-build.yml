@@ -29,7 +29,7 @@ on:
       versionName:
         description: "versionName (e.g. 1.0.0)"
         required: true
-        default: "1.0.2"
+        default: "1.0.3"
 
 env:
   EXPECTED_UPLOAD_KEY_SHA1: "36:A9:69:D6:10:20:E0:7E:33:79:9F:0C:04:CE:F5:1A:63:BB:90:C6"
