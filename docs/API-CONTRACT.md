@@ -101,7 +101,7 @@ Flow: upload -> take `{path, mime, size}` -> send a `message:send` of type image
 |---|---|---|
 | `POST /api/push/subscribe` (strict) | `{endpoint, keys:{p256dh, auth}}` web-push; endpoint must be https on googleapis.com / push.services.mozilla.com / notify.windows.com / push.apple.com | `204`; 400 `invalid subscription` / `invalid push endpoint` / `push endpoint must be https` / `unsupported push endpoint` |
 | `POST /api/push/unsubscribe` | `{endpoint}` | `204`; 400 `invalid endpoint` |
-| `POST /api/push/token` (strict) | `{token}` FCM registration token (opaque string) | `204`; 400 `invalid token`. Upserts on `token` (moves it to the caller if it was registered to someone else). Stored with `platform='android'`. |
+| `POST /api/push/token` (strict) | `{token, platform?}` FCM registration token (opaque string). `platform` optional, `"android"` (default; the Capacitor app) or `"android-native"` (the Kotlin app) | `204`; 400 `invalid token` / `invalid platform`. Upserts on `token` (moves it to the caller if it was registered to someone else; re-registering with a different platform updates it). Requires migration 035 for the DB check constraint. |
 | `POST /api/push/token/unregister` | `{token}` | `204`; 400 `invalid token`. Deletes only the caller's own row. |
 
 ### TURN (`routes/turn.ts`)
@@ -182,7 +182,7 @@ Every handler re-resolves the live connection from the DB; the client never name
 | `message:send` | `{content?: string, type?: MessageType, payload?, replyTo?: string, tempId?: string}`; `tempId` must match `^[A-Za-z0-9-]{1,64}$` (else treated as absent) | `{ok:true, message}` ; repeat of the same `(user, tempId)` within 5 min -> `{ok:true, duplicate:true, message:<original>}` and nothing is saved/broadcast again; concurrent duplicate -> `{error:'send already in progress'}`. Errors listed in section 4. The server also `message:new`-broadcasts to the room (sender included) and bumps the sender's last_read. |
 | `reaction:add` | `{messageId, emoji}` | `{ok:true}`. Emoji must be one of `❤️ 👍 😂 😮 😢 🙏`. One reaction per user per message (a new emoji replaces the old). `system` messages can't be reacted to. Errors: `invalid emoji`, 403/404/409 messages. |
 | `reaction:remove` | `{messageId, emoji}` | `{ok:true}` |
-| `call:invite` | `{kind?: "audio"\|"video"}` (anything else = audio) | `{ok:true, callId, iceServers}`. Errors: `a call is already in progress on this connection` (409); if the callee has no live socket: `They're not reachable right now — they'll see that you called` (an `unreachable` call row is written and a push is sent; no ring) |
+| `call:invite` | `{kind?: "audio"\|"video"}` (anything else = audio) | `{ok:true, callId, iceServers}`. Errors: `a call is already in progress on this connection` (409); if the callee has no live socket **and no `android-native` push token**: `They're not reachable right now — they'll see that you called` (an `unreachable` call row is written and a text push is sent; no ring). If the callee has a native token the call rings normally (state is held server-side; the woken app reconnects and gets `call:incoming` replayed) and a data-only `call` FCM is sent (section 6). |
 | `call:accept` | `{callId}` | `{ok:true, iceServers}`; errors `call is no longer active`, `not the callee` |
 | `call:decline` | `{callId}` | `{ok:true}`; same errors |
 | `call:signal` | `{callId, data}` opaque SDP/ICE, relayed untouched to the other participant's sockets only | `{ok:true}`; errors `call is no longer active`, `not a participant in this call` |
@@ -206,7 +206,7 @@ Receipt semantics: a message is "delivered" when the other member's `lastDeliver
 
 ---
 
-## 6. Push notifications (current)
+## 6. Push notifications
 
 Server sends to every web-push subscription and every FCM token the recipient registered (`push_tokens`). Triggers:
 - New message from the other member. If the recipient has **no live socket in the room**: web-push + FCM. If they do have one: the message is marked delivered and **FCM only** (a backgrounded Capacitor WebView keeps its socket alive). Web-push is never sent in the online case.
@@ -217,7 +217,33 @@ Title = what the recipient calls the sender (nickname) or `New message`. Body (`
 
 Web-push payload (JSON string): `{title, body, urgent?: boolean, data?: {...}}`.
 
-### FCM (HTTP v1, `fcm.googleapis.com`) as currently sent
+### FCM for `android-native` tokens (Kotlin app) — DATA-ONLY, always `android.priority: "high"`
+No `notification` block is ever sent to these tokens for the sends below, so `FirebaseMessagingService.onMessageReceived` always runs (foreground, background or killed) and the app builds its own notification. All data values are **strings**.
+
+New message, every type (`type` = the message type, e.g. `text|image|alarm|...`):
+```
+data: { type, messageId, connectionId,
+        senderName,   // what the recipient calls the sender; "" if no nickname set
+        preview,      // identical to the push body text above (mediaNoticeFor)
+        urgent }      // "true" only for alarms
+```
+Alarms additionally carry `alarmId` (the RAISE's message id, also for ack/cancel), `ack` (`"true"|"false"`), `cancelled` (`"true"|"false"`), and are sent with `android.ttl = "120s"`. A raise is `ack="false"`, an acknowledge is `ack="true", cancelled="false"`, a cancel is `ack="true", cancelled="true"`. Native tokens get `high` priority for all three (the native app shows its own notification for an ack); only the legacy `android` tokens keep the plain-ack `normal` exception, see below. Non-alarm messages have no ttl set (FCM default).
+
+Incoming call (sent at `call:invite` whenever the callee has any `android-native` token, in addition to the socket `call:incoming`; `android.ttl = "30s"`):
+```
+data: { type: "call", callId, kind: "audio|video", callerName }   // callerName "" if no nickname
+```
+Call over (sent to the callee's native tokens on every resolution: caller cancel, callee decline, ring timeout (45 s), end, forced end on connection termination; `ttl 30s`):
+```
+data: { type: "call_end", callId }
+```
+Reconnecting after a `call` push: the server holds the ringing call (45 s); a socket that connects while it rings receives `call:incoming` again, then use `call:accept` / `call:decline`. If the app was woken after the ring ended, `call:accept` fails with `call is no longer active`.
+
+The missed/cancelled-call text push is still a normal `notification` message (title/body) and arrives in addition to `call_end`.
+
+Tokens with `platform='android-native'` that receive a send with no `native` data (only the missed-call text push today) get the notification shape below.
+
+### FCM for `android` tokens (Capacitor app) — unchanged
 Non-alarm message:
 ```
 message: { token,
@@ -230,10 +256,8 @@ Alarm (data-only; no `notification` block; `android.ttl = "120s"`):
 data: { urgent: "true", type: "alarm", ack: "true|false", cancelled: "true|false", alarmId: "<RAISE message id>" }
 ```
 - `alarmId` is always the **raise's** message id (for an ack/cancel it is `payload.ack`).
-- `android.priority` is `high` for every send **except** a plain acknowledge (`ack=true, cancelled=false`), which is sent `normal` (data-only, shows nothing).
-- Dead tokens (`UNREGISTERED`, `SENDER_ID_MISMATCH`, HTTP 404) are deleted server-side.
-
-(The new FCM schema for native clients is introduced separately; see the section "FCM for `android-native` tokens" once that change lands.)
+- `android.priority` is `high` for every send **except**, for legacy `android` tokens only, a plain acknowledge (`ack=true, cancelled=false`), which is sent `normal`. Justification: the Capacitor app shows nothing for it (it only updates the raiser's UI), and Google downgrades the app's high-priority quota when high-priority data messages display no notification. The native app does display one, so its tokens are always `high`.
+- Dead tokens (`UNREGISTERED`, `SENDER_ID_MISMATCH`, HTTP 404) are deleted server-side (all platforms).
 
 ---
 

@@ -108,6 +108,29 @@ export function alarmFcmData(message: Message): Record<string, string> {
   }
 }
 
+// Data-only FCM payload for 'android-native' tokens, every message type. All
+// values are strings (FCM requirement). `senderName` is what the recipient
+// calls the sender ('' if they never set a nickname); `preview` is exactly the
+// text the other transports show as the body (mediaNoticeFor).
+export function nativeMessageData(
+  message: Message,
+  connectionId: string,
+  senderName: string,
+  isAlarm: boolean,
+): Record<string, string> {
+  const base: Record<string, string> = {
+    type: message.type,
+    messageId: message.id,
+    connectionId,
+    senderName,
+    preview: mediaNoticeFor(message),
+    urgent: isAlarm ? 'true' : 'false',
+  }
+  if (!isAlarm) return base
+  const { alarmId, ack, cancelled } = alarmFcmData(message)
+  return { ...base, alarmId, ack, cancelled }
+}
+
 // Idempotent send: a client whose ack timed out resends the same tempId. The
 // server remembers what it saved for (senderId, tempId) for 5 minutes so a
 // repeat returns the original message in the ack and is NOT saved or
@@ -162,6 +185,8 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
       title: senderMember?.nickname ?? 'New message',
       body: mediaNoticeFor(message),
       urgent: isAlarm,
+      native: nativeMessageData(message, connection.id, senderMember?.nickname ?? '', isAlarm),
+      ...(isAlarm ? { nativeTtl: '120s' } : {}),
       // Native-only: routes the FCM send data-only so AlarmMessagingService
       // can start/stop the ring even when the app is backgrounded or killed
       // (see pushService.sendFcmToUser). `ack` mirrors the same payload
