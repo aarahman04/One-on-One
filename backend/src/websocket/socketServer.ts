@@ -7,6 +7,8 @@ import { getLiveConnectionForUser, type MemberConnection } from '../services/con
 import {
   saveMessage,
   bumpSenderLastRead,
+  checkAlarmAck,
+  withAlarmAckLock,
   isMessageType,
   setIo as setMessageServiceIo,
   type Message,
@@ -53,7 +55,7 @@ export function emitConnectionEnded(connectionId: string): void {
   ioRef?.to(room(connectionId)).emit('connection:ended')
 }
 
-function mediaNoticeFor(message: Message): string {
+export function mediaNoticeFor(message: Message): string {
   switch (message.type) {
     case 'letter':
       return 'sent you a letter'
@@ -66,7 +68,7 @@ function mediaNoticeFor(message: Message): string {
     case 'alarm': {
       const alarmPayload = message.payload as { ack?: string; cancelled?: boolean } | null
       if (!alarmPayload?.ack) return '🚨 sent an emergency alarm'
-      return alarmPayload.cancelled ? 'cancelled the alarm' : 'acknowledged the alarm'
+      return alarmPayload.cancelled ? 'cancelled their alarm (all clear)' : 'acknowledged your alarm'
     }
     case 'location':
       // Never the raw coordinates — those would land on an OS lock-screen
@@ -96,7 +98,7 @@ function alarmRaiseAllowed(userId: string): boolean {
 // FCM data for an alarm send. `alarmId` is always the RAISE's message id (for an
 // ack/cancel that is payload.ack), so native stop/ack can target the right
 // alarm and ignore a late one for an older raise.
-function alarmFcmData(message: Message): Record<string, string> {
+export function alarmFcmData(message: Message): Record<string, string> {
   const p = message.payload as { ack?: string; cancelled?: boolean } | null
   return {
     type: 'alarm',
@@ -104,6 +106,29 @@ function alarmFcmData(message: Message): Record<string, string> {
     cancelled: p?.cancelled ? 'true' : 'false',
     alarmId: p?.ack ?? message.id,
   }
+}
+
+// Data-only FCM payload for 'android-native' tokens, every message type. All
+// values are strings (FCM requirement). `senderName` is what the recipient
+// calls the sender ('' if they never set a nickname); `preview` is exactly the
+// text the other transports show as the body (mediaNoticeFor).
+export function nativeMessageData(
+  message: Message,
+  connectionId: string,
+  senderName: string,
+  isAlarm: boolean,
+): Record<string, string> {
+  const base: Record<string, string> = {
+    type: message.type,
+    messageId: message.id,
+    connectionId,
+    senderName,
+    preview: mediaNoticeFor(message),
+    urgent: isAlarm ? 'true' : 'false',
+  }
+  if (!isAlarm) return base
+  const { alarmId, ack, cancelled } = alarmFcmData(message)
+  return { ...base, alarmId, ack, cancelled }
 }
 
 // Idempotent send: a client whose ack timed out resends the same tempId. The
@@ -160,6 +185,8 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
       title: senderMember?.nickname ?? 'New message',
       body: mediaNoticeFor(message),
       urgent: isAlarm,
+      native: nativeMessageData(message, connection.id, senderMember?.nickname ?? '', isAlarm),
+      ...(isAlarm ? { nativeTtl: '120s' } : {}),
       // Native-only: routes the FCM send data-only so AlarmMessagingService
       // can start/stop the ring even when the app is backgrounded or killed
       // (see pushService.sendFcmToUser). `ack` mirrors the same payload
@@ -326,7 +353,24 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
           ack?.({ error: 'wait a bit before sending another alarm' })
           return
         }
-        const message = await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo)
+        // An alarm ack/cancel must name a real raise it may legitimately
+        // answer; a repeat returns the existing ack with no save/broadcast/push.
+        const alarmAckId = type === 'alarm' ? (msg?.payload as { ack?: unknown } | null)?.ack : undefined
+        let message: Message
+        if (alarmAckId !== undefined && alarmAckId !== null) {
+          const result = await withAlarmAckLock(String(alarmAckId).trim(), async () => {
+            const existing = await checkAlarmAck(connection.id, userId, msg?.payload)
+            if (existing) return { existing }
+            return { saved: await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo) }
+          })
+          if ('existing' in result) {
+            ack?.({ ok: true, duplicate: true, message: result.existing })
+            return
+          }
+          message = result.saved
+        } else {
+          message = await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo)
+        }
 
         // Sign media at broadcast time so BOTH sides get a viewable/playable
         // URL in the same event, instead of every viewer (sender included)

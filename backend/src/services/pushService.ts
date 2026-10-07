@@ -112,16 +112,69 @@ async function getFcmAccessToken(): Promise<string> {
   return json.access_token
 }
 
+// 'android' = the Capacitor app (keeps today's payloads); 'android-native' =
+// the Kotlin app, which gets data-only sends so its FirebaseMessagingService
+// always runs (see buildFcmMessage). Migration 035 mirrors this list.
+export const PUSH_PLATFORMS = ['android', 'android-native'] as const
+export type PushPlatform = (typeof PUSH_PLATFORMS)[number]
+
 interface FcmTokenRow {
   id: string
   token: string
+  platform: string
 }
 
-export async function saveToken(userId: string, token: string): Promise<void> {
+export async function saveToken(userId: string, token: string, platform: PushPlatform = 'android'): Promise<void> {
   const { error } = await supabaseAdmin
     .from('push_tokens')
-    .upsert({ user_id: userId, token, platform: 'android' }, { onConflict: 'token' })
+    .upsert({ user_id: userId, token, platform }, { onConflict: 'token' })
   if (error) throw error
+}
+
+// FCM HTTP v1 message body for one token. Pure, so the per-platform shape is
+// unit-testable. 'android-native' tokens get DATA-ONLY, always high priority,
+// whenever the payload carries `native` data (the native app builds its own
+// notification, which is also what keeps the high priority from being
+// downgraded). Everything else (legacy 'android', or a send with no native
+// data such as the missed-call text push) keeps the previous shape.
+export function buildFcmMessage(token: string, platform: string, payload: PushPayload): Record<string, unknown> {
+  if (platform === 'android-native' && payload.native) {
+    return {
+      token,
+      android: { priority: 'high', ...(payload.nativeTtl ? { ttl: payload.nativeTtl } : {}) },
+      data: payload.native,
+    }
+  }
+  // An alarm send carries `payload.data` and goes out data-only (no
+  // `notification` block) — a display notification is auto-shown by the OS
+  // without ever reaching app code, but an alarm needs AlarmMessagingService
+  // to run so it can start the native ring; data-only messages always reach
+  // onMessageReceived, foreground, backgrounded or killed.
+  const dataOnly = !!payload.data
+  return {
+    token,
+    ...(dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
+    android: {
+      // Alarm sends: raise + cancel are time-critical (high, and worthless
+      // after 2 min — same as the ring's auto-clear — so ttl 120s). A plain
+      // ack goes to the raiser and shows nothing; a data-only high-priority
+      // send that displays nothing gets the app's high priority downgraded,
+      // so LEGACY ('android') tokens get normal for it. Native tokens never
+      // take this branch: the native app shows its own notification for an
+      // ack, so it is sent high (see above). Everything else is high.
+      priority: dataOnly && payload.data?.ack === 'true' && payload.data?.cancelled !== 'true' ? 'normal' : 'high',
+      ...(dataOnly ? { ttl: '120s' } : {}),
+      ...(dataOnly
+        ? {}
+        : {
+            notification: {
+              channel_id: 'messages',
+              notification_priority: payload.urgent ? 'PRIORITY_MAX' : 'PRIORITY_DEFAULT',
+            },
+          }),
+    },
+    data: { urgent: payload.urgent ? 'true' : 'false', ...payload.data },
+  }
 }
 
 // Scoped to the caller: a token is per-install and unguessable, but unlike a
@@ -137,26 +190,21 @@ export async function removeToken(userId: string, token: string): Promise<void> 
 // Sends a payload to every FCM token the user has registered; prunes any token
 // FCM reports as UNREGISTERED / SENDER_ID_MISMATCH / 404 (mirrors the 404/410 pruning
 // on the web-push side).
-async function sendFcmToUser(userId: string, payload: PushPayload): Promise<void> {
+// Returns how many tokens it attempted (0 when FCM is unconfigured or the user
+// has none). `nativeOnly` restricts to 'android-native' tokens (call pushes).
+async function sendFcmToUser(userId: string, payload: PushPayload, opts: { nativeOnly?: boolean } = {}): Promise<number> {
   if (!fcmConfigured) {
     console.warn(`fcm: skipped for user ${userId} — FIREBASE_SERVICE_ACCOUNT not usable`)
-    return
+    return 0
   }
 
-  const { data, error } = await supabaseAdmin.from('push_tokens').select('id, token').eq('user_id', userId)
+  const { data, error } = await supabaseAdmin.from('push_tokens').select('id, token, platform').eq('user_id', userId)
   if (error) throw error
-  const rows = (data ?? []) as FcmTokenRow[]
-  if (!rows.length) return
+  const rows = ((data ?? []) as FcmTokenRow[]).filter((r) => !opts.nativeOnly || r.platform === 'android-native')
+  if (!rows.length) return 0
 
   const accessToken = await getFcmAccessToken()
   const url = `https://fcm.googleapis.com/v1/projects/${serviceAccount!.project_id}/messages:send`
-
-  // An alarm send carries `payload.data` and goes out data-only (no
-  // `notification` block) — a display notification is auto-shown by the OS
-  // without ever reaching app code, but an alarm needs AlarmMessagingService
-  // to run so it can start the native ring; data-only messages always reach
-  // onMessageReceived, foreground, backgrounded or killed.
-  const dataOnly = !!payload.data
 
   await Promise.all(
     rows.map(async (row) => {
@@ -164,30 +212,7 @@ async function sendFcmToUser(userId: string, payload: PushPayload): Promise<void
         const res = await fetch(url, {
           method: 'POST',
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: {
-              token: row.token,
-              ...(dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
-              android: {
-                // Alarm sends: raise + cancel are time-critical (high, and worthless
-                // after 2 min — same as the ring's auto-clear — so ttl 120s). A plain
-                // ack goes to the raiser and shows nothing; a data-only high-priority
-                // send that displays nothing gets the app's high priority downgraded,
-                // so it goes normal.
-                priority: dataOnly && payload.data?.ack === 'true' && payload.data?.cancelled !== 'true' ? 'normal' : 'high',
-                ...(dataOnly ? { ttl: '120s' } : {}),
-                ...(dataOnly
-                  ? {}
-                  : {
-                      notification: {
-                        channel_id: 'messages',
-                        notification_priority: payload.urgent ? 'PRIORITY_MAX' : 'PRIORITY_DEFAULT',
-                      },
-                    }),
-              },
-              data: { urgent: payload.urgent ? 'true' : 'false', ...payload.data },
-            },
-          }),
+          body: JSON.stringify({ message: buildFcmMessage(row.token, row.platform, payload) }),
         })
         if (res.ok) {
           console.log(`fcm: sent to ${row.token.slice(0, 12)}…`)
@@ -213,9 +238,38 @@ async function sendFcmToUser(userId: string, payload: PushPayload): Promise<void
       }
     }),
   )
+  return rows.length
 }
 
-interface PushPayload {
+// Data-only call push (incoming call / call ended) to the user's 'android-native'
+// tokens only — the Capacitor app and web have no killed-app call UI. Returns
+// the number of native tokens attempted (0 = none registered / FCM off).
+export async function sendNativeCallPush(
+  userId: string,
+  native: Record<string, string>,
+  ttl: string,
+): Promise<number> {
+  try {
+    return await sendFcmToUser(userId, { title: '', body: '', native, nativeTtl: ttl }, { nativeOnly: true })
+  } catch (err) {
+    console.error(`push: native call push failed for user ${userId}:`, err)
+    return 0
+  }
+}
+
+export async function hasNativeToken(userId: string): Promise<boolean> {
+  if (!fcmConfigured) return false
+  const { data, error } = await supabaseAdmin
+    .from('push_tokens')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('platform', 'android-native')
+    .limit(1)
+  if (error) throw error
+  return (data?.length ?? 0) > 0
+}
+
+export interface PushPayload {
   title: string
   body: string
   // Set for /alarm sends only — tells the service worker to show a more
@@ -229,6 +283,12 @@ interface PushPayload {
   // of an OS-auto-displayed notification. android/AlarmForegroundService
   // reads `type`/`ack` to start or stop the native ring.
   data?: Record<string, string>
+  // Data-only payload for 'android-native' FCM tokens (all message types, plus
+  // call pushes). All values must be strings. When set, native tokens get ONLY
+  // this (high priority, no notification block); other tokens ignore it.
+  native?: Record<string, string>
+  // FCM ttl (e.g. '30s') for the native send; omitted = FCM default.
+  nativeTtl?: string
 }
 
 interface SubscriptionRow {

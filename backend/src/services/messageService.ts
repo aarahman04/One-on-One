@@ -199,6 +199,105 @@ function validateAlarmPayload(payload: unknown): { ack?: string; cancelled?: tru
   return p.cancelled === true ? { ack, cancelled: true } : { ack }
 }
 
+export const ALARM_ACK_WINDOW_MS = 2 * 60_000
+
+interface AlarmRaiseRef {
+  type: string
+  senderId: string
+  createdAt: string
+  isAck: boolean
+}
+
+// Pure decision for an alarm ack/cancel: the ack must name an existing alarm
+// RAISE (not an ack, not another type) in the same connection; cancelled:true
+// is only for the raiser, a plain ack only for the other member; and a NEW ack
+// is rejected once the raise is older than the 2-minute window. A repeat for a
+// raise that already has an ack/cancel is idempotent — it returns that
+// existing ack (checked before the age rule so a late retry still resolves).
+export function evaluateAlarmAck<T>(args: {
+  raise: AlarmRaiseRef | null
+  existingAck: T | null
+  senderId: string
+  cancelled: boolean
+  now: number
+}): { existing: T } | { ok: true } {
+  const { raise, existingAck, senderId, cancelled, now } = args
+  if (!raise || raise.type !== 'alarm' || raise.isAck) throw new ConnectionError(400, 'alarm to acknowledge not found')
+  const isRaiser = raise.senderId === senderId
+  if (cancelled && !isRaiser) throw new ConnectionError(403, 'only the sender can cancel an alarm')
+  if (!cancelled && isRaiser) throw new ConnectionError(403, 'you cannot acknowledge your own alarm')
+  if (existingAck) return { existing: existingAck }
+  if (now - new Date(raise.createdAt).getTime() > ALARM_ACK_WINDOW_MS) throw new ConnectionError(400, 'alarm has expired')
+  return { ok: true }
+}
+
+// Serialises concurrent acks for the same raise (double-tap, two devices) so
+// both can't pass the "no existing ack" check and each save one.
+const alarmAckLocks = new Map<string, Promise<unknown>>()
+export async function withAlarmAckLock<T>(raiseId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = alarmAckLocks.get(raiseId) ?? Promise.resolve()
+  const run = prev.catch(() => undefined).then(fn)
+  alarmAckLocks.set(raiseId, run)
+  try {
+    return await run
+  } finally {
+    if (alarmAckLocks.get(raiseId) === run) alarmAckLocks.delete(raiseId)
+  }
+}
+
+// DB side of the check above. Returns the existing ack message when this is a
+// repeat (caller must not save/broadcast/push), or null when a new ack may be
+// saved. Throws ConnectionError on any invalid ack. Call inside withAlarmAckLock.
+export async function checkAlarmAck(
+  connectionId: string,
+  senderId: string,
+  payload: unknown,
+): Promise<Message | null> {
+  const { ack, cancelled } = validateAlarmPayload(payload)
+  if (!ack) return null
+  const { data: raiseRow, error } = await supabaseAdmin
+    .from('messages')
+    .select('id, sender_id, created_at, type, payload')
+    .eq('id', ack)
+    .eq('connection_id', connectionId)
+    .maybeSingle()
+  if (error) {
+    // A non-uuid id makes Postgres throw; to the client that is just "not found".
+    if ((error as { code?: string }).code === '22P02') throw new ConnectionError(400, 'alarm to acknowledge not found')
+    throw error
+  }
+  const raisePayload = raiseRow ? (decryptPayload(raiseRow.payload) as { ack?: unknown } | null) : null
+  const raise: AlarmRaiseRef | null = raiseRow
+    ? {
+        type: raiseRow.type ?? 'text',
+        senderId: raiseRow.sender_id,
+        createdAt: raiseRow.created_at,
+        isAck: !!raisePayload?.ack,
+      }
+    : null
+  let existingAck: Message | null = null
+  if (raiseRow && raise?.type === 'alarm' && !raise.isAck) {
+    const { data: later, error: laterErr } = await supabaseAdmin
+      .from('messages')
+      .select('id, sender_id, content, created_at, type, payload, reply_to')
+      .eq('connection_id', connectionId)
+      .eq('type', 'alarm')
+      .gt('created_at', raiseRow.created_at)
+      .order('created_at', { ascending: true })
+      .limit(50)
+    if (laterErr) throw laterErr
+    for (const row of later ?? []) {
+      const p = decryptPayload(row.payload) as { ack?: unknown } | null
+      if (p?.ack === ack) {
+        existingAck = toMessage({ ...row, content: decryptContent(row.content), payload: p })
+        break
+      }
+    }
+  }
+  const result = evaluateAlarmAck({ raise, existingAck, senderId, cancelled: cancelled === true, now: Date.now() })
+  return 'existing' in result ? result.existing : null
+}
+
 const CALL_KINDS = ['audio', 'video']
 const CALL_OUTCOMES = ['missed', 'declined', 'cancelled', 'completed', 'failed', 'unreachable']
 

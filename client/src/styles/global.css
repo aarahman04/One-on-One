@@ -1399,15 +1399,33 @@ input:focus {
   color: var(--text);
 }
 
-/* Green surfaces stay constant across wallpapers; theme controls contrast. */
+/* Brand bubbles (app icon: green #7ee787 + blue #79c0ff on #0d1117).
+   Own messages = green family, the other person's = blue family; each is a
+   short diagonal gradient with a hairline brand-coloured edge so bubbles read
+   as lit panels on the dark ground rather than flat grey/green slabs.
+   Token contract (mirrored by the Android app — see docs/ARCHITECTURE.md):
+     --bubble-{mine,other}-bg    background value (colour or gradient)
+     --bubble-{mine,other}-tail  SOLID colour for the first-in-group tail
+                                 (a border colour can't be a gradient)
+     --bubble-{mine,other}-text  message text
+     --bubble-{mine,other}-meta  timestamp
+     --bubble-{mine,other}-edge  1px inset outline
+     --bubble-ticks / --bubble-read  receipt ticks (sent/delivered, seen)
+   Text/meta are >= 4.5:1 against both gradient stops, ticks/read >= 3:1
+   (checked for every theme x wallpaper below). Dark is the default. */
 .chat--bubbles {
-  --bubble-mine-bg: #205c3b;
-  --bubble-mine-text: #f0fff3;
-  --bubble-other-bg: #202a33;
-  --bubble-other-text: var(--text);
-  --bubble-meta: #b5d3bf;
-  --bubble-ticks: #c5cbc8;
-  --bubble-read: #89d7ff;
+  --bubble-mine-bg: linear-gradient(135deg, #1b6841, #15523a);
+  --bubble-mine-tail: #185d3d;
+  --bubble-mine-text: #f2fff6;
+  --bubble-mine-meta: #cdeed8;
+  --bubble-mine-edge: rgba(126, 231, 135, 0.38);
+  --bubble-other-bg: linear-gradient(135deg, #1f4468, #183552);
+  --bubble-other-tail: #1b3c5d;
+  --bubble-other-text: #eaf4ff;
+  --bubble-other-meta: #a9c7e4;
+  --bubble-other-edge: rgba(121, 192, 255, 0.34);
+  --bubble-ticks: #cdeed8;
+  --bubble-read: #8fd0ff;
 }
 
 /* Light palette — applies in BOTH message styles (data-theme lives on .chat).
@@ -1442,11 +1460,17 @@ input:focus {
 }
 
 .chat--bubbles[data-theme='light'] {
-  --bubble-mine-bg: #c9f3cc;
-  --bubble-mine-text: #16351e;
-  --bubble-other-bg: #ffffff;
-  --bubble-meta: #48694e;
-  --bubble-ticks: #52645a;
+  --bubble-mine-bg: linear-gradient(135deg, #d6f6d8, #c3eec8);
+  --bubble-mine-tail: #cbf1cf;
+  --bubble-mine-text: #0f2e1a;
+  --bubble-mine-meta: #3a5f45;
+  --bubble-mine-edge: rgba(26, 127, 55, 0.4);
+  --bubble-other-bg: linear-gradient(135deg, #e6f2ff, #d5e8fb);
+  --bubble-other-tail: #ddedfc;
+  --bubble-other-text: #10283f;
+  --bubble-other-meta: #45637f;
+  --bubble-other-edge: rgba(9, 105, 218, 0.32);
+  --bubble-ticks: #4a6b53;
   --bubble-read: #005b94;
 }
 
@@ -1459,6 +1483,7 @@ input:focus {
   border-radius: var(--radius-bubble);
   background: var(--bubble-other-bg);
   color: var(--bubble-other-text);
+  box-shadow: inset 0 0 0 1px var(--bubble-other-edge);
 }
 
 .chat__message[data-group-start='1'] .chat__message-body::before {
@@ -1467,7 +1492,7 @@ input:focus {
   top: 0;
   left: calc(-1 * var(--radius-sm));
   border: var(--radius-sm) solid transparent;
-  border-top-color: var(--bubble-other-bg);
+  border-top-color: var(--bubble-other-tail);
   border-right: 0;
 }
 
@@ -1476,12 +1501,12 @@ input:focus {
   right: calc(-1 * var(--radius-sm));
   border-right: var(--radius-sm) solid transparent;
   border-left: 0;
-  border-top-color: var(--bubble-mine-bg);
+  border-top-color: var(--bubble-mine-tail);
 }
 
 .chat--bubbles .chat__bubble-time {
   display: inline;
-  color: var(--text-dim);
+  color: var(--bubble-other-meta);
   font-size: var(--text-meta);
 }
 
@@ -1506,8 +1531,9 @@ input:focus {
 .chat--bubbles .chat__message[data-mine='1'] .chat__message-body {
   background: var(--bubble-mine-bg);
   color: var(--bubble-mine-text);
+  box-shadow: inset 0 0 0 1px var(--bubble-mine-edge);
 }
-.chat--bubbles .chat__message[data-mine='1'] .chat__bubble-time { color: var(--bubble-meta); }
+.chat--bubbles .chat__message[data-mine='1'] .chat__bubble-time { color: var(--bubble-mine-meta); }
 
 /* "Love" wallpaper: a dusk couple-silhouette photo background, with bubble
    colors pulled from the artwork's own palette
@@ -1519,6 +1545,26 @@ input:focus {
     url('/love.jpg') center / cover no-repeat;
 }
 
+/* Restored per-wallpaper bubble tinting (dropped in 0b71b4a, palette from
+   eef30be). Same token names as the brand set, so every bubble/receipt/time
+   rule above picks them up; they win over the light-theme block on source
+   order (equal specificity). Photo wallpapers look the same in both themes.
+   Slightly darker steel blue than the original #6f8fa3 so white text is AA. */
+.chat--wallpaper-love.chat--bubbles {
+  --bubble-mine-bg: linear-gradient(135deg, #efd08a, #f5e6b5); /* soft gold / warm cream — the horizon glow */
+  --bubble-mine-tail: #f2dba0;
+  --bubble-mine-text: #26323b; /* charcoal blue */
+  --bubble-mine-meta: #4a5a64;
+  --bubble-mine-edge: rgba(38, 50, 59, 0.18);
+  --bubble-other-bg: #476a80; /* steel blue */
+  --bubble-other-tail: #476a80;
+  --bubble-other-text: #ffffff;
+  --bubble-other-meta: #eaf3f8;
+  --bubble-other-edge: rgba(255, 255, 255, 0.2);
+  --bubble-ticks: #4b5b66; /* dark ticks: white would wash out on the gold bubble */
+  --bubble-read: #0b4f7a;
+}
+
 
 
 /* "Samurai" wallpaper: a crimson/charcoal cinematic photo background, with
@@ -1528,6 +1574,21 @@ input:focus {
   background:
     linear-gradient(rgba(10, 8, 8, 0.3), rgba(10, 8, 8, 0.3)),
     url('/samurai.jpg') center / cover no-repeat;
+}
+
+.chat--wallpaper-samurai.chat--bubbles {
+  --bubble-mine-bg: linear-gradient(135deg, #b0003a, #d10a4a); /* deep crimson / bright crimson */
+  --bubble-mine-tail: #c10543;
+  --bubble-mine-text: #ffffff;
+  --bubble-mine-meta: #fff1f5;
+  --bubble-mine-edge: rgba(255, 255, 255, 0.22);
+  --bubble-other-bg: #232323; /* charcoal black */
+  --bubble-other-tail: #232323;
+  --bubble-other-text: #d9d3be; /* pale ivory */
+  --bubble-other-meta: #b3ad98;
+  --bubble-other-edge: rgba(217, 211, 190, 0.2);
+  --bubble-ticks: #fff1f5;
+  --bubble-read: #c7ebff;
 }
 
 
