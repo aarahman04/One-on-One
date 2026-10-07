@@ -80,6 +80,9 @@ interface ChatMessage {
   reactions?: ReactionSummary[]
 }
 
+// A real (server-issued, uuid) message id — never an optimistic placeholder.
+const ALARM_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 interface Pending {
   tempId: string
   content: string
@@ -1002,18 +1005,35 @@ export const ChatPage: Page = (root, go) => {
       // validateAlarmPayload) — a raiser's cancel just adds cancelled:true so
       // it renders and pushes differently, but clears the live alert on the
       // exact same payload.ack check every consumer already runs.
+      // The raise id is resolved from the row at click time: an own raise has
+      // no id until the server echo reconciles the optimistic row (see
+      // onIncoming), and until then the card is disabled as "sending…".
+      const idleHint = hint.textContent
+      if (!message.id) {
+        card.disabled = true
+        hint.textContent = 'sending…'
+      }
       card.addEventListener('click', (e) => {
         e.stopPropagation() // don't also toggle the row's timestamp
         if (card.disabled) return
+        const raiseId = card.closest<HTMLElement>('.chat__message')?.dataset.id ?? message.id
+        if (!raiseId || !ALARM_ID_RE.test(raiseId)) return
         card.disabled = true
-        if (message.id) ackedRaises.set(message.id, isMine)
-        if (isMine) {
-          hint.textContent = 'cancelled'
-          sendMessage('', 'alarm', { ack: message.id, cancelled: true }, message.id ?? null)
-        } else {
-          hint.textContent = 'acknowledged'
-          sendMessage('', 'alarm', { ack: message.id }, message.id ?? null)
-        }
+        hint.textContent = 'sending…'
+        sendAlarmAck(raiseId, isMine).then(
+          () => {
+            hint.textContent = isMine ? 'cancelled' : 'acknowledged'
+          },
+          (err) => {
+            // Not recorded server-side: put the card back so it can be retried.
+            // The alert/ring was never stopped locally, so nothing else to undo.
+            card.disabled = false
+            hint.textContent = idleHint
+            showNotice(
+              `Couldn't ${isMine ? 'cancel' : 'acknowledge'} the alarm${err instanceof Error && err.message ? ` (${err.message})` : ''}. Try again.`,
+            )
+          },
+        )
       })
       return card
     }
@@ -1883,19 +1903,27 @@ export const ChatPage: Page = (root, go) => {
       pending.push(entry)
       trySend(entry)
 
-      // Alarm glow/sound react to your OWN send optimistically too — no
-      // reason to wait on the round trip for state you already know.
+      // Your own raise lights up optimistically. Acks/cancels never go through
+      // here — see sendAlarmAck, which only stops the alert once the server
+      // confirms it recorded the ack.
       if (type === 'alarm') {
-        const sentAck = payload as { ack?: string; cancelled?: boolean } | null
-        if (sentAck?.ack) {
-          markRaiseAcked(sentAck.ack, sentAck.cancelled === true)
-          alarmController?.stopAll(sentAck.ack)
-          setAlarmGlow(false)
-        } else {
-          setAlarmGlow(true)
-          alarmController?.start({ silent: true }) // you don't need alerting to your own alarm
-        }
+        setAlarmGlow(true)
+        alarmController?.start({ silent: true }) // you don't need alerting to your own alarm
       }
+    }
+
+    // Acknowledge (recipient) or cancel (raiser) a live alarm. Not optimistic
+    // and not queued: the server must record it or the other side keeps
+    // ringing, so the alert only stops locally after the server confirms
+    // (the ack also carries the existing ack on an idempotent repeat).
+    const sendAlarmAck = async (raiseId: string, cancelled: boolean): Promise<void> => {
+      if (!transport) throw new Error('offline')
+      const payload = cancelled ? { ack: raiseId, cancelled: true } : { ack: raiseId }
+      const saved = await transport.sendMessage('', 'alarm', payload, raiseId)
+      markRaiseAcked(raiseId, cancelled)
+      alarmController?.stopAll(raiseId)
+      setAlarmGlow(false)
+      if (saved) onIncoming(saved) // appends the ack card (deduped if the echo already did)
     }
 
     // --- Reply: swipe (phone) or right-click "Reply" (desktop) sets a target;
@@ -2754,6 +2782,14 @@ export const ChatPage: Page = (root, go) => {
           rowsById.set(message.id, entry.row) // index the existing DOM row; reconciliation is unchanged
           if (message.type === 'alarm' && !(message.payload as { ack?: string } | null)?.ack) {
             alarmController?.setId(message.id) // own raise: later ack/cancel/silence can now target it
+            // The raise card was disabled as "sending…" — now it has an id, enable it.
+            const raiseCard = entry.row.querySelector<HTMLButtonElement>('.alarm-card--raise')
+            if (raiseCard) {
+              const acked = ackedRaises.get(message.id)
+              raiseCard.disabled = acked !== undefined
+              const raiseHint = raiseCard.querySelector('.alarm-card__hint')
+              if (raiseHint) raiseHint.textContent = acked === undefined ? 'tap to cancel' : acked ? 'cancelled' : 'acknowledged'
+            }
           }
           entry.row.dataset.delivered = '1'
           messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
