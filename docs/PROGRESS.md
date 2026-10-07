@@ -3,6 +3,11 @@
 ## RESUME HERE — release candidate 4 / 1.0.3 (2026-10-06)
 PRs #86, #87, #88, #89 merged to main; versionCode bumped to 4 in a follow-up (user request). Release candidate = versionCode 4 / versionName 1.0.3. Versions 2, 3 and 1.0.1 / 1.0.2 were never uploaded; a 3 / 1.0.3 test build exists but must not be uploaded (see the version table in docs/RELEASING.md). Next: download the android-release artifact from the 4 / 1.0.3 run, install the APK on two phones, run the 17-step test script from PR #86, then upload the AAB to Play. Check Railway log for `fcm: configured for project one-on-one-508202` first. Next build after this must use versionCode 5+.
 
+## [Docs] API-CONTRACT.md for the native Android app — 2026-10-07
+Status: done (docs only; no code changed).
+What shipped: docs/API-CONTRACT.md, derived only from backend code at 57e9a30: auth (Supabase Google ID token), every REST route (auth, body, response, errors), Socket.IO handshake + every client->server/server->client event with ack shapes, all MessageType validators, rate limits, attachments + signed URLs, TURN, current FCM data schema.
+Notes: documents (does not fix) that a socket opened before a connection exists only joins the room on reconnect or first message:send.
+
 ## [Scroll fix] Own sends always scroll to bottom — 2026-10-06
 Status: done (tsc passes; not device-verified).
 What shipped: appendMessage scrolls to the bottom whenever the message is your own (smooth when animated), as before the WhatsApp UI pass; incoming messages still only scroll when you are already near the bottom.
