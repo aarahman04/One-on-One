@@ -618,3 +618,38 @@ sequenceDiagram
   S->>FCM: data {type:call_end, callId}
   FCM-->>App: dismiss call UI
 ```
+
+## Two clients, one backend (since 2026-10-07 — web/Android split)
+
+Android is being rewritten as a native Kotlin + Compose app in a separate repo (`aarahman04/One-on-One-Android`). Both clients talk to the same backend; `docs/API-CONTRACT.md` in this repo is the single source of truth for REST, Socket.IO events and the FCM data schema. Any API change here must update that file in the same PR.
+
+```mermaid
+flowchart LR
+  subgraph WebRepo["One-on-One repo"]
+    BE["backend/ (Express + Socket.IO)
+Railway"]
+    WEB["client/ (Vite TS PWA)
+Vercel"]
+    CAP["android/ Capacitor
+FROZEN until native ships"]
+    CONTRACT["docs/API-CONTRACT.md"]
+  end
+  subgraph AndroidRepo["One-on-One-Android repo"]
+    NATIVE["Kotlin + Compose app
+app.web.oneonone"]
+  end
+  DB[("Supabase
+Postgres + Auth + Storage")]
+  FCM["FCM"]
+  WEB -- REST + Socket.IO --> BE
+  CAP -- REST + Socket.IO --> BE
+  NATIVE -- REST + Socket.IO --> BE
+  BE --> DB
+  BE -- "web-push (PWA)" --> WEB
+  BE -- "notification FCM (platform=android)" --> CAP
+  BE -- "data-only FCM (platform=android-native)" --> FCM --> NATIVE
+  CONTRACT -. spec .-> NATIVE
+```
+
+The native app keeps the same applicationId and upload key so it ships as an update to the existing Play listing. The Capacitor app and `android/` are deleted from this repo only after that (plan step W6).
+
