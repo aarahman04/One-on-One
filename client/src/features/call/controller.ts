@@ -94,6 +94,20 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   const remoteVideo = screen.querySelector<HTMLVideoElement>('.call-screen__remote')!
   const localVideo = screen.querySelector<HTMLVideoElement>('.call-screen__local')!
   localVideo.muted = true // never echo your own mic through the preview
+  // Remote audio plays through exactly ONE element per call, at full volume:
+  //   audio call -> the lone <audio> element created in onRemoteStream below
+  //   video call -> this <video> (it carries the stream's audio track too);
+  //                 no <audio> element is created, so there is no second path
+  // and in an audio call this <video> never gets a srcObject. No WebAudio /
+  // GainNode sits in either path, and nothing here lowers volume. The mic
+  // constraints in media.ts (echoCancellation/AGC/noiseSuppression) only
+  // process the OUTGOING track; they do not attenuate what you hear.
+  // Platform limit, not fixable from web/PWA code: while a call holds the mic,
+  // Android Chrome/WebView puts audio in communication mode (voice-call
+  // stream volume, usually quieter than media volume), and the web has no API
+  // to route to the earpiece vs speaker. The native Android app owns routing.
+  remoteVideo.muted = false
+  remoteVideo.volume = 1
   const nameEl = screen.querySelector<HTMLElement>('.call-screen__name')!
   const statusEl = screen.querySelector<HTMLElement>('.call-screen__status')!
   const avatarEl = screen.querySelector<HTMLElement>('.call-screen__avatar span')!
@@ -334,7 +348,14 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
           const bound = remoteVideo.srcObject as MediaStream | null
           if (!bound || bound.getTracks().length !== stream.getTracks().length) {
             remoteVideo.srcObject = new MediaStream(stream.getTracks())
+            remoteVideo.muted = false
+            remoteVideo.volume = 1
             void remoteVideo.play().catch(() => {})
+          }
+          // Single audio path: the <video> above plays this call's audio.
+          if (remoteAudio) {
+            remoteAudio.remove()
+            remoteAudio = null
           }
           applyStateClass()
         } else {
@@ -351,6 +372,8 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
             document.body.append(remoteAudio)
           }
           remoteAudio.srcObject = stream
+          remoteAudio.muted = false
+          remoteAudio.volume = 1
           remoteAudio.play().catch(() => showToast("Couldn't play call audio — tap the screen and try again"))
         }
       },
