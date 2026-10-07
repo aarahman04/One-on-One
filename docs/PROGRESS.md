@@ -3,6 +3,24 @@
 ## RESUME HERE — release candidate 4 / 1.0.3 (2026-10-06)
 PRs #86, #87, #88, #89 merged to main; versionCode bumped to 4 in a follow-up (user request). Release candidate = versionCode 4 / versionName 1.0.3. Versions 2, 3 and 1.0.1 / 1.0.2 were never uploaded; a 3 / 1.0.3 test build exists but must not be uploaded (see the version table in docs/RELEASING.md). Next: download the android-release artifact from the 4 / 1.0.3 run, install the APK on two phones, run the 17-step test script from PR #86, then upload the AAB to Play. Check Railway log for `fcm: configured for project one-on-one-508202` first. Next build after this must use versionCode 5+.
 
+## [Fix] Alarm cancel/ack never reached the server — 2026-10-07
+Status: done (backend unit tests + client tsc/build pass; NOT device-verified).
+Root cause: own raise's optimistic row had no id, so the card closure captured `message.id === undefined` and tapping sent `{ack: undefined, cancelled: true}`; backend rejected with 400 but the client had already shown "cancelled" and stopped locally, so the recipient kept ringing and resync re-showed it.
+What shipped: card resolves the raise id from its row at click time; disabled "sending…" until the echo assigns an id (onIncoming re-enables). Ack/cancel is no longer optimistic/queued: `sendAlarmAck` sends, and only on server success marks acked, stops ring/glow and appends the ack card; on failure the card reverts and a toast shows. Backend: `checkAlarmAck`/`evaluateAlarmAck` (messageService) — ack must reference an existing alarm RAISE in the same connection, `cancelled` only by the raiser, plain ack only by the other member, new acks rejected after 2 min, idempotent repeat returns the existing ack (no save/broadcast/push; `ack({ok, duplicate, message})`), serialised per raise id. Push body: cancel is now "cancelled their alarm (all clear)", ack "acknowledged your alarm". New `npm test` in backend (node:test via tsx) incl. an `alarmFcmData` test.
+Files: client/src/pages/ChatPage.ts; backend/src/services/messageService.ts, websocket/socketServer.ts, test/alarm.test.ts, package.json.
+Unverified: everything on device / two accounts (see PR manual script).
+
+## [Push] Native-token data-only FCM + call push — 2026-10-07
+Status: done (backend tsc + 18 unit tests pass; NOT tested against live FCM/device). Branch is stacked on fix/alarm-ack-id (#91) and docs/api-contract (#92).
+What shipped: migration 035 (push_tokens.platform check: android | android-native); `POST /api/push/token` takes optional enum-validated `platform` (default android); `pushService.buildFcmMessage` — android-native tokens get data-only, priority high for every message type with {type, messageId, connectionId, senderName, preview, +alarmId/ack/cancelled}; legacy android and web-push payloads unchanged (plain-ack `normal` kept for legacy only, documented). Calls: previously call:invite only text-pushed (and refused to ring) when the callee had no live socket; now a callee with a native token rings server-side and gets data-only {type:'call', callId, kind, callerName} ttl 30s, and every resolution sends {type:'call_end', callId}. API-CONTRACT.md section 6 updated.
+Files: backend/src/services/pushService.ts, callService.ts, websocket/socketServer.ts, routes/push.ts, test/push.test.ts, database/migrations/035_push_tokens_platform.sql, docs/API-CONTRACT.md, docs/ARCHITECTURE.md.
+User must apply migration 035. Unverified: real FCM delivery, killed-app wake, call ring flow.
+
+## [Docs] API-CONTRACT.md for the native Android app — 2026-10-07
+Status: done (docs only; no code changed).
+What shipped: docs/API-CONTRACT.md, derived only from backend code at 57e9a30: auth (Supabase Google ID token), every REST route (auth, body, response, errors), Socket.IO handshake + every client->server/server->client event with ack shapes, all MessageType validators, rate limits, attachments + signed URLs, TURN, current FCM data schema.
+Notes: documents (does not fix) that a socket opened before a connection exists only joins the room on reconnect or first message:send.
+
 ## [Style] Brand bubbles + wallpaper-tinted bubbles restored — 2026-10-07
 Status: done (client build + fixture render matrix pass; contrast checked by script; not device-verified).
 What shipped: CSS only. Own bubbles = green family, other = blue family (brand #7ee787 / #79c0ff on #0d1117) with gradient + hairline brand edge, dark and light, AA text/meta contrast. Love/Samurai per-wallpaper bubble palettes restored from eef30be (Love "other" darkened for AA) via the same tokens; tail now uses a solid `--bubble-*-tail` token so gradients work. New tokens `--bubble-{mine,other}-{bg,tail,text,meta,edge}` (replaces `--bubble-meta`) listed in docs/ARCHITECTURE.md for the Android app.
