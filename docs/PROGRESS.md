@@ -1,10 +1,12 @@
 # Progress Log
 
-## RESUME HERE — web/Android split, native Android rewrite (2026-10-07)
-Decision (user, 2026-10-07): Android becomes a **full native Kotlin + Jetpack Compose app** in https://github.com/aarahman04/One-on-One-Android.git. This repo keeps backend (shared by both clients) + web client. The Capacitor `android/` folder here is **frozen** (critical fixes only) and is removed only after the native app ships on Play (plan step W6).
-Web-side parts W1–W5 merged 2026-10-07 (PRs #91–#95): alarm ack/cancel fix, API contract, android-native data-only push + call push, brand bubbles, web call audio.
-**User must apply `database/migrations/035_push_tokens_platform.sql` to the live DB** before native push can be tested.
-Next: run the GPT Sol 6.1 prompt in `docs/prompts/gpt-sol-6.1-android.md` (native app milestones A0–A7). Plan: `docs/prompts/PLAN-web-android-split.md`. Release candidate 4 / 1.0.3 (Capacitor) is still unuploaded; next Play upload (native) must use versionCode 5+.
+## RESUME HERE — native Android app feature-complete, awaiting device test (2026-10-07)
+Native Kotlin app in https://github.com/aarahman04/One-on-One-Android.git: A0–A3, A6, A7 by GPT Sol 6.1 (PRs #1–#7); A4 emergency alarm (#8) and A5 voice/video calls (#9) by Claude. All merged; CI green; NOT device-verified. Device checklists are in that repo's docs/PROGRESS.md (A2, A3, A4, A5 sections). Migration 035 applied 2026-10-07. No contract gaps were logged; `docs/API-CONTRACT.md` is unchanged and in sync with the Android copy.
+Owner to-dos:
+- Add Actions secrets to the Android repo (none set yet): ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_PASSWORD, GOOGLE_SERVICES_JSON_BASE64, VITE_API_URL, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_GOOGLE_WEB_CLIENT_ID.
+- Register the debug SHA-1 in Firebase for sideloaded debug builds.
+- Device-test on the Xiaomi phone.
+Then: Play internal track (versionCode 5+), then W6 (remove Capacitor `android/` from this repo).
 
 ## [Plan] Web / native-Android split + hand-off — 2026-10-07
 Status: done (docs only).
