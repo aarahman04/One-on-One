@@ -3,6 +3,12 @@
 ## RESUME HERE — release candidate 4 / 1.0.3 (2026-10-06)
 PRs #86, #87, #88, #89 merged to main; versionCode bumped to 4 in a follow-up (user request). Release candidate = versionCode 4 / versionName 1.0.3. Versions 2, 3 and 1.0.1 / 1.0.2 were never uploaded; a 3 / 1.0.3 test build exists but must not be uploaded (see the version table in docs/RELEASING.md). Next: download the android-release artifact from the 4 / 1.0.3 run, install the APK on two phones, run the 17-step test script from PR #86, then upload the AAB to Play. Check Railway log for `fcm: configured for project one-on-one-508202` first. Next build after this must use versionCode 5+.
 
+## [Style] Brand bubbles + wallpaper-tinted bubbles restored — 2026-10-07
+Status: done (client build + fixture render matrix pass; contrast checked by script; not device-verified).
+What shipped: CSS only. Own bubbles = green family, other = blue family (brand #7ee787 / #79c0ff on #0d1117) with gradient + hairline brand edge, dark and light, AA text/meta contrast. Love/Samurai per-wallpaper bubble palettes restored from eef30be (Love "other" darkened for AA) via the same tokens; tail now uses a solid `--bubble-*-tail` token so gradients work. New tokens `--bubble-{mine,other}-{bg,tail,text,meta,edge}` (replaces `--bubble-meta`) listed in docs/ARCHITECTURE.md for the Android app.
+Files: client/src/styles/global.css; docs/ARCHITECTURE.md; docs/ui-whatsapp/brand-bubbles/ (4 screenshots).
+Verified: `npm run build`; `scripts/chat-ui-check.mjs brand-bubbles` fixture matrix passes (incl. its own outgoing text contrast >= 4.5 and overflow checks). Unverified: real Android WebView rendering.
+
 ## [Scroll fix] Own sends always scroll to bottom — 2026-10-06
 Status: done (tsc passes; not device-verified).
 What shipped: appendMessage scrolls to the bottom whenever the message is your own (smooth when animated), as before the WhatsApp UI pass; incoming messages still only scroll when you are already near the bottom.
