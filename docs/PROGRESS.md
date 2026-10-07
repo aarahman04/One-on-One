@@ -1,7 +1,15 @@
 # Progress Log
 
-## RESUME HERE — release candidate 4 / 1.0.3 (2026-10-06)
-PRs #86, #87, #88, #89 merged to main; versionCode bumped to 4 in a follow-up (user request). Release candidate = versionCode 4 / versionName 1.0.3. Versions 2, 3 and 1.0.1 / 1.0.2 were never uploaded; a 3 / 1.0.3 test build exists but must not be uploaded (see the version table in docs/RELEASING.md). Next: download the android-release artifact from the 4 / 1.0.3 run, install the APK on two phones, run the 17-step test script from PR #86, then upload the AAB to Play. Check Railway log for `fcm: configured for project one-on-one-508202` first. Next build after this must use versionCode 5+.
+## RESUME HERE — web/Android split, native Android rewrite (2026-10-07)
+Decision (user, 2026-10-07): Android becomes a **full native Kotlin + Jetpack Compose app** in https://github.com/aarahman04/One-on-One-Android.git. This repo keeps backend (shared by both clients) + web client. The Capacitor `android/` folder here is **frozen** (critical fixes only) and is removed only after the native app ships on Play (plan step W6).
+Web-side parts W1–W5 merged 2026-10-07 (PRs #91–#95): alarm ack/cancel fix, API contract, android-native data-only push + call push, brand bubbles, web call audio.
+**User must apply `database/migrations/035_push_tokens_platform.sql` to the live DB** before native push can be tested.
+Next: run the GPT Sol 6.1 prompt in `docs/prompts/gpt-sol-6.1-android.md` (native app milestones A0–A7). Plan: `docs/prompts/PLAN-web-android-split.md`. Release candidate 4 / 1.0.3 (Capacitor) is still unuploaded; next Play upload (native) must use versionCode 5+.
+
+## [Plan] Web / native-Android split + hand-off — 2026-10-07
+Status: done (docs only).
+What shipped: plan (`docs/prompts/PLAN-web-android-split.md`), GPT Sol 6.1 prompt for the native Android repo (`docs/prompts/gpt-sol-6.1-android.md`), architecture section "Two clients, one backend". Merged W1–W5 (#91–#95) with PROGRESS.md conflicts resolved by keeping both sides.
+Not verified on device: everything in W1–W5 (see each entry below).
 
 ## [Fix] Alarm cancel/ack never reached the server — 2026-10-07
 Status: done (backend unit tests + client tsc/build pass; NOT device-verified).
