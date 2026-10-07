@@ -555,6 +555,27 @@ flowchart TD
   Out[signOut] --> Clear[unregister + POST /api/push/token/unregister + clear local token] --> SB[supabase signOut]
 ```
 
+## Bubble design tokens (since 2026-10-07 — brand bubbles)
+
+Visual-only restyle of chat bubbles in `client/src/styles/global.css` (layout, time/tick placement, grouping untouched). Own = green family (#7ee787 brand), other = blue family (#79c0ff brand), a diagonal gradient plus a 1px inset brand-tinted edge. Tokens live on `.chat--bubbles`; `[data-theme='light']` and `.chat--wallpaper-{love,samurai}.chat--bubbles` (restored from eef30be, replacing the flat green of 0b71b4a) override the same names. The Android app should mirror these names/values. `*-tail` must be a solid colour (tail triangle = border colour), `*-bg` may be a gradient. Text/meta >= 4.5:1 against both gradient stops, ticks/read >= 3:1 (script-checked).
+
+| token | dark (default) | light | love | samurai |
+|---|---|---|---|---|
+| `--bubble-mine-bg` | `135deg #1b6841 -> #15523a` | `135deg #d6f6d8 -> #c3eec8` | `135deg #efd08a -> #f5e6b5` | `135deg #b0003a -> #d10a4a` |
+| `--bubble-mine-tail` | `#185d3d` | `#cbf1cf` | `#f2dba0` | `#c10543` |
+| `--bubble-mine-text` | `#f2fff6` | `#0f2e1a` | `#26323b` | `#ffffff` |
+| `--bubble-mine-meta` (time) | `#cdeed8` | `#3a5f45` | `#4a5a64` | `#fff1f5` |
+| `--bubble-mine-edge` | `rgba(126,231,135,.38)` | `rgba(26,127,55,.4)` | `rgba(38,50,59,.18)` | `rgba(255,255,255,.22)` |
+| `--bubble-other-bg` | `135deg #1f4468 -> #183552` | `135deg #e6f2ff -> #d5e8fb` | `#476a80` | `#232323` |
+| `--bubble-other-tail` | `#1b3c5d` | `#ddedfc` | `#476a80` | `#232323` |
+| `--bubble-other-text` | `#eaf4ff` | `#10283f` | `#ffffff` | `#d9d3be` |
+| `--bubble-other-meta` | `#a9c7e4` | `#45637f` | `#eaf3f8` | `#b3ad98` |
+| `--bubble-other-edge` | `rgba(121,192,255,.34)` | `rgba(9,105,218,.32)` | `rgba(255,255,255,.2)` | `rgba(217,211,190,.2)` |
+| `--bubble-ticks` (sent/delivered) | `#cdeed8` | `#4a6b53` | `#4b5b66` | `#fff1f5` |
+| `--bubble-read` (seen) | `#8fd0ff` | `#005b94` | `#0b4f7a` | `#c7ebff` |
+
+Wallpaper columns apply in both themes (photo backgrounds). Love "other" is `#476a80` rather than the original `#6f8fa3` so white text is AA.
+
 ## Reconnect resync, idempotent send, receipt:update (since 2026-10 — section D)
 
 ```mermaid

@@ -21,6 +21,12 @@ Status: done (docs only; no code changed).
 What shipped: docs/API-CONTRACT.md, derived only from backend code at 57e9a30: auth (Supabase Google ID token), every REST route (auth, body, response, errors), Socket.IO handshake + every client->server/server->client event with ack shapes, all MessageType validators, rate limits, attachments + signed URLs, TURN, current FCM data schema.
 Notes: documents (does not fix) that a socket opened before a connection exists only joins the room on reconnect or first message:send.
 
+## [Style] Brand bubbles + wallpaper-tinted bubbles restored — 2026-10-07
+Status: done (client build + fixture render matrix pass; contrast checked by script; not device-verified).
+What shipped: CSS only. Own bubbles = green family, other = blue family (brand #7ee787 / #79c0ff on #0d1117) with gradient + hairline brand edge, dark and light, AA text/meta contrast. Love/Samurai per-wallpaper bubble palettes restored from eef30be (Love "other" darkened for AA) via the same tokens; tail now uses a solid `--bubble-*-tail` token so gradients work. New tokens `--bubble-{mine,other}-{bg,tail,text,meta,edge}` (replaces `--bubble-meta`) listed in docs/ARCHITECTURE.md for the Android app.
+Files: client/src/styles/global.css; docs/ARCHITECTURE.md; docs/ui-whatsapp/brand-bubbles/ (4 screenshots).
+Verified: `npm run build`; `scripts/chat-ui-check.mjs brand-bubbles` fixture matrix passes (incl. its own outgoing text contrast >= 4.5 and overflow checks). Unverified: real Android WebView rendering.
+
 ## [Scroll fix] Own sends always scroll to bottom — 2026-10-06
 Status: done (tsc passes; not device-verified).
 What shipped: appendMessage scrolls to the bottom whenever the message is your own (smooth when animated), as before the WhatsApp UI pass; incoming messages still only scroll when you are already near the bottom.
