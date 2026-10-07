@@ -7,6 +7,8 @@ import { getLiveConnectionForUser, type MemberConnection } from '../services/con
 import {
   saveMessage,
   bumpSenderLastRead,
+  checkAlarmAck,
+  withAlarmAckLock,
   isMessageType,
   setIo as setMessageServiceIo,
   type Message,
@@ -53,7 +55,7 @@ export function emitConnectionEnded(connectionId: string): void {
   ioRef?.to(room(connectionId)).emit('connection:ended')
 }
 
-function mediaNoticeFor(message: Message): string {
+export function mediaNoticeFor(message: Message): string {
   switch (message.type) {
     case 'letter':
       return 'sent you a letter'
@@ -66,7 +68,7 @@ function mediaNoticeFor(message: Message): string {
     case 'alarm': {
       const alarmPayload = message.payload as { ack?: string; cancelled?: boolean } | null
       if (!alarmPayload?.ack) return '🚨 sent an emergency alarm'
-      return alarmPayload.cancelled ? 'cancelled the alarm' : 'acknowledged the alarm'
+      return alarmPayload.cancelled ? 'cancelled their alarm (all clear)' : 'acknowledged your alarm'
     }
     case 'location':
       // Never the raw coordinates — those would land on an OS lock-screen
@@ -96,7 +98,7 @@ function alarmRaiseAllowed(userId: string): boolean {
 // FCM data for an alarm send. `alarmId` is always the RAISE's message id (for an
 // ack/cancel that is payload.ack), so native stop/ack can target the right
 // alarm and ignore a late one for an older raise.
-function alarmFcmData(message: Message): Record<string, string> {
+export function alarmFcmData(message: Message): Record<string, string> {
   const p = message.payload as { ack?: string; cancelled?: boolean } | null
   return {
     type: 'alarm',
@@ -326,7 +328,24 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
           ack?.({ error: 'wait a bit before sending another alarm' })
           return
         }
-        const message = await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo)
+        // An alarm ack/cancel must name a real raise it may legitimately
+        // answer; a repeat returns the existing ack with no save/broadcast/push.
+        const alarmAckId = type === 'alarm' ? (msg?.payload as { ack?: unknown } | null)?.ack : undefined
+        let message: Message
+        if (alarmAckId !== undefined && alarmAckId !== null) {
+          const result = await withAlarmAckLock(String(alarmAckId).trim(), async () => {
+            const existing = await checkAlarmAck(connection.id, userId, msg?.payload)
+            if (existing) return { existing }
+            return { saved: await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo) }
+          })
+          if ('existing' in result) {
+            ack?.({ ok: true, duplicate: true, message: result.existing })
+            return
+          }
+          message = result.saved
+        } else {
+          message = await saveMessage(connection, userId, content, type, msg?.payload ?? null, replyTo)
+        }
 
         // Sign media at broadcast time so BOTH sides get a viewable/playable
         // URL in the same event, instead of every viewer (sender included)

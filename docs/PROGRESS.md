@@ -3,6 +3,13 @@
 ## RESUME HERE — release candidate 4 / 1.0.3 (2026-10-06)
 PRs #86, #87, #88, #89 merged to main; versionCode bumped to 4 in a follow-up (user request). Release candidate = versionCode 4 / versionName 1.0.3. Versions 2, 3 and 1.0.1 / 1.0.2 were never uploaded; a 3 / 1.0.3 test build exists but must not be uploaded (see the version table in docs/RELEASING.md). Next: download the android-release artifact from the 4 / 1.0.3 run, install the APK on two phones, run the 17-step test script from PR #86, then upload the AAB to Play. Check Railway log for `fcm: configured for project one-on-one-508202` first. Next build after this must use versionCode 5+.
 
+## [Fix] Alarm cancel/ack never reached the server — 2026-10-07
+Status: done (backend unit tests + client tsc/build pass; NOT device-verified).
+Root cause: own raise's optimistic row had no id, so the card closure captured `message.id === undefined` and tapping sent `{ack: undefined, cancelled: true}`; backend rejected with 400 but the client had already shown "cancelled" and stopped locally, so the recipient kept ringing and resync re-showed it.
+What shipped: card resolves the raise id from its row at click time; disabled "sending…" until the echo assigns an id (onIncoming re-enables). Ack/cancel is no longer optimistic/queued: `sendAlarmAck` sends, and only on server success marks acked, stops ring/glow and appends the ack card; on failure the card reverts and a toast shows. Backend: `checkAlarmAck`/`evaluateAlarmAck` (messageService) — ack must reference an existing alarm RAISE in the same connection, `cancelled` only by the raiser, plain ack only by the other member, new acks rejected after 2 min, idempotent repeat returns the existing ack (no save/broadcast/push; `ack({ok, duplicate, message})`), serialised per raise id. Push body: cancel is now "cancelled their alarm (all clear)", ack "acknowledged your alarm". New `npm test` in backend (node:test via tsx) incl. an `alarmFcmData` test.
+Files: client/src/pages/ChatPage.ts; backend/src/services/messageService.ts, websocket/socketServer.ts, test/alarm.test.ts, package.json.
+Unverified: everything on device / two accounts (see PR manual script).
+
 ## [Scroll fix] Own sends always scroll to bottom — 2026-10-06
 Status: done (tsc passes; not device-verified).
 What shipped: appendMessage scrolls to the bottom whenever the message is your own (smooth when animated), as before the WhatsApp UI pass; incoming messages still only scroll when you are already near the bottom.
