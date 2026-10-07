@@ -10,6 +10,17 @@ What shipped: card resolves the raise id from its row at click time; disabled "s
 Files: client/src/pages/ChatPage.ts; backend/src/services/messageService.ts, websocket/socketServer.ts, test/alarm.test.ts, package.json.
 Unverified: everything on device / two accounts (see PR manual script).
 
+## [Push] Native-token data-only FCM + call push — 2026-10-07
+Status: done (backend tsc + 18 unit tests pass; NOT tested against live FCM/device). Branch is stacked on fix/alarm-ack-id (#91) and docs/api-contract (#92).
+What shipped: migration 035 (push_tokens.platform check: android | android-native); `POST /api/push/token` takes optional enum-validated `platform` (default android); `pushService.buildFcmMessage` — android-native tokens get data-only, priority high for every message type with {type, messageId, connectionId, senderName, preview, +alarmId/ack/cancelled}; legacy android and web-push payloads unchanged (plain-ack `normal` kept for legacy only, documented). Calls: previously call:invite only text-pushed (and refused to ring) when the callee had no live socket; now a callee with a native token rings server-side and gets data-only {type:'call', callId, kind, callerName} ttl 30s, and every resolution sends {type:'call_end', callId}. API-CONTRACT.md section 6 updated.
+Files: backend/src/services/pushService.ts, callService.ts, websocket/socketServer.ts, routes/push.ts, test/push.test.ts, database/migrations/035_push_tokens_platform.sql, docs/API-CONTRACT.md, docs/ARCHITECTURE.md.
+User must apply migration 035. Unverified: real FCM delivery, killed-app wake, call ring flow.
+
+## [Docs] API-CONTRACT.md for the native Android app — 2026-10-07
+Status: done (docs only; no code changed).
+What shipped: docs/API-CONTRACT.md, derived only from backend code at 57e9a30: auth (Supabase Google ID token), every REST route (auth, body, response, errors), Socket.IO handshake + every client->server/server->client event with ack shapes, all MessageType validators, rate limits, attachments + signed URLs, TURN, current FCM data schema.
+Notes: documents (does not fix) that a socket opened before a connection exists only joins the room on reconnect or first message:send.
+
 ## [Scroll fix] Own sends always scroll to bottom — 2026-10-06
 Status: done (tsc passes; not device-verified).
 What shipped: appendMessage scrolls to the bottom whenever the message is your own (smooth when animated), as before the WhatsApp UI pass; incoming messages still only scroll when you are already near the bottom.

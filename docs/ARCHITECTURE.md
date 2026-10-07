@@ -576,3 +576,24 @@ sequenceDiagram
   API-->>C: missed messages, merged by id, inserted by createdAt
   S-->>C: receipt:update {userId, lastReadAt | lastDeliveredAt} (from markRead / markDelivered)
 ```
+
+## Native push for killed apps — `android-native` tokens (since 2026-10-07)
+
+`push_tokens.platform` is `android` (Capacitor app: notification + data, unchanged) or `android-native` (Kotlin app, migration 035; `POST /api/push/token {token, platform?}`). `pushService.buildFcmMessage` picks the shape per token: native tokens get **data-only, priority high** (so `onMessageReceived` always runs and the app builds its own notification) with `{type, messageId, connectionId, senderName, preview[, alarmId, ack, cancelled]}`. Calls: `inviteCall` no longer treats a callee with no live socket as unreachable when they have a native token — it rings server-side and sends `{type:'call', callId, kind, callerName}` (ttl 30s); every `resolveCall` sends `{type:'call_end', callId}`. Full schema in `docs/API-CONTRACT.md` section 6.
+
+```mermaid
+sequenceDiagram
+  participant Caller
+  participant S as Backend (callService)
+  participant FCM
+  participant App as Native app (killed)
+  Caller->>S: call:invite
+  S->>S: callee has no live socket but has android-native token → ring (45s)
+  S->>FCM: data {type:call, callId, kind, callerName} high, ttl 30s
+  FCM-->>App: wakes FirebaseMessagingService → show call UI
+  App->>S: socket connect (handshake)
+  S-->>App: call:incoming replayed (getRingingCallForCallee)
+  Caller->>S: call:end / ring timeout
+  S->>FCM: data {type:call_end, callId}
+  FCM-->>App: dismiss call UI
+```

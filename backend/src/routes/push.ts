@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/requireAuth.js'
 import { strictLimiter } from '../middleware/rateLimit.js'
-import { saveSubscription, removeSubscription, saveToken, removeToken } from '../services/pushService.js'
+import { saveSubscription, removeSubscription, saveToken, removeToken, PUSH_PLATFORMS } from '../services/pushService.js'
 
 export const pushRouter = Router()
 
@@ -32,12 +32,17 @@ pushRouter.post('/push/unsubscribe', async (req, res) => {
 // https URL — deliberately NOT run through assertValidPushEndpoint.
 pushRouter.post('/push/token', strictLimiter, async (req, res) => {
   const user = req.appUser!
-  const { token } = req.body ?? {}
+  const { token, platform } = req.body ?? {}
   if (typeof token !== 'string' || !token) {
     res.status(400).json({ error: 'invalid token' })
     return
   }
-  await saveToken(user.id, token)
+  // Optional; absent = 'android' (the Capacitor app). The Kotlin app sends 'android-native'.
+  if (platform !== undefined && !(PUSH_PLATFORMS as readonly unknown[]).includes(platform)) {
+    res.status(400).json({ error: 'invalid platform' })
+    return
+  }
+  await saveToken(user.id, token, platform)
   res.status(204).end()
 })
 

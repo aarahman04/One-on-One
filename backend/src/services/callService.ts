@@ -16,7 +16,7 @@ import { ConnectionError } from '../utils/connectionError.js'
 import { otherMemberId, room } from '../utils/connections.js'
 import type { MemberConnection } from './connectionAccess.js'
 import { saveMessage } from './messageService.js'
-import { sendToUser } from './pushService.js'
+import { hasNativeToken, sendNativeCallPush, sendToUser } from './pushService.js'
 
 export type CallKind = 'audio' | 'video'
 // 'unreachable' = the callee had no live socket at all when the invite came
@@ -46,6 +46,9 @@ interface CallRecord {
 }
 
 const RING_TIMEOUT_MS = 45_000
+// FCM ttl for the incoming-call / call-end data pushes: a ring older than this
+// is stale (the ring itself lasts 45s), so FCM must not deliver it late.
+export const CALL_PUSH_TTL = '30s'
 
 // At most one live call per connection — the connection IS the pair.
 const activeCalls = new Map<string, CallRecord>()
@@ -94,6 +97,9 @@ function writeCallLog(
 function resolveCall(io: Server, record: CallRecord, outcome: CallOutcome, notify = true): void {
   clearTimeout(record.ringTimer)
   activeCalls.delete(record.connectionId)
+  // Tells a native callee's killed/backgrounded app to dismiss its ring UI
+  // (cancel, decline from another device, ring timeout, end, forced end).
+  void sendNativeCallPush(record.calleeId, { type: 'call_end', callId: record.id }, CALL_PUSH_TTL)
   const durationSec = record.connectedAt ? Math.round((Date.now() - record.connectedAt) / 1000) : 0
   writeCallLog(io, record.connectionId, record.callerId, record.kind, outcome, durationSec)
 
@@ -127,6 +133,30 @@ async function notifyMissedCall(
     await sendToUser(calleeId, { title, body })
   } catch {
     /* best-effort — never fail call teardown because push failed */
+  }
+}
+
+async function pushIncomingCall(
+  connectionId: string,
+  callerId: string,
+  calleeId: string,
+  callId: string,
+  kind: CallKind,
+): Promise<void> {
+  try {
+    const { data: callerMember } = await supabaseAdmin
+      .from('connection_members')
+      .select('nickname')
+      .eq('connection_id', connectionId)
+      .eq('user_id', callerId)
+      .maybeSingle()
+    await sendNativeCallPush(
+      calleeId,
+      { type: 'call', callId, kind, callerName: callerMember?.nickname ?? '' },
+      CALL_PUSH_TTL,
+    )
+  } catch (err) {
+    console.error('callService: incoming-call push failed', err)
   }
 }
 
@@ -174,7 +204,12 @@ export async function inviteCall(
   const calleeId = otherMemberId(connection, callerId)
   const sockets = await io.in(room(connection.id)).fetchSockets()
   const calleeSockets = sockets.filter((s) => socketUserId(s) === calleeId)
-  if (calleeSockets.length === 0) {
+  // A callee with a native (Kotlin) install can be woken by a data-only FCM
+  // push even with no live socket (killed/backgrounded app): their app starts,
+  // reconnects, and gets call:incoming replayed (getRingingCallForCallee). Only
+  // when they have no such token is the call unreachable.
+  const calleeIsNative = await hasNativeToken(calleeId)
+  if (calleeSockets.length === 0 && !calleeIsNative) {
     // Their app is fully closed — nothing to ring. Still leave a trace, the
     // way a phone logs a call to someone who was unreachable: a call row on
     // both sides + a push so they see it when they next open the app.
@@ -183,6 +218,10 @@ export async function inviteCall(
     throw new ConnectionError(409, "They're not reachable right now — they'll see that you called")
   }
 
+  // The awaits above can interleave with a concurrent invite on this connection.
+  if (activeCalls.has(connection.id)) {
+    throw new ConnectionError(409, 'a call is already in progress on this connection')
+  }
   const id = randomUUID()
   const record: CallRecord = {
     id,
@@ -202,6 +241,9 @@ export async function inviteCall(
   activeCalls.set(connection.id, record)
 
   for (const s of calleeSockets) s.emit('call:incoming', { callId: id, kind, fromUserId: callerId })
+  // Wake a native callee's app (data-only, high priority, ttl 30s) whether or
+  // not it has a live socket — a backgrounded app's socket may be frozen.
+  if (calleeIsNative) void pushIncomingCall(connection.id, callerId, calleeId, id, kind)
   return { callId: id }
 }
 
