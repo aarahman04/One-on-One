@@ -27,6 +27,12 @@ What shipped: CSS only. Own bubbles = green family, other = blue family (brand #
 Files: client/src/styles/global.css; docs/ARCHITECTURE.md; docs/ui-whatsapp/brand-bubbles/ (4 screenshots).
 Verified: `npm run build`; `scripts/chat-ui-check.mjs brand-bubbles` fixture matrix passes (incl. its own outgoing text contrast >= 4.5 and overflow checks). Unverified: real Android WebView rendering.
 
+## [Fix] Web call audio: single element, full volume — 2026-10-07
+Status: done (client build passes; NOT device-verified).
+Audit result: audio calls already played through one `<audio>` element and video calls through the remote `<video>` only (no second path), and no WebAudio/GainNode or volume change exists anywhere in the call code; mic constraints only affect the outgoing track. Hardening: explicit `muted=false; volume=1` on the remote `<audio>`/`<video>` (incl. on every stream rebind), and a video call removes any stray `<audio>` so two elements can never play at once. Added a comment that the web/PWA cannot route to the earpiece and that Android's communication-mode (voice-call) volume while the mic is open is a platform limit — the native app handles routing.
+Files: client/src/features/call/controller.ts.
+Unverified: loudness on a real phone — if calls still sound quiet it is the platform's voice-call stream volume, which no web code can raise.
+
 ## [Scroll fix] Own sends always scroll to bottom — 2026-10-06
 Status: done (tsc passes; not device-verified).
 What shipped: appendMessage scrolls to the bottom whenever the message is your own (smooth when animated), as before the WhatsApp UI pass; incoming messages still only scroll when you are already near the bottom.
