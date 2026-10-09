@@ -1,12 +1,18 @@
 # Progress Log
 
-## RESUME HERE — native Android app feature-complete, awaiting device test (2026-10-07)
-Native Kotlin app in https://github.com/aarahman04/One-on-One-Android.git: A0–A3, A6, A7 by GPT Sol 6.1 (PRs #1–#7); A4 emergency alarm (#8) and A5 voice/video calls (#9) by Claude. All merged; CI green; NOT device-verified. Device checklists are in that repo's docs/PROGRESS.md (A2, A3, A4, A5 sections). Migration 035 applied 2026-10-07. No contract gaps were logged; `docs/API-CONTRACT.md` is unchanged and in sync with the Android copy.
+## RESUME HERE — native Android restyled to match web; 1.0.5 built, awaiting device test (2026-10-10)
+Native Kotlin app in https://github.com/aarahman04/One-on-One-Android.git. A0–A7 merged (PRs #1–#9). Restyle S1–S5 merged (PRs #10–#14): the Android UI now uses this repo's web styling (`client/src/styles/global.css` tokens, the web's own Fraunces/Figtree/JetBrains Mono fonts converted to TTF, web SVG icons ported to vector drawables, web chat bubbles/composer/menus, `.screen` pages, cards, call overlay). The web repo was read-only for this work; nothing in `client/` changed. Spec lives in the Android repo at `docs/design/WEB-STYLE-SPEC.md`.
+Signed release **1.0.5 / versionCode 6** built 2026-10-10 (Android repo Actions run 37998420889, `android-release` artifact). Not uploaded to Play; next upload needs versionCode 7+. Release table: Android repo `docs/PROGRESS.md` → Releases.
 Owner to-dos:
-- Add Actions secrets to the Android repo (none set yet): ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_PASSWORD, GOOGLE_SERVICES_JSON_BASE64, VITE_API_URL, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_GOOGLE_WEB_CLIENT_ID.
-- Register the debug SHA-1 in Firebase for sideloaded debug builds.
-- Device-test on the Xiaomi phone.
-Then: Play internal track (versionCode 5+), then W6 (remove Capacitor `android/` from this repo).
+- Install 1.0.5 over 1.0.4 on both phones; run the A2–A5 and S2–S5 device checklists in the Android repo's docs/PROGRESS.md.
+- Upload the AAB to Play internal testing.
+- If not done yet: register the debug SHA-1 in Firebase for sideloaded debug builds.
+Then: W6 (remove Capacitor `android/` from this repo).
+
+## [Android] Restyle to match web (S1–S5) — 2026-10-10
+Status: done in the Android repo (CI green on every PR; NOT device-verified beyond the sign-in screen on a Pixel 9a emulator).
+What shipped (Android repo): S1 tokens/fonts/icons/components (#10), S2 chat screen (#11), S3 pre-chat screens (#12), S4 cards/dialogs/call overlay (#13), S5 polish (#14). Opus 5.5 planned and reviewed; Sonnet 5.5 did S1/S2, GPT Sol 6.1 did S3/S4. Prompts: Android repo `docs/prompts/style-s*.md`.
+Deliberate differences from web: in-app Appearance toggle drives the whole Android app (web pre-chat screens follow the OS theme); Android sign-in keeps logo + "One on One" + tagline (owner decision 2026-10-10).
 
 ## [Plan] Web / native-Android split + hand-off — 2026-10-07
 Status: done (docs only).
