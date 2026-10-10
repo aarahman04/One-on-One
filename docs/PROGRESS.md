@@ -1,13 +1,21 @@
 # Progress Log
 
-## RESUME HERE — native Android restyled to match web; 1.0.5 built, awaiting device test (2026-10-10)
-Native Kotlin app in https://github.com/aarahman04/One-on-One-Android.git. A0–A7 merged (PRs #1–#9). Restyle S1–S5 merged (PRs #10–#14): the Android UI now uses this repo's web styling (`client/src/styles/global.css` tokens, the web's own Fraunces/Figtree/JetBrains Mono fonts converted to TTF, web SVG icons ported to vector drawables, web chat bubbles/composer/menus, `.screen` pages, cards, call overlay). The web repo was read-only for this work; nothing in `client/` changed. Spec lives in the Android repo at `docs/design/WEB-STYLE-SPEC.md`.
-Signed release **1.0.5 / versionCode 6** built 2026-10-10 (Android repo Actions run 37998420889, `android-release` artifact). Not uploaded to Play; next upload needs versionCode 7+. Release table: Android repo `docs/PROGRESS.md` → Releases.
+## RESUME HERE — native Android 2.0.0 (versionCode 7) built with D1–D5 design fixes, awaiting device test (2026-10-10)
+Native Kotlin app in https://github.com/aarahman04/One-on-One-Android.git. A0–A7 (PRs #1–#9), restyle S1–S5 (#10–#14) and design fixes D1–D5 (#16–#20) merged.
+Signed release **2.0.0 / versionCode 7** built 2026-10-10 (Android repo Actions run 38031209794, `android-release` artifact). Not uploaded to Play; next upload needs versionCode 8+. Release table: Android repo `docs/PROGRESS.md` → Releases.
 Owner to-dos:
-- Install 1.0.5 over 1.0.4 on both phones; run the A2–A5 and S2–S5 device checklists in the Android repo's docs/PROGRESS.md.
+- Install 2.0.0 over 1.0.5 on both phones; run the D1–D5 device checklists in the Android repo's docs/PROGRESS.md (keyboard, tap-to-record, attach sheet, presence, viewers, settings/account, /alarm).
 - Upload the AAB to Play internal testing.
 - If not done yet: register the debug SHA-1 in Firebase for sideloaded debug builds.
 Then: W6 (remove Capacitor `android/` from this repo).
+
+## [Android] Design fixes D1–D5 — 2026-10-10
+Status: merged (Android PRs #16–#20); no web/backend changes.
+- D1: keyboard gap fixed (adjustResize + single IME inset); mic records immediately (trash / timer / stop-sends bar); Photo/File attach sheet closes on pick; upload confirm is a bottom sheet.
+- D2: header presence "Online" / "Last seen …" derived from the other member's last_read_at, kept fresh by a 10 s markRead heartbeat while the chat is visible (same rule as the web's 15 s "in chat"); logo-only splash.
+- D3: compact voice card with playback progress; full-screen photo viewer; in-app PDF / text / CSV viewer (Office files → Open with); Today/Yesterday date separators.
+- D4: Settings / Account / Blocked accounts / Notifications redesigned as grouped settings rows; menu = Search, Nickname, Settings, Account + Connection group.
+- D5: Figtree headings replace the serif; compact file cards; recording stop/cancel race fixes; /alarm audited — fixed a raise/ack being dropped while another send was in flight.
 
 ## [Android] Restyle to match web (S1–S5) — 2026-10-10
 Status: done in the Android repo (CI green on every PR; NOT device-verified beyond the sign-in screen on a Pixel 9a emulator).
