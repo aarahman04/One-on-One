@@ -179,6 +179,9 @@ interface CurrentConnection {
   otherLastDeliveredAt: string | null
   wallpaper: string
   messageStyle: string
+  pinnedMessageId: string | null
+  pinnedBy: string | null
+  pinnedAt: string | null
 }
 
 interface CurrentConnectionRow {
@@ -188,6 +191,9 @@ interface CurrentConnectionRow {
   user_b_id: string
   wallpaper: string | null
   message_style: string | null
+  pinned_message_id: string | null
+  pinned_by: string | null
+  pinned_at: string | null
   connection_members: MemberLeaveRow[]
 }
 
@@ -198,7 +204,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
   const { data: connRows, error } = await supabaseAdmin
     .from('connections')
     .select(
-      'id, status, user_a_id, user_b_id, wallpaper, message_style, ' +
+      'id, status, user_a_id, user_b_id, wallpaper, message_style, pinned_message_id, pinned_by, pinned_at, ' +
         'connection_members(user_id, nickname, leave_step, leave_last_step_at, last_read_at, last_delivered_at)',
     )
     .in('status', ['pending', 'active', 'leave_pending'])
@@ -245,6 +251,9 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     otherLastDeliveredAt: other?.last_delivered_at ?? null,
     wallpaper: data.wallpaper ?? 'off',
     messageStyle: data.message_style ?? 'bubbles',
+    pinnedMessageId: data.pinned_message_id ?? null,
+    pinnedBy: data.pinned_by ?? null,
+    pinnedAt: data.pinned_at ?? null,
   }
 }
 

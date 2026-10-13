@@ -19,3 +19,13 @@ export const strictLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'too many requests — try again in a minute' },
 })
+
+// Link previews make the server fetch a third-party page; a chat shows a few
+// links at a time, so 30 a minute per IP is plenty.
+export const previewLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'too many requests — try again in a minute' },
+})

@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
 import { getConnectionForMember } from './connectionAccess.js'
 import { getReactionsForMessages, type ReactionSummary } from './reactionService.js'
-import { isAllowedMime, maxBytesFor, type AttachmentKind } from './attachmentService.js'
+import { isAllowedMime, maxBytesFor, removeAttachment, type AttachmentKind } from './attachmentService.js'
 import { encrypt, decrypt, isEncrypted } from './crypto.js'
 import { room } from '../utils/connections.js'
 
@@ -27,6 +27,10 @@ export interface Message {
   payload: unknown | null
   replyTo: string | null
   reactions: ReactionSummary[]
+  // Set by editMessage / deleteMessage (migration 036). A deleted message has
+  // empty content and a null payload.
+  editedAt: string | null
+  deletedAt: string | null
 }
 
 interface MessageRow {
@@ -37,6 +41,8 @@ interface MessageRow {
   type: MessageType | null
   payload: unknown | null
   reply_to: string | null
+  edited_at?: string | null
+  deleted_at?: string | null
 }
 
 function toMessage(row: MessageRow, reactions: ReactionSummary[] = []): Message {
@@ -49,6 +55,8 @@ function toMessage(row: MessageRow, reactions: ReactionSummary[] = []): Message 
     payload: row.payload ?? null,
     replyTo: row.reply_to ?? null,
     reactions,
+    editedAt: row.edited_at ?? null,
+    deletedAt: row.deleted_at ?? null,
   }
 }
 
@@ -393,6 +401,8 @@ const HISTORY_PAGE_SIZE = 50
 // Paginated newest-first (then reversed for display). Without a limit, PostgREST's
 // row cap silently returned the OLDEST 1000 messages once a chat grew past that,
 // hiding everything recent. `before` is a created_at cursor for "load older".
+const MESSAGE_COLUMNS = 'id, sender_id, content, created_at, type, payload, reply_to, edited_at, deleted_at'
+
 export async function getHistory(
   connectionId: string,
   userId: string,
@@ -403,7 +413,7 @@ export async function getHistory(
 
   let query = supabaseAdmin
     .from('messages')
-    .select('id, sender_id, content, created_at, type, payload, reply_to')
+    .select(MESSAGE_COLUMNS)
     .eq('connection_id', connectionId)
   // `after`: reconnect resync — everything newer than what the client holds,
   // oldest first (so a long gap pages forward from the client's last message).
@@ -536,4 +546,115 @@ export async function bumpSenderLastRead(connectionId: string, senderId: string,
     .eq('connection_id', connectionId)
     .eq('user_id', senderId)
   if (error) console.error('bumpSenderLastRead: failed to bump sender last_read_at', error)
+}
+
+// --- Edit / delete for everyone / pin (migration 036) -----------------------
+
+// Only the sender, only within this window (WhatsApp-style). Server time is
+// the authority; a client's clock never extends it.
+export const EDIT_WINDOW_MS = 30 * 60_000
+const NOT_EDITABLE: MessageType[] = ['call', 'system', 'alarm']
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// Pure rule for edit and delete (unit-tested): throws the user-facing reason.
+export function assertCanChange(
+  row: { senderId: string; createdAt: string; type: MessageType; deletedAt: string | null },
+  userId: string,
+  action: 'edit' | 'delete',
+  now: number = Date.now(),
+): void {
+  const verb = action === 'edit' ? 'edited' : 'deleted'
+  if (row.senderId !== userId) throw new ConnectionError(403, `only your own messages can be ${verb}`)
+  if (row.deletedAt) throw new ConnectionError(409, 'this message was deleted')
+  if (NOT_EDITABLE.includes(row.type)) throw new ConnectionError(400, `this message can't be ${verb}`)
+  if (action === 'edit' && row.type !== 'text') throw new ConnectionError(400, 'only text messages can be edited')
+  if (now - Date.parse(row.createdAt) > EDIT_WINDOW_MS) {
+    throw new ConnectionError(409, `messages can only be ${verb} within 30 minutes`)
+  }
+}
+
+// A message of THIS connection (the caller's live one, resolved server-side),
+// never one named by a client across connections.
+async function loadConnectionMessage(connectionId: string, messageId: unknown): Promise<Message> {
+  if (typeof messageId !== 'string' || !UUID_RE.test(messageId)) throw new ConnectionError(400, 'invalid message id')
+  const { data, error } = await supabaseAdmin
+    .from('messages')
+    .select(MESSAGE_COLUMNS)
+    .eq('id', messageId)
+    .eq('connection_id', connectionId)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) throw new ConnectionError(404, 'message not found')
+  const reactions = await getReactionsForMessages([data.id])
+  return toMessage(
+    { ...data, content: decryptContent(data.content), payload: decryptPayload(data.payload) },
+    reactions.get(data.id) ?? [],
+  )
+}
+
+export async function editMessage(connection: { id: string }, userId: string, messageId: unknown, content: unknown): Promise<Message> {
+  const trimmed = typeof content === 'string' ? content.trim() : ''
+  if (trimmed.length < 1 || trimmed.length > 4000) throw new ConnectionError(400, 'message must be 1-4000 characters')
+  const message = await loadConnectionMessage(connection.id, messageId)
+  assertCanChange(message, userId, 'edit')
+  if (trimmed === message.content) return message
+  const { data, error } = await supabaseAdmin
+    .from('messages')
+    .update({ content: encrypt(trimmed), edited_at: new Date().toISOString() })
+    .eq('id', message.id)
+    .is('deleted_at', null)
+    .select('edited_at')
+    .single()
+  if (error) throw error
+  return { ...message, content: trimmed, editedAt: data.edited_at }
+}
+
+export async function deleteMessage(connection: { id: string }, userId: string, messageId: unknown): Promise<Message> {
+  const message = await loadConnectionMessage(connection.id, messageId)
+  assertCanChange(message, userId, 'delete')
+  const { data, error } = await supabaseAdmin
+    .from('messages')
+    .update({ content: encrypt(''), payload: null, deleted_at: new Date().toISOString() })
+    .eq('id', message.id)
+    .is('deleted_at', null)
+    .select('deleted_at')
+    .single()
+  if (error) throw error
+  // Best-effort cleanup; the message itself is already gone for both sides.
+  const { error: reactionErr } = await supabaseAdmin.from('reactions').delete().eq('message_id', message.id)
+  if (reactionErr) console.error('deleteMessage: reaction cleanup failed', reactionErr)
+  const path = (message.payload as { path?: unknown } | null)?.path
+  if ((MEDIA_TYPES as string[]).includes(message.type) && typeof path === 'string' && path.startsWith(`${connection.id}/`)) {
+    await removeAttachment(path)
+  }
+  await supabaseAdmin
+    .from('connections')
+    .update({ pinned_message_id: null, pinned_by: null, pinned_at: null })
+    .eq('id', connection.id)
+    .eq('pinned_message_id', message.id)
+  return { ...message, content: '', payload: null, reactions: [], deletedAt: data.deleted_at }
+}
+
+export interface PinState {
+  messageId: string | null
+  pinnedBy: string | null
+  pinnedAt: string | null
+}
+
+// One pin per connection: pinning replaces whatever either member pinned before.
+// messageId null unpins.
+export async function pinMessage(connection: { id: string }, userId: string, messageId: unknown): Promise<PinState> {
+  let pin: PinState = { messageId: null, pinnedBy: null, pinnedAt: null }
+  if (messageId !== null && messageId !== undefined) {
+    const message = await loadConnectionMessage(connection.id, messageId)
+    if (message.deletedAt) throw new ConnectionError(409, 'this message was deleted')
+    if (message.type === 'system') throw new ConnectionError(400, "this message can't be pinned")
+    pin = { messageId: message.id, pinnedBy: userId, pinnedAt: new Date().toISOString() }
+  }
+  const { error } = await supabaseAdmin
+    .from('connections')
+    .update({ pinned_message_id: pin.messageId, pinned_by: pin.pinnedBy, pinned_at: pin.pinnedAt })
+    .eq('id', connection.id)
+  if (error) throw error
+  return pin
 }

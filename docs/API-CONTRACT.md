@@ -81,6 +81,7 @@ Report `category` is one of `harassment|hate|sexual|child_safety|spam|other` (an
 | Route | Notes |
 |---|---|
 | `GET /api/connections/:id/messages?before=<createdAt>&after=<createdAt>` | Needs live membership. Page size 50. No cursor: newest 50, returned oldest-first. `before`: the 50 newest older than that created_at (paging back). `after`: the 50 OLDEST newer than that created_at, oldest-first (reconnect resync; page forward until fewer than 50). `200 {messages: Message[]}`. Media payloads here carry `path` but **no `url`**: sign via the attachments endpoint. Errors 403/404/409. |
+| `GET /api/link-preview?url=` | Server-side unfurl (30/min per IP). `200 {preview: LinkPreview\|null}`; `LinkPreview = {url, title\|null, description\|null, siteName, image\|null (base64), imageMime\|null, imageKind: "cover"\|"icon"\|null}`. null when unreachable/blocked/no metadata. http(s) on 80/443 to public addresses only (checked at connect, every redirect), 10 s, page ≤ 768 KB, image ≤ 600 KB (jpeg/png/webp/gif/ico, never SVG); cached 1 h. Errors 400 `invalid url`. |
 | `POST /api/messages/:id/report` (strict) | Body `{category?, reason?}` (same rules as above). `204`; duplicate = success. Works for a former member of a now-ended connection. Errors 403, 404 `message not found`. |
 
 ### Attachments (`routes/attachments.ts`)
@@ -129,7 +130,7 @@ Socket.IO (in-memory, per socket unless stated):
 ### Message object (REST history, `message:new`, send acks)
 ```
 { id, senderId, content, createdAt, type, payload|null, replyTo|null,
-  reactions: [{emoji, userIds: string[]}] }
+  reactions: [{emoji, userIds: string[]}], editedAt|null, deletedAt|null }
 ```
 `message:new` and the `message:send` ack additionally carry `tempId?` (echo of the sender's tempId). Content and payload are encrypted at rest and always plaintext on the wire.
 
@@ -180,8 +181,12 @@ Every handler re-resolves the live connection from the DB; the client never name
 | Event | Payload | Ack |
 |---|---|---|
 | `message:send` | `{content?: string, type?: MessageType, payload?, replyTo?: string, tempId?: string}`; `tempId` must match `^[A-Za-z0-9-]{1,64}$` (else treated as absent) | `{ok:true, message}` ; repeat of the same `(user, tempId)` within 5 min -> `{ok:true, duplicate:true, message:<original>}` and nothing is saved/broadcast again; concurrent duplicate -> `{error:'send already in progress'}`. Errors listed in section 4. The server also `message:new`-broadcasts to the room (sender included) and bumps the sender's last_read. |
-| `reaction:add` | `{messageId, emoji}` | `{ok:true}`. Emoji must be one of `❤️ 👍 😂 😮 😢 🙏`. One reaction per user per message (a new emoji replaces the old). `system` messages can't be reacted to. Errors: `invalid emoji`, 403/404/409 messages. |
+| `reaction:add` | `{messageId, emoji}` | `{ok:true}`. Emoji must be ONE emoji (any; clients offer ❤️ 👍 😂 😮 😢 🙏 as the quick bar and a full picker), max 32 UTF-16 units, else `invalid emoji`. One reaction per user per message (a new emoji replaces the old). `system` messages can't be reacted to. Errors: `invalid emoji`, 403/404/409 messages. |
 | `reaction:remove` | `{messageId, emoji}` | `{ok:true}` |
+| `message:edit` | `{messageId, content}` | `{ok:true, message}`. Sender only, `type=text`, not deleted, within 30 min of `createdAt` (server clock); content 1-4000 after trim. Broadcasts `message:update`. Errors: `only your own messages can be edited`, `only text messages can be edited`, `messages can only be edited within 30 minutes`, `this message was deleted`, `message not found`. |
+| `message:delete` | `{messageId}` | `{ok:true, message}` (delete for everyone). Sender only, within 30 min, not `alarm`/`call`/`system`. Content becomes `""`, payload `null`, reactions removed, media file removed, pin cleared if it was pinned. Broadcasts `message:update`. |
+| `message:pin` | `{messageId}` or `{messageId: null}` to unpin | `{ok:true, pin}`. One pin per connection; either member pins, a new pin replaces the old one. Not deleted / system messages. Broadcasts `pin:update`. |
+| `typing` | `{typing: boolean}` | no ack. Relayed to the other member's sockets as `typing`, never stored. 20 per socket / 10 s. Clients send `true` at most every 3 s while composing and `false` when the draft empties or sends; receivers expire it ~6 s after the last `true`. |
 | `call:invite` | `{kind?: "audio"\|"video"}` (anything else = audio) | `{ok:true, callId, iceServers}`. Errors: `a call is already in progress on this connection` (409); if the callee has no live socket **and no `android-native` push token**: `They're not reachable right now — they'll see that you called` (an `unreachable` call row is written and a text push is sent; no ring). If the callee has a native token the call rings normally (state is held server-side; the woken app reconnects and gets `call:incoming` replayed) and a data-only `call` FCM is sent (section 6). |
 | `call:accept` | `{callId}` | `{ok:true, iceServers}`; errors `call is no longer active`, `not the callee` |
 | `call:decline` | `{callId}` | `{ok:true}`; same errors |
@@ -196,6 +201,9 @@ Call state is in memory (one call per connection). Outcomes: `end` by caller bef
 | `message:new` | Message + `tempId?` | every saved message in the room, to both members including the sender |
 | `receipt:update` | `{userId, lastReadAt?, lastDeliveredAt?}` | sent to the OTHER member's sockets when `userId` marks read / delivered |
 | `reaction:update` | `{messageId, emoji, userId, op:"add"\|"remove"}` | to the room |
+| `message:update` | Message (with `editedAt` / `deletedAt`) | to the room after `message:edit` / `message:delete` |
+| `pin:update` | `PinState = {messageId\|null, pinnedBy\|null, pinnedAt\|null}` | to the room after `message:pin` |
+| `typing` | `{userId, typing}` | to the other member's sockets |
 | `connection:ended` | none | to the room when the connection is terminated (leave final step, confirm-end, block) |
 | `call:incoming` | `{callId, kind, fromUserId}` | to the callee's sockets; also replayed on (re)connect while ringing |
 | `call:accepted` | `{callId}` | to the whole room (so the callee's other devices drop their prompt) |
@@ -267,3 +275,9 @@ data: { urgent: "true", type: "alarm", ack: "true|false", cancelled: "true|false
 - `GET /connections/current` is polled every ~4 s by the web client as a fallback to sockets.
 - Terminating a connection deletes all messages and attachments for both sides.
 - `ALLOWED` emoji, wallpapers, styles, moods and report categories are the closed lists given above.
+
+## 8. Edit / delete / pin / typing / link preview (migration 036, 2026-10-14)
+- Migration `036_message_edit_delete_pin.sql` adds `messages.edited_at`, `messages.deleted_at`, `connections.pinned_message_id`, `pinned_by`, `pinned_at`. **Run it before deploying this backend** (history and `/connections/current` select the new columns).
+- `CurrentConnection` additionally carries `pinnedMessageId|null, pinnedBy|null, pinnedAt|null`.
+- History returns deleted messages with `content: ""`, `payload: null`, `deletedAt` set (so replies can say "deleted").
+- The `after` resync cursor does not see edits/deletes (created_at doesn't move): clients refresh the newest page on reconnect.

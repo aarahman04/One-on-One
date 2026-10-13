@@ -96,3 +96,9 @@ export async function deleteConnectionAttachments(connectionId: string): Promise
   const { error: removeError } = await supabaseAdmin.storage.from(BUCKET).remove(paths)
   if (removeError) throw removeError
 }
+
+// One attachment, after its message was deleted for everyone. Best-effort: logs, never throws.
+export async function removeAttachment(path: string): Promise<void> {
+  const { error } = await supabaseAdmin.storage.from(BUCKET).remove([path])
+  if (error) console.error('removeAttachment failed', error)
+}

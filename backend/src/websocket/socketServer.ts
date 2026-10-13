@@ -10,6 +10,9 @@ import {
   checkAlarmAck,
   withAlarmAckLock,
   isMessageType,
+  editMessage,
+  deleteMessage,
+  pinMessage,
   setIo as setMessageServiceIo,
   type Message,
 } from '../services/messageService.js'
@@ -403,6 +406,79 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         }
       } catch (err) {
         ack?.({ error: clientError(err, 'failed to send message') })
+      }
+    })
+
+    // Edit / delete for everyone: sender only, within 30 minutes (messageService
+    // enforces both). Both broadcast the updated Message as message:update.
+    socket.on(
+      'message:edit',
+      async (msg: { messageId?: unknown; content?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          if (!withinRateLimit()) return ack?.({ error: 'slow down' })
+          const { userId } = socket.data as SocketData
+          const connection = await getLiveConnectionForUser(userId)
+          if (!connection) return ack?.({ error: 'no active connection' })
+          const message = await editMessage(connection, userId, msg?.messageId, msg?.content)
+          io.to(room(connection.id)).emit('message:update', message)
+          ack?.({ ok: true, message })
+        } catch (err) {
+          ack?.({ error: clientError(err, 'failed to edit message') })
+        }
+      },
+    )
+
+    socket.on(
+      'message:delete',
+      async (msg: { messageId?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          if (!withinRateLimit()) return ack?.({ error: 'slow down' })
+          const { userId } = socket.data as SocketData
+          const connection = await getLiveConnectionForUser(userId)
+          if (!connection) return ack?.({ error: 'no active connection' })
+          const message = await deleteMessage(connection, userId, msg?.messageId)
+          io.to(room(connection.id)).emit('message:update', message)
+          ack?.({ ok: true, message })
+        } catch (err) {
+          ack?.({ error: clientError(err, 'failed to delete message') })
+        }
+      },
+    )
+
+    // One shared pin per connection; either member may pin (replacing the old
+    // one) or unpin with messageId null.
+    socket.on(
+      'message:pin',
+      async (msg: { messageId?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          if (!withinRateLimit()) return ack?.({ error: 'slow down' })
+          const { userId } = socket.data as SocketData
+          const connection = await getLiveConnectionForUser(userId)
+          if (!connection) return ack?.({ error: 'no active connection' })
+          const pin = await pinMessage(connection, userId, msg?.messageId ?? null)
+          io.to(room(connection.id)).emit('pin:update', pin)
+          ack?.({ ok: true, pin })
+        } catch (err) {
+          ack?.({ error: clientError(err, 'failed to pin message') })
+        }
+      },
+    )
+
+    // Typing indicator: relayed to the room, never stored. Own bucket so a
+    // chatty keyboard can't eat the budget real sends need.
+    const recentTyping: number[] = []
+    socket.on('typing', async (msg: { typing?: unknown }) => {
+      try {
+        const now = Date.now()
+        while (recentTyping.length && now - recentTyping[0] > 10_000) recentTyping.shift()
+        if (recentTyping.length >= 20) return
+        recentTyping.push(now)
+        const { userId } = socket.data as SocketData
+        const connection = await getLiveConnectionForUser(userId)
+        if (!connection) return
+        socket.to(room(connection.id)).emit('typing', { userId, typing: msg?.typing === true })
+      } catch (err) {
+        console.error('typing relay failed:', err)
       }
     })
 

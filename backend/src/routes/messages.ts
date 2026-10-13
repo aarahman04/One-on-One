@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { requireAuth } from '../middleware/requireAuth.js'
-import { strictLimiter } from '../middleware/rateLimit.js'
+import { previewLimiter, strictLimiter } from '../middleware/rateLimit.js'
+import { getLinkPreview } from '../services/linkPreviewService.js'
 import { getHistory } from '../services/messageService.js'
 import { reportMessage } from '../services/reportService.js'
 
@@ -23,4 +24,12 @@ messagesRouter.post('/messages/:id/report', strictLimiter, async (req, res) => {
     reason: req.body?.reason,
   })
   res.status(204).end()
+})
+
+// Server-side unfurl for a link in a message: {preview: LinkPreview | null}.
+// null (not an error) when the page can't be fetched or has nothing to show.
+messagesRouter.get('/link-preview', previewLimiter, async (req, res) => {
+  const preview = await getLinkPreview(req.query.url)
+  res.set('Cache-Control', 'private, max-age=3600')
+  res.json({ preview })
 })

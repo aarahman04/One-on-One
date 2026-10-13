@@ -9,6 +9,16 @@ Owner to-dos:
 - If not done yet: register the debug SHA-1 in Firebase for sideloaded debug builds.
 Then: W6 (remove Capacitor `android/` from this repo).
 
+## [Backend] Edit / delete / pin / typing / any-emoji reactions / link previews — 2026-10-14
+Status: built + unit-tested, NOT deployed (needs migration 036 first).
+What shipped (branch `feat/edit-delete-pin-typing-preview`):
+- Migration 036: `messages.edited_at/deleted_at`, `connections.pinned_message_id/pinned_by/pinned_at`.
+- Socket `message:edit` / `message:delete` (sender only, 30 min, server clock) -> `message:update`; `message:pin` (one shared pin, replaces) -> `pin:update`; `typing` relay (not stored). `/connections/current` returns the pin.
+- Reactions accept any single emoji (regex-validated), not just the six.
+- `GET /api/link-preview?url=`: server-side Open Graph unfurl (cover art / favicon as base64) so the reader's phone never contacts the site. SSRF-guarded (public IPs only, checked at connect and per redirect; 80/443; size/time caps; no SVG). Verified live: YouTube, Shorts, youtu.be, Spotify, Apple Music, Instagram, X, Facebook, LinkedIn, GitHub, Amazon, Reddit, SoundCloud, Vimeo, Wikipedia, BBC, Flipkart, Pinterest. Medium blocks the server's TLS fingerprint (no card); TikTok uses its oEmbed (unverifiable from India).
+- Tests: `backend/test/messageChanges.test.ts` (edit/delete rules, SSRF guard, meta parsing, emoji validation).
+Notes/deviations: the web client is unchanged — it ignores the new events/fields (edits/deletes show after a reload there).
+
 ## [Android] Design fixes D1–D5 — 2026-10-10
 Status: merged (Android PRs #16–#20); no web/backend changes.
 - D1: keyboard gap fixed (adjustResize + single IME inset); mic records immediately (trash / timer / stop-sends bar); Photo/File attach sheet closes on pick; upload confirm is a bottom sheet.
