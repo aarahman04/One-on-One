@@ -2,7 +2,14 @@ import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from './connectionService.js'
 import { getConnectionByMessageId } from './connectionAccess.js'
 
-const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
+// Any single emoji (the quick bar offers six; the "+" picker offers the rest):
+// one pictograph / flag / keycap, optionally with skin tone, VS16 and ZWJ parts.
+// Never free text — anything else is 'invalid emoji'.
+const EMOJI_RE = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|[#*0-9]️?⃣)(?:️|\p{Emoji_Modifier}|‍(?:\p{Extended_Pictographic}|\p{Emoji_Component}))*️?$/u
+
+export function isReactionEmoji(emoji: unknown): emoji is string {
+  return typeof emoji === 'string' && emoji.length <= 32 && EMOJI_RE.test(emoji)
+}
 
 export interface ReactionSummary {
   emoji: string
@@ -10,7 +17,7 @@ export interface ReactionSummary {
 }
 
 function validateEmoji(emoji: unknown): string {
-  if (typeof emoji !== 'string' || !ALLOWED_EMOJI.includes(emoji)) {
+  if (!isReactionEmoji(emoji)) {
     throw new ConnectionError(400, 'invalid emoji')
   }
   return emoji
