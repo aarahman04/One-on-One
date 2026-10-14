@@ -1,5 +1,13 @@
 # Progress Log
 
+## [Web parity] Android 2.0.4 media and profile photos — 2026-10-14
+Status: implemented on `feat/web-android-parity-2026-10-14`; one PR to main, no merge or deployment.
+- Local 12-hour chat times; 3px photos and bare 150px stickers with sent-right/received-left pills.
+- Sticker/camera composer, Stickers/GIFs picker and backend GIPHY sends; account-scoped IndexedDB library, 91 built-ins, favourites/16 recents, confirmed deletion and sign-out cleanup.
+- Original/Cut-out maker with self-hosted MediaPipe/DeepLab, free crop, square placement and bounded alpha WebP; instant voice/sticker/GIF upload placeholders leave text usable.
+- Own/private partner photos in settings/header/calls, browser text size, curved tails and receipt/delete/composer animation; local unsent discard, reduced-motion toast cleanup and hidden-input dialog focus fixes.
+Verification: client build + 16 tests; unchanged backend build + 34 tests; isolated Chromium 360/1280 dark/light media checks and existing chat checks. Manual Chrome chat/picker/theme inspection. Step 0, gap table, commands, screenshots and unverified items: [report](WEB-ANDROID-PARITY-2026-10-14.md). No live-account/device/production claims; Android, backend, database, secrets and existing untracked files untouched.
+
 ## [Web parity] Android 2.0.3 chat features — 2026-10-14
 Status: implemented on `feat/web-android-chat-parity`; client build and nine focused tests pass. Browser contract-fixture checks pass at 360px and 1280px in Chromium, installed Chrome/Edge and Firefox, in light/dark with off/love/samurai wallpapers. PR targets `main`; no merge or deployment.
 What shipped:

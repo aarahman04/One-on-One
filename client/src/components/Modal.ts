@@ -29,9 +29,9 @@ const onKey = (e: KeyboardEvent): void => {
     return
   }
   if (e.key === 'Tab') {
-    const focusable = top.panel.querySelectorAll<HTMLElement>(
+    const focusable = [...top.panel.querySelectorAll<HTMLElement>(
       'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    )
+    )].filter((el) => !el.closest('[hidden], [inert]') && el.getClientRects().length > 0)
     if (focusable.length === 0) {
       e.preventDefault()
       return

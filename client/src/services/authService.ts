@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core'
 import { supabase } from './supabaseClient'
+import { clearLocalMedia } from '../features/stickerLibrary'
 
 // forceAccountChooser adds Google's `prompt=select_account` so the account
 // picker always appears — used by the login screen's "Use a different account"
@@ -49,6 +50,7 @@ export async function signOut(opts: { skipPush?: boolean } = {}): Promise<void> 
       const { clearPushOnSignOut } = await import('../features/pushNotifications')
       await clearPushOnSignOut()
     }
+    await clearLocalMedia()
     await supabase.auth.signOut().catch(() => {})
   } finally {
     signingOut = false
@@ -69,7 +71,7 @@ export function onSessionReady(callback: () => void): () => void {
 // state, which would otherwise cause a reload loop on the login screen).
 export function onSignedOut(callback: () => void): () => void {
   const { data } = supabase.auth.onAuthStateChange((event) => {
-    if (event === 'SIGNED_OUT') callback()
+    if (event === 'SIGNED_OUT') void clearLocalMedia().catch(() => {}).then(callback)
   })
   return () => data.subscription.unsubscribe()
 }

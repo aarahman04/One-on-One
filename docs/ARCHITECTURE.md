@@ -106,6 +106,8 @@ sequenceDiagram
 
 **Hardening (2026-08-29 audit, batches 0–3):** single-active-connection is now enforced by partial unique indexes + an advisory-locked trigger (migration 016), not a racy `count(*)`; `getCurrentConnection` tolerates a stray extra row instead of locking the user out. Connection state transitions (accept / decline / cancel / advance-leave) are conditional updates that pin the from-state. `messages`/`connections` FKs to `users` cascade on delete (migration 017) so accounts can actually be deleted. `getHistory` is paginated newest-first with a `before` cursor. Push endpoints are host-allowlisted (anti-SSRF); connection codes are `crypto.randomInt`; `express-rate-limit` + a per-socket flood guard are in place; socket events re-resolve the caller's live connection per event rather than trusting the handshake value. Client: one reconnecting transport supervisor with ack timeouts and fresh-token socket auth; optimistic sends reconcile on a client `tempId` echoed in `message:new`; `ChatPage` tears down all body-level overlays + their listeners on navigation.
 
+**Hardening (audit batches 4–9, 2026-08-30):** `requireAuth` now resolves the app user once (`supabaseAdmin.auth.getUser` → `getOrCreateUser`) and caches it per access token for 15s (never past the token's `exp`), exposing `req.appUser` — routes read that instead of each re-calling `getOrCreateUser`, so `/connections/current` and the 4s poll drop from ~4–5 external round-trips to ~1. The leave-step advance moved entirely into a SQL function, `advance_leave_step()` (migration 019): the from-step pin and the 24h cooldown (`leave_last_step_at <= now() - interval '24 hours'`) are one atomic conditional `UPDATE` against the DB clock, not a JS `Date.now()` cutoff. Remaining items are local: `Modal` is a focus-trapping stack (one Escape closes only the top), client `push` races `serviceWorker.ready` with a 3s timeout, search highlight preserves linkified `<a>`, form-page action buttons disable during their request, `linkify` runs are length-bounded.
+
 ## Connection state machine
 
 ```mermaid
@@ -119,7 +121,7 @@ stateDiagram-v2
     terminated --> [*]
 ```
 
-Leave model (Stage E) overrides spec §25's passive auto-expire: it is a deliberate, **solo-completable 5-step countdown**, one step per 24h (server-gated), tracked per-member on `connection_members.leave_step` / `leave_last_step_at`. Silence keeps the connection; a member can always exit alone by completing their own 5 steps; when both are leaving, either can `confirm-end` immediately. Chat reflects leave state via a banner + system lines by polling `/connections/current` (leave is connection state, deliberately kept out of the message `Transport`).
+Leave model (Stage E) overrides spec §25's passive auto-expire: it is a deliberate, **solo-completable 5-step countdown**, one step per 24h (gated in SQL by the `advance_leave_step()` RPC against `now()` — migration 019), tracked per-member on `connection_members.leave_step` / `leave_last_step_at`. Silence keeps the connection; a member can always exit alone by completing their own 5 steps; when both are leaving, either can `confirm-end` immediately. Chat reflects leave state via a banner + system lines by polling `/connections/current` (leave is connection state, deliberately kept out of the message `Transport`).
 
 **Termination deletes the conversation**: reaching `terminated` deletes the `connections` row, which cascades (`on delete cascade`) to `connection_members` and `messages` — nothing is retained server-side. Participants export (TXT / JSON / HTML) before leaving; the data is theirs.
 
@@ -686,3 +688,10 @@ Postgres + Auth + Storage")]
 
 The native app keeps the same applicationId and upload key so it ships as an update to the existing Play listing. The Capacitor app and `android/` are deleted from this repo only after that (plan step W6).
 
+## Android 2.0.4 web media parity (2026-10-14)
+
+`mediaPicker.ts` uses contract §9 GIF search/preparation; stickers remain ordinary `image` attachments. `stickerLibrary.ts` stores account-keyed records/blobs and connection-scoped private partner photos in IndexedDB, seeds the six built-in packs once, and rejects saves after its sign-out generation changes. Central `authService.signOut` clears local media before credentials; both account-deletion callers already use that path.
+
+`stickerMaker.ts` decodes/orients photos to at most 1024px, runs the locally served MediaPipe/DeepLab model, applies `stickerMath.ts` crop/placement and exports 512px alpha WebP at quality 1.0→0.8 with a 100000-byte ceiling. Static runtime/model files are same-origin; CSP adds only `wasm-unsafe-eval`, and hosting rewrites exclude their directories. Model and artwork attribution ship beside the assets.
+
+`ChatPage` shows upload-only rows before media preparation, then hands documented payload fields to its existing optimistic/retry queue. Object URLs stay client-only; disposed/discarded uploads cannot send later. Exact 512×512 WebP without a reply renders bare; all other images use a thin frame with the footer inside the image wrapper. `profileGifApi.ts` uses the documented avatar endpoints; a private browser photo overrides the signed real photo in header/call UI. Browser appearance stores text size. [Verification and limitations](WEB-ANDROID-PARITY-2026-10-14.md).

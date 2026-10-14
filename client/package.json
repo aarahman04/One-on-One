@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "test": "node --test test/chatRules.test.mjs",
+    "test": "node --test test/*.test.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
@@ -25,6 +25,7 @@
     "@capacitor/push-notifications": "^8.1.2",
     "@capacitor/splash-screen": "^8.0.2",
     "@capgo/capacitor-social-login": "^8.5.7",
+    "@mediapipe/tasks-vision": "1.1.0",
     "@supabase/supabase-js": "^2.112.4",
     "socket.io-client": "^4.8.3"
   }
