@@ -16,6 +16,7 @@ export function mountMenuDropdown(
   onDeleteAccount?: () => void,
   getNotificationsLabel?: () => Promise<string>,
   onReport?: () => void,
+  onSettings?: () => void,
 ): () => void {
   let panel: HTMLDivElement | null = null
   let unregisterBack: (() => void) | null = null
@@ -48,6 +49,7 @@ export function mountMenuDropdown(
     panel.innerHTML = `
       <button class="menu__item" data-action="search"${onSearch ? '' : ' disabled'}>Search</button>
       ${onAppearance ? '<button class="menu__item" data-action="appearance">Appearance</button>' : ''}
+      ${onSettings ? '<button class="menu__item" data-action="settings">Settings</button>' : ''}
       ${onNotifications ? '<button class="menu__item" data-action="notifications">Notifications</button>' : ''}
       <button class="menu__item" data-action="rename">Rename</button>
       <button class="menu__item" data-action="export">Export</button>
@@ -79,6 +81,7 @@ export function mountMenuDropdown(
       })
     }
     panel.querySelector('[data-action="report"]')?.addEventListener('click', () => { close(); onReport?.() })
+    panel.querySelector('[data-action="settings"]')?.addEventListener('click', () => { close(); onSettings?.() })
     if (getNotificationsLabel) {
       const item = panel.querySelector<HTMLButtonElement>('[data-action="notifications"]')
       void getNotificationsLabel().then((label) => {

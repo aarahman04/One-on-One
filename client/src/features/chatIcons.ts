@@ -18,3 +18,5 @@ export const LOCATION_ICON = svg('<path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 
 export const LOCK_ICON = svg('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>')
 export const CHOICE_ICON = svg('<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 8h.01M16 8h.01M12 12h.01M8 16h.01M16 16h.01"/>')
 export const CHECK_ICON = svg('<path d="m5 12 4 4L19 6"/>')
+export const STICKER_ICON = svg('<path d="M21 12V6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h6zM12 21v-4a5 5 0 0 1 5-5h4M7.5 13.5s1.2 1.5 3 1.5M8.5 8.5h.01M14.5 8.5h.01"/>')
+export const CAMERA_ICON = svg('<path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h2l1.4-1.9a1.5 1.5 0 0 1 1.2-.6h3.8a1.5 1.5 0 0 1 1.2.6L16.5 6h2A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.5"/><path d="M17.5 9.5h.01"/>')

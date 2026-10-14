@@ -1,6 +1,6 @@
 export function formatClock(date: Date): string {
   if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 // Small per-bubble timestamp, WhatsApp-style — e.g. "3:59 AM". Renders in
@@ -24,12 +24,7 @@ export function formatDateSeparator(date: Date): string {
 export function formatFullTimestamp(date: Date): string {
   if (Number.isNaN(date.getTime())) return ''
   const day = date.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })
-  const time = date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true,
-  })
+  const time = formatClock(date)
   return `${day}\n${time}`
 }
 

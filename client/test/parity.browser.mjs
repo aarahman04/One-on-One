@@ -3,15 +3,15 @@
 import assert from 'node:assert/strict'
 import { createServer as createHttpServer } from 'node:http'
 import { createRequire } from 'node:module'
-import { mkdtemp } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createServer as createViteServer } from 'vite'
 
 const { Server } = createRequire(new URL('../../backend/package.json', import.meta.url))('socket.io')
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright')
-const screenshotDir = await mkdtemp(join(tmpdir(), 'one-on-one-parity-'))
+const screenshotDir = new URL('../../docs/ui-web-android-parity/', import.meta.url).pathname.replace(/^\/(\w:)/, '$1')
+await mkdir(screenshotDir, { recursive: true })
 const ME = 'me'
 const OTHER = 'other'
 const id = (n) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`
@@ -21,6 +21,9 @@ let events
 let previewRequests
 let failEdit = false
 let failDelete = false
+let failUpload = false
+let uploadDelay = 0
+let avatars = { mine: null, other: null }
 const reset = (fullPage = false, nickname = 'Arfah') => {
   const now = Date.now()
   const msg = (n, senderId, content, extra = {}) => ({ id: id(n), senderId, content, createdAt: new Date(now - (10 - n) * 20_000).toISOString(), type: 'text', payload: null, replyTo: null, reactions: [], editedAt: null, deletedAt: null, ...extra })
@@ -46,11 +49,25 @@ reset()
 const api = createHttpServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
   if (req.method === 'OPTIONS') { res.writeHead(204).end(); return }
   const url = new URL(req.url, 'http://fixture')
   res.setHeader('Content-Type', 'application/json')
-  if (url.pathname === '/api/connections/current') res.end(JSON.stringify({ connection }))
+  if (url.pathname === '/api/me/avatars') res.end(JSON.stringify(avatars))
+  else if (url.pathname === '/api/me/avatar') {
+    avatars.mine = req.method === 'DELETE' ? null : '/stickers/packs/Shapes/01_circle.webp'
+    res.writeHead(req.method === 'DELETE' ? 204 : 200).end(req.method === 'DELETE' ? '' : JSON.stringify({ avatarId: 'fixture-avatar' }))
+  }
+  else if (url.pathname === '/api/gifs') res.end(JSON.stringify({ results: [{ id: 'fixtureGif', title: 'Hello GIF', previewUrl: 'https://media.giphy.com/fixture.gif', width: 320, height: 240 }], next: null }))
+  else if (url.pathname.endsWith('/gifs') || url.pathname.endsWith('/attachments')) {
+    const bytes = []; for await (const chunk of req) bytes.push(chunk)
+    events.push(['upload', { path: url.pathname, mime: req.headers['content-type'], size: Buffer.concat(bytes).length }])
+    if (uploadDelay) await new Promise((resolve) => setTimeout(resolve, uploadDelay))
+    if (failUpload) { res.writeHead(502).end(JSON.stringify({ error: 'Upload failed (fixture)' })); return }
+    res.writeHead(201).end(JSON.stringify({ path: 'chat/fixture.webp', mime: url.pathname.endsWith('/gifs') ? 'image/gif' : req.headers['content-type'], size: Math.max(1, Buffer.concat(bytes).length), width: 320, height: 240 }))
+  }
+  else if (url.pathname.endsWith('/attachments/signed')) res.end(JSON.stringify({ urls: { 'chat/fixture.webp': '/stickers/vectors/sticker_cat_happy.svg' } }))
+  else if (url.pathname === '/api/connections/current') res.end(JSON.stringify({ connection }))
   else if (url.pathname.endsWith('/messages')) {
     const before = url.searchParams.get('before')
     const after = url.searchParams.get('after')
@@ -115,13 +132,22 @@ process.env.VITE_VAPID_PUBLIC_KEY = 'fixture'
 const vite = await createViteServer({
   root: new URL('../', import.meta.url).pathname.replace(/^\/(\w:)/, '$1'), configFile: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify(apiOrigin), 'import.meta.env.VITE_VAPID_PUBLIC_KEY': JSON.stringify('fixture') },
-  plugins: [{ name: 'isolated-auth', enforce: 'pre', transformIndexHtml(html) { return html.replace("connect-src 'self'", `connect-src 'self' ${apiOrigin} ${apiOrigin.replace('http:', 'ws:')}`) }, transform(_code, moduleId) {
+  plugins: [{ name: 'isolated-auth', enforce: 'pre', configureServer(server) {
+    server.middlewares.use('/fixture-setup.js', (_req, res) => { res.setHeader('Content-Type', 'text/javascript'); res.end("localStorage.setItem('ageVerified','1');localStorage.setItem('termsAcceptedAt','fixture');localStorage.setItem('notificationReminderAt',String(Date.now()))") })
+  }, transformIndexHtml(html) { return html.replace("connect-src 'self'", `connect-src 'self' ${apiOrigin} ${apiOrigin.replace('http:', 'ws:')}`).replace('</head>', process.env.PARITY_MANUAL ? '<script src="/fixture-setup.js"></script></head>' : '</head>') }, transform(_code, moduleId) {
     if (moduleId.replaceAll('\\', '/').endsWith('/src/services/supabaseClient.ts')) return "export const supabase = {auth:{getSession:async()=>({data:{session:{access_token:'fixture',user:{id:'fixture'}}}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}}),signOut:async()=>({})}}"
     if (_code.includes('import.meta.env.VITE_API_URL')) return _code.replaceAll('import.meta.env.VITE_API_URL', JSON.stringify(apiOrigin))
   } }], server: { host: '127.0.0.1', port: 0, hmr: false },
 })
 await vite.listen()
 const origin = `http://127.0.0.1:${vite.httpServer.address().port}`
+if (process.env.PARITY_MANUAL) {
+  connection.pinnedMessageId = null
+  avatars.other = '/stickers/packs/Shapes/01_circle.webp'
+  messages = [true, true, false, false].map((sticker, i) => ({ id: id(3001 + i), senderId: i % 2 ? OTHER : ME, content: '', createdAt: new Date(Date.now() - (4 - i) * 1000).toISOString(), type: 'image', payload: { path: 'chat/fixture.webp', mime: sticker ? 'image/webp' : 'image/jpeg', size: 1000, width: sticker ? 512 : 200, height: sticker ? 512 : 300, url: '/stickers/packs/Shapes/01_circle.webp' }, replyTo: null, reactions: [] }))
+  console.log(`Manual contract fixture: ${origin}`)
+  await new Promise(() => {})
+}
 const row = (page, n) => page.locator(`.chat__message[data-id="${id(n)}"]`)
 const visible = async (page, selector) => page.locator(selector).first().waitFor({ state: 'visible' })
 const waitText = async (page, selector, text) => {
@@ -134,13 +160,160 @@ const waitText = async (page, selector, text) => {
 }
 
 const browsers = (process.env.PARITY_BROWSERS ?? 'chromium').split(',')
+const mediaChecks = async (page, width, engine) => {
+  reset()
+  messages = []
+  const local = '/stickers/packs/Shapes/01_circle.webp'
+  for (const [n, senderId, sticker] of [[3001, ME, true], [3002, OTHER, true], [3003, ME, false], [3004, OTHER, false]]) messages.push({ id: id(n), senderId, content: '', createdAt: new Date(Date.now() - (3005 - n) * 1000).toISOString(), type: 'image', payload: { path: 'chat/fixture.webp', mime: sticker ? 'image/webp' : 'image/jpeg', size: 1000, width: sticker ? 512 : 200, height: sticker ? 512 : 300, url: sticker ? '/stickers/vectors/sticker_cat_happy.svg' : '/love.jpg' }, replyTo: null, reactions: [] })
+  connection.pinnedMessageId = null; avatars.other = local
+  const initialMedia = [...messages]
+  for (const theme of ['dark', 'light']) {
+    messages = initialMedia.map((m) => ({ ...m })); events = []
+    await page.evaluate((theme) => { localStorage.setItem('appearancePreview', JSON.stringify({ theme })); localStorage.setItem('notificationReminderAt', String(Date.now())) }, theme)
+    await page.reload(); await visible(page, '#sticker-btn'); await page.locator('#splash').waitFor({ state: 'hidden' })
+    await page.waitForFunction(() => document.querySelector('#nav-avatar img')?.complete)
+    assert.equal(await page.locator('[data-sticker]').count(), 2)
+    await row(page, 3001).locator('.chat__meta').click()
+    await page.waitForFunction((selector) => document.querySelector(selector)?.classList.contains('chat__message--expanded'), `.chat__message[data-id="${id(3001)}"]`)
+    assert(/\n\d{1,2}:\d{2} (AM|PM)/.test(await row(page, 3001).locator('.chat__message-full-time').textContent()))
+    await row(page, 3001).locator('.chat__meta').click()
+    for (const n of [3001, 3002, 3003, 3004]) {
+      const r = row(page, n), mine = [3001, 3003].includes(n)
+      assert.equal(await r.getAttribute('data-meta-side'), mine ? 'right' : 'left')
+      await r.locator('img').evaluate((img) => img.decode())
+      const body = await r.locator('.chat__message-body').boundingBox(), pill = await r.locator('.chat__meta').boundingBox()
+      assert(pill.x >= body.x - 1 && pill.x + pill.width <= body.x + body.width + 1, 'meta stays inside horizontal bubble bounds')
+      if (n < 3003) assert.equal(Math.round(body.width), 150)
+      else assert.equal(await r.locator('.image-bubble__media > .chat__meta').count(), 1)
+    }
+    await page.screenshot({ path: join(screenshotDir, `${engine}-${width}-${theme}-media.png`) })
+    for (const [n, label] of [[3001, 'sent-sticker'], [3002, 'received-sticker'], [3003, 'sent-photo'], [3004, 'received-photo']]) {
+      await row(page, n).scrollIntoViewIfNeeded()
+      await row(page, n).screenshot({ path: join(screenshotDir, `${engine}-${width}-${theme}-${label}.png`) })
+    }
+    await page.locator('#sticker-btn').click(); await visible(page, '.sticker-tile img')
+    assert.deepEqual(await page.locator('[data-stickers] h3').allTextContents(), ['Favourites', 'Recent', 'My stickers', 'Cats', 'IT', 'Life', 'Little signals', 'Nature', 'Shapes'])
+    assert.equal(await page.locator('.sticker-tile img').count(), 91)
+    await page.locator('.sticker-grid[aria-label="Shapes"]').getByRole('button', { name: 'Bubbles', exact: true }).press('Tab')
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), 'Close', 'hidden picker inputs cannot break the dialog focus trap')
+    await page.getByRole('tab', { name: 'Stickers', exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector('.modal-overlay--closing') && [...document.querySelectorAll('.modal-panel')].every((el) => el.getAnimations().length === 0))
+    await page.screenshot({ path: join(screenshotDir, `${engine}-${width}-${theme}-sticker-sheet.png`) })
+    assert(await page.locator('.media-picker').evaluate((el) => el.scrollWidth <= el.clientWidth), 'picker content fits its padded dialog')
+    const cat = page.locator('[data-stickers]').getByRole('button', { name: 'Happy cat', exact: true })
+    await cat.click({ button: 'right' }); await page.getByRole('button', { name: 'Favourite', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('[data-stickers] .sticker-grid')?.querySelectorAll('img').length === 1)
+    await page.locator('.sticker-grid[aria-label="Cats"]').getByRole('button', { name: 'Grumpy cat', exact: true }).click({ button: 'right' })
+    await page.getByRole('button', { name: 'Delete', exact: true }).click()
+    await page.getByRole('button', { name: 'Confirm delete', exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector('.sticker-tile[aria-label="Grumpy cat"]'))
+    assert.equal(await page.evaluate(async () => (await (await import('/src/features/stickerLibrary.ts')).loadStickers('me')).length), 90, 'deleted built-ins are not reseeded')
+    await page.getByRole('button', { name: 'Make a sticker', exact: true }).click()
+    await page.locator('[data-photo]').setInputFiles(new URL('../public/love.jpg', import.meta.url).pathname.replace(/^\/(\w:)/, '$1'))
+    await page.getByRole('button', { name: 'Place crop', exact: true }).waitFor({ state: 'visible' })
+    await page.waitForFunction(() => !document.querySelector('[data-next]').disabled)
+    const handle = page.locator('[data-handle="0"]'), h = await handle.boundingBox()
+    await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2); await page.mouse.down(); await page.mouse.move(h.x + 45, h.y + 40); await page.mouse.up()
+    assert.notEqual(await page.locator('.sticker-maker__crop').evaluate((el) => el.style.left), '0%')
+    await page.waitForFunction(() => !document.querySelector('.modal-overlay--closing') && [...document.querySelectorAll('.modal-panel')].every((el) => el.getAnimations().length === 0))
+    await page.screenshot({ path: join(screenshotDir, `${engine}-${width}-${theme}-maker-crop.png`) })
+    await page.getByRole('button', { name: 'Cut-out', exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector('[data-cut]').disabled, undefined, { timeout: 60_000 })
+    const cutError = await page.locator('.sticker-maker .media-error').textContent()
+    assert(!/failed|fetch|compile|encode|WebAssembly|not allowed|model|graph/i.test(cutError), `local model inference: ${cutError}`)
+    console.log(`MediaPipe ${engine} ${width}px ${theme}: ${cutError || 'cut-out succeeded'}`)
+    await page.getByRole('button', { name: 'Original', exact: true }).click()
+    await page.getByRole('button', { name: 'Place crop', exact: true }).click()
+    await page.locator('.sticker-maker__zoom input').fill('1.5')
+    await page.getByRole('button', { name: 'Save sticker', exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector('.sticker-maker'))
+    await page.locator('.sticker-grid[aria-label="My stickers"]').getByRole('button', { name: 'My sticker', exact: true }).waitFor()
+    await page.getByRole('tab', { name: 'GIFs', exact: true }).click(); await visible(page, '.gif-grid button')
+    await page.locator('.gif-grid img').evaluate((img) => img.decode())
+    assert.equal(await page.getByText('Powered by GIPHY').count(), 1)
+    await page.waitForFunction(() => !document.querySelector('.modal-overlay--closing') && [...document.querySelectorAll('.modal-panel')].every((el) => el.getAnimations().length === 0))
+    await page.screenshot({ path: join(screenshotDir, `${engine}-${width}-${theme}-gif-tab.png`) })
+    uploadDelay = 700
+    await page.getByRole('button', { name: 'Hello GIF', exact: true }).click()
+    await visible(page, '[data-uploading]')
+    await page.locator('#message-input').fill('Text during upload'); await page.locator('#send-btn').click()
+    assert.notEqual(await page.locator('#mic-btn').evaluate((el) => getComputedStyle(el).display), 'none', 'composer swap uses opacity/slide, not display toggles')
+    await waitText(page, '.chat__message-text', 'Text during upload')
+    await page.waitForFunction(() => !document.querySelector('[data-uploading]'))
+    assert(events.some(([event, data]) => event === 'message:send' && data.payload?.mime === 'image/gif'))
+    await page.locator('#sticker-btn').click(); await visible(page, '.sticker-tile img')
+    await page.locator('.sticker-grid[aria-label="My stickers"]').getByRole('button', { name: 'My sticker', exact: true }).click()
+    await visible(page, '[data-uploading][data-sticker]'); await page.waitForFunction(() => !document.querySelector('[data-uploading]'))
+    const send = events.findLast(([event, data]) => event === 'message:send' && data.payload?.mime === 'image/webp')?.[1]
+    assert(send); assert.equal(send.payload.width, 512); assert.equal(send.payload.height, 512); assert(send.payload.size <= 100_000); assert(!('localUrl' in send.payload))
+    // Upload failure stays visible in the chat and is locally discardable.
+    failUpload = true
+    await page.locator('#sticker-btn').click(); await visible(page, '.sticker-tile img')
+    await page.locator('.sticker-grid[aria-label="My stickers"]').getByRole('button', { name: 'My sticker', exact: true }).click()
+    await waitText(page, '.toast', 'Upload failed')
+    await page.locator('.toast').filter({ hasText: 'Upload failed' }).last().click()
+    await page.waitForFunction(() => ![...document.querySelectorAll('.toast')].some((el) => el.textContent.includes('Upload failed')))
+    assert.equal(await page.locator('.media-picker').count(), 0)
+    await page.locator('.chat__message--failed .chat__discard').click()
+    assert.equal(await page.locator('.chat__message--failed').count(), 0)
+    failUpload = false; uploadDelay = 0
+    // A sticker reply keeps the ordinary quote bubble.
+    await row(page, 3004).locator('img').click({ button: 'right' })
+    await page.locator('#selection-reply').click()
+    uploadDelay = 700
+    await page.locator('#sticker-btn').click(); await visible(page, '.sticker-tile img')
+    await page.locator('.sticker-grid[aria-label="Cats"]').getByRole('button', { name: 'Happy cat', exact: true }).click()
+    await visible(page, '[data-uploading] .chat__quote')
+    assert.equal(await page.locator('[data-uploading][data-sticker]').count(), 0)
+    await page.waitForFunction(() => !document.querySelector('[data-uploading]'))
+    assert(events.some(([event, data]) => event === 'message:send' && data.payload?.mime === 'image/webp' && data.replyTo === id(3004)))
+    // A real MediaRecorder over the browser's fake microphone exercises the recording/send path.
+    await page.locator('#mic-btn').click()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('#composer')?.dataset.recording === 'true')
+    await page.waitForTimeout(1200)
+    await page.getByRole('button', { name: 'Stop recording and send', exact: true }).click()
+    await visible(page, '[data-uploading][data-type="voice"]')
+    assert(await page.locator('[data-uploading] .voice-bubble__time').textContent())
+    await page.locator('#message-input').fill('Text during voice upload'); await page.locator('#send-btn').click()
+    await waitText(page, '.chat__message-text', 'Text during voice upload')
+    await page.waitForFunction(() => !document.querySelector('[data-uploading]'))
+    assert(events.some(([event, data]) => event === 'message:send' && data.type === 'voice' && data.payload.duration >= 1))
+    uploadDelay = 0
+    await page.locator('#menu-btn').click(); await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.getByRole('button', { name: 'Choose photo', exact: true }).click()
+    await page.locator('.profile-settings input').setInputFiles(new URL('../public/love.jpg', import.meta.url).pathname.replace(/^\/(\w:)/, '$1'))
+    await page.waitForFunction(() => document.querySelector('#nav-avatar img')?.src.startsWith('blob:'))
+    assert((await page.locator('.call-screen__avatar img').getAttribute('src')).startsWith('blob:'), 'private photo also reaches call screen')
+    await page.getByRole('button', { name: 'Upload photo', exact: true }).click()
+    await page.locator('.profile-settings input').setInputFiles(new URL('../public/love.jpg', import.meta.url).pathname.replace(/^\/(\w:)/, '$1'))
+    await page.waitForFunction(() => document.querySelector('.profile-settings__avatar img')?.complete)
+    await page.getByRole('button', { name: 'Remove photo', exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector('.profile-settings__avatar img'))
+    await page.getByRole('button', { name: 'Remove private photo', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('#nav-avatar img')?.getAttribute('src') === '/stickers/packs/Shapes/01_circle.webp')
+    await page.getByRole('button', { name: 'Done', exact: true }).click()
+    await row(page, 3003).locator('img').click({ button: 'right' }); await page.locator('#selection-delete').click()
+    await page.locator('[data-delete]').click(); await waitText(page, `.chat__message[data-id="${id(3003)}"]`, 'This message was deleted')
+    assert.equal(await row(page, 3003).locator('.chat__meta').evaluate((el) => getComputedStyle(el).position), 'static', 'deleted media keeps the ordinary tombstone footer')
+    const cleared = await page.evaluate(async () => {
+      const lib = await import('/src/features/stickerLibrary.ts'), list = await lib.loadStickers('me'), stamp = lib.mediaEpoch()
+      await (await import('/src/services/authService.ts')).signOut({ skipPush: true })
+      let rejected = false; try { await lib.saveSticker(list[0], stamp) } catch { rejected = true }
+      const reseeded = await lib.loadStickers('me'), other = await lib.loadStickers('different-account')
+      return rejected && reseeded.length === 91 && other.length === 91 && !reseeded.some((s) => s.favourite || s.used || !s.pack)
+    })
+    assert(cleared, 'clearing removes personal data and rejects late saves')
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'media layout has no horizontal overflow')
+  }
+}
 try {
   for (const engine of browsers) {
-    const browser = await (engine === 'edge' || engine === 'chrome' ? playwright.chromium : playwright[engine]).launch(engine === 'edge' ? { channel: 'msedge' } : engine === 'chrome' ? { channel: 'chrome' } : {})
+    const browser = await (engine === 'edge' || engine === 'chrome' ? playwright.chromium : playwright[engine]).launch({ ...(engine === 'edge' ? { channel: 'msedge' } : engine === 'chrome' ? { channel: 'chrome' } : {}), ...(engine !== 'firefox' ? { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] } : {}) })
     try {
       for (const width of [1280, 360]) {
         reset()
-        const context = await browser.newContext({ viewport: { width, height: 820 }, hasTouch: width === 360, ...(engine !== 'firefox' ? { isMobile: width === 360 } : {}), serviceWorkers: 'block' })
+        const context = await browser.newContext({ viewport: { width, height: 820 }, permissions: ['microphone'], hasTouch: width === 360, ...(engine !== 'firefox' ? { isMobile: width === 360 } : {}), serviceWorkers: 'block' })
         await context.addInitScript(() => {
           localStorage.setItem('ageVerified', '1'); localStorage.setItem('termsAcceptedAt', 'fixture')
           if (!localStorage.getItem('notificationReminderAt')) localStorage.setItem('notificationReminderAt', String(Date.now()))
@@ -151,7 +324,12 @@ try {
         page.setDefaultTimeout(10_000)
         const errors = []
         page.on('pageerror', (error) => errors.push(error.message))
-        await page.route('**/*', (route) => route.request().url().startsWith(origin) || route.request().url().startsWith(apiOrigin) ? route.continue() : route.abort())
+        await page.route('**/*', (route) => route.request().url() === 'https://media.giphy.com/fixture.gif' ? route.fulfill({ contentType: 'image/gif', body: Buffer.from('R0lGODlhAgABAIAAAAAAAP///yH5BAEAAAAALAAAAAACAAEAAAICRAEAOw==', 'base64') }) : route.request().url().startsWith(origin) || route.request().url().startsWith(apiOrigin) ? route.continue() : route.abort())
+        if (process.env.PARITY_MEDIA_ONLY) {
+          await page.goto(origin); await mediaChecks(page, width, engine)
+          assert.deepEqual(errors, [], 'media has no page exceptions')
+          await context.close(); console.log(`PASS media ${engine} ${width}px both themes`); continue
+        }
         await page.goto(origin)
         await waitText(page, '#nav-status', 'in chat')
         await visible(page, '#pin-banner')
@@ -361,6 +539,8 @@ try {
         await page.getByRole('textbox', { name: 'Nickname', exact: true }).fill('New nickname')
         await page.getByRole('button', { name: 'Save', exact: true }).click()
         await waitText(page, '#nav-title', 'New nickname')
+        await mediaChecks(page, width, engine)
+        assert.deepEqual(errors, [], 'media has no page exceptions')
         await context.close()
         console.log(`PASS ${engine} ${width}px: contract interactions, failure drafts, layouts, both themes/all wallpapers`)
       }

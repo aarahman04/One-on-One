@@ -1,6 +1,7 @@
 // Lightweight transient toast — auto-dismisses, no focus trap or decision
 // required. For brief status feedback (e.g. "Notifications turned on").
 // A real choice (report a message, write a letter) still uses Modal.ts.
+import { animateOutAndRemove } from '../utils/animateOut'
 let stack: HTMLDivElement | null = null
 
 function ensureStack(): HTMLDivElement {
@@ -29,7 +30,7 @@ export function showToast(message: string, duration = 3200): void {
     if (dismissed) return
     dismissed = true
     toast.classList.remove('toast--visible')
-    toast.addEventListener('transitionend', () => toast.remove(), { once: true })
+    animateOutAndRemove(toast, 'toast--closing', 240)
   }
   toast.addEventListener('click', dismiss)
   setTimeout(dismiss, duration)

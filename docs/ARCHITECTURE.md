@@ -688,3 +688,10 @@ Postgres + Auth + Storage")]
 
 The native app keeps the same applicationId and upload key so it ships as an update to the existing Play listing. The Capacitor app and `android/` are deleted from this repo only after that (plan step W6).
 
+## Android 2.0.4 web media parity (2026-10-14)
+
+`mediaPicker.ts` uses contract §9 GIF search/preparation; stickers remain ordinary `image` attachments. `stickerLibrary.ts` stores account-keyed records/blobs and connection-scoped private partner photos in IndexedDB, seeds the six built-in packs once, and rejects saves after its sign-out generation changes. Central `authService.signOut` clears local media before credentials; both account-deletion callers already use that path.
+
+`stickerMaker.ts` decodes/orients photos to at most 1024px, runs the locally served MediaPipe/DeepLab model, applies `stickerMath.ts` crop/placement and exports 512px alpha WebP at quality 1.0→0.8 with a 100000-byte ceiling. Static runtime/model files are same-origin; CSP adds only `wasm-unsafe-eval`, and hosting rewrites exclude their directories. Model and artwork attribution ship beside the assets.
+
+`ChatPage` shows upload-only rows before media preparation, then hands documented payload fields to its existing optimistic/retry queue. Object URLs stay client-only; disposed/discarded uploads cannot send later. Exact 512×512 WebP without a reply renders bare; all other images use a thin frame with the footer inside the image wrapper. `profileGifApi.ts` uses the documented avatar endpoints; a private browser photo overrides the signed real photo in header/call UI. Browser appearance stores text size. [Verification and limitations](WEB-ANDROID-PARITY-2026-10-14.md).

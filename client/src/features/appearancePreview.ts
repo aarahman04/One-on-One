@@ -11,10 +11,11 @@ import { openPanel } from '../state/activePanel'
 
 interface Appearance {
   theme: 'light' | 'dark'
+  textSize: 'S' | 'M' | 'L' | 'XL'
 }
 
 const KEY = 'appearancePreview'
-const DEFAULT: Appearance = { theme: 'dark' }
+const DEFAULT: Appearance = { theme: 'dark', textSize: 'M' }
 
 function read(): Appearance {
   try {
@@ -40,6 +41,7 @@ export function applyAppearance(chat: HTMLElement, wallpaper: string, _style: st
   // Legacy shared 'line' values render as bubbles without writing to the DB.
   chat.classList.add('chat--bubbles')
   chat.dataset.theme = read().theme
+  chat.style.setProperty('--chat-text-scale', String(({ S: .9, M: 1, L: 1.15, XL: 1.3 })[read().textSize] ?? 1))
 }
 
 // The one open appearance panel's teardown (panel + its outside-click
@@ -82,6 +84,8 @@ export function openAppearance(
       <button class="appearance__opt" data-value="light">Light</button>
       <button class="appearance__opt" data-value="dark">Dark</button>
     </div>
+    <div class="menu__divider"></div><div class="menu__group-label">CHAT TEXT SIZE</div>
+    <div class="appearance__row" data-group="textSize">${['S', 'M', 'L', 'XL'].map((s) => `<button class="appearance__opt" data-value="${s}">${s}</button>`).join('')}</div>
   `
   anchor.appendChild(panel)
 
@@ -97,7 +101,7 @@ export function openAppearance(
           ? currentWallpaper === btn.dataset.value
           : group === 'style'
             ? currentStyle === btn.dataset.value
-            : theme === btn.dataset.value
+            : (group === 'textSize' ? read().textSize : theme) === btn.dataset.value
       btn.classList.toggle('appearance__opt--active', active)
     }
   }
@@ -114,7 +118,7 @@ export function openAppearance(
       mark()
       return
     }
-    write({ theme: value as Appearance['theme'] })
+    write({ ...read(), [group === 'textSize' ? 'textSize' : 'theme']: value })
     applyAppearance(chat, currentWallpaper, currentStyle)
     mark()
   })

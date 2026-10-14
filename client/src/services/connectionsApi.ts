@@ -30,6 +30,8 @@ export interface CurrentConnection {
   pinnedMessageId: string | null
   pinnedBy: string | null
   pinnedAt: string | null
+  myAvatarId: string | null
+  otherAvatarId: string | null
 }
 
 export interface LeaveResult {

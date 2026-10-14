@@ -71,6 +71,13 @@ import { linkifyInto, messageLinks, safeWebUrl } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
 import { canDelete, canEdit, DELETED_MESSAGE, EDIT_WINDOW_MS, matchRanges, notificationReminderDue, previewImageUrl } from '../utils/chatRules'
 import { openEmojiPicker } from '../features/emojiPicker'
+import { isSticker, metaSide } from '../utils/stickerMath'
+import { openMediaPicker } from '../features/mediaPicker'
+import { stickerBlob } from '../features/stickerMaker'
+import { privatePhoto } from '../features/stickerLibrary'
+import { openProfileSettings, renderAvatar } from '../features/profileSettings'
+import { getAvatars, prepareGif } from '../services/profileGifApi'
+import { CAMERA_ICON, STICKER_ICON } from '../features/chatIcons'
 import { ALARM_ICON, CHECK_ICON, CHOICE_ICON, CLOSE_ICON, COPY_ICON, COUNTDOWN_ICON, DELETE_ICON, EDIT_ICON, FILE_ICON, LETTER_ICON, LOCATION_ICON, LOCK_ICON, MORE_ICON, PIN_ICON, PLUS_ICON, REACT_ICON, REPLY_ICON } from '../features/chatIcons'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
@@ -465,6 +472,21 @@ export const ChatPage: Page = (root, go) => {
     const showNotice = (message: string): void => {
       showToast(message)
     }
+    let peerPhoto: string | null = null, privateUrl: string | null = null
+    let avatarIds = `${current.myAvatarId}:${current.otherAvatarId}`, avatarsLoadedAt = 0, avatarSequence = 0
+    const loadPhotos = async (): Promise<void> => {
+      const sequence = ++avatarSequence
+      const [avatars, photo] = await Promise.all([getAvatars().catch(() => ({ mine: null, other: null })), privatePhoto(myUserId, connectionId)])
+      if (disposed || sequence !== avatarSequence) return
+      if (privateUrl) URL.revokeObjectURL(privateUrl)
+      privateUrl = photo ? URL.createObjectURL(photo) : null
+      peerPhoto = privateUrl ?? avatars.other
+      renderAvatar(root.querySelector('#nav-avatar')!, peerPhoto, otherName)
+      callBar?.setPhoto(peerPhoto)
+      avatarsLoadedAt = Date.now()
+    }
+    void loadPhotos().catch(() => {})
+    overlays.add(() => { if (privateUrl) URL.revokeObjectURL(privateUrl) })
 
     const toggleNotifications = async (): Promise<void> => {
       try {
@@ -506,6 +528,10 @@ export const ChatPage: Page = (root, go) => {
       () => openDeleteAccountDialog(),
       getNotificationsLabel,
       () => openReportModal({ person: true }),
+      () => {
+        const dispose = openProfileSettings(myUserId, connectionId, () => void loadPhotos().catch(() => {}))
+        overlays.add(dispose)
+      },
     )
 
     // --- Presence: the other side marks read every ~4s while the chat is on
@@ -525,7 +551,7 @@ export const ChatPage: Page = (root, go) => {
         navStatus.classList.remove('chat__nav-status--away')
         return
       }
-      navStatus.textContent = otherTyping ? 'typing…' : presenceActive ? 'in chat' : 'away'
+      navStatus.textContent = otherTyping ? 'typing…' : presenceActive ? 'in chat' : otherLastRead ? `Last seen ${formatMessageTime(new Date(otherLastRead))}` : 'away'
       navStatus.classList.remove('chat__nav-status--connecting')
       navStatus.classList.toggle('chat__nav-status--away', !presenceActive && !otherTyping)
     }
@@ -789,7 +815,10 @@ export const ChatPage: Page = (root, go) => {
       label.textContent = p.label ?? message.content
       const ticker = document.createElement('span')
       ticker.className = 'countdown-card__ticker'
-      info.append(label, ticker)
+      const target = document.createElement('span')
+      target.className = 'countdown-card__target'
+      if (p.targetIso) target.textContent = formatFullTimestamp(new Date(p.targetIso)).replace('\n', ' · ')
+      info.append(label, target, ticker)
       card.append(icon, info)
 
       const targetIso = p.targetIso
@@ -1210,7 +1239,7 @@ export const ChatPage: Page = (root, go) => {
 
       const img = document.createElement('img')
       img.className = 'image-bubble__img'
-      img.alt = 'Photo'
+      img.alt = isSticker(message) ? 'Sticker' : 'Photo'
       img.loading = 'lazy'
       if (p.width && p.height) {
         // Reserve the real final size up front — no layout jump, no blank box.
@@ -1263,6 +1292,7 @@ export const ChatPage: Page = (root, go) => {
       }
 
       img.addEventListener('click', (e) => {
+        if (isSticker(message)) return
         e.stopPropagation()
         if (resolvedUrl) openImageViewer(resolvedUrl, `photo.${ext}`)
       })
@@ -1520,6 +1550,8 @@ export const ChatPage: Page = (root, go) => {
       if (message.deletedAt) row.dataset.deleted = '1'
       if (message.type === 'image' && message.content) row.dataset.caption = '1'
       if (message.id) row.dataset.id = message.id
+      row.dataset.metaSide = metaSide(isMine)
+      if (isSticker(message)) row.dataset.sticker = '1'
 
       const body = document.createElement('div')
       body.className = 'chat__message-body'
@@ -1537,6 +1569,7 @@ export const ChatPage: Page = (root, go) => {
       // Time and ticks share the bubble's bottom-right footer.
       const meta = document.createElement('div')
       meta.className = 'chat__meta'
+      meta.addEventListener('click', (e) => { e.stopPropagation(); row.classList.toggle('chat__message--expanded') })
 
       const bubbleTime = document.createElement('div')
       bubbleTime.className = 'chat__bubble-time'
@@ -1607,9 +1640,21 @@ export const ChatPage: Page = (root, go) => {
       // browser's native text reflow wraps around it per-line for free.
       // Every other type keeps the footer as its own row after the content.
       if (message.type === 'text' || message.deletedAt) text.append(meta)
+      else if (message.type === 'image' && !isSticker(message)) content.querySelector('.image-bubble__media')!.append(meta)
       else body.append(meta)
       body.append(fullTime)
       row.append(body)
+      if (isMine && pending) {
+        const discard = document.createElement('button')
+        discard.type = 'button'; discard.className = 'chat__discard'; discard.textContent = 'Delete locally'
+        discard.addEventListener('click', (e) => {
+          e.stopPropagation()
+          discardPending(row)
+          const own = myRows.indexOf(row); if (own !== -1) myRows.splice(own, 1)
+          row.remove()
+        })
+        row.append(discard)
+      }
       if (!pending && !message.deletedAt && message.type !== 'call') addHoverActions(row)
       // Tapping content reveals the full timestamp.
       content.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
@@ -1745,7 +1790,11 @@ export const ChatPage: Page = (root, go) => {
       receipt.classList.toggle('chat__receipt--delivered', delivered)
       receipt.classList.toggle('chat__receipt--seen', seen)
       const ticks = receipt.querySelector<HTMLElement>('.chat__receipt-ticks')
-      if (ticks) ticks.innerHTML = delivered || seen ? TICK_DOUBLE : TICK_SINGLE
+      const state = seen ? 'seen' : delivered ? 'delivered' : acked ? 'sent' : 'pending'
+      if (ticks && ticks.dataset.state !== state) {
+        ticks.dataset.state = state; ticks.innerHTML = delivered || seen ? TICK_DOUBLE : TICK_SINGLE
+        if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) ticks.animate([{ opacity: .2, transform: 'scale(.7)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 180 })
+      }
     }
 
     const refreshReceipts = (): void => {
@@ -1981,12 +2030,19 @@ export const ChatPage: Page = (root, go) => {
 
     // --- Outgoing (optimistic) --------------------------------------------
     const pending: Pending[] = []
+    const discardPending = (row: HTMLElement): void => {
+      const index = pending.findIndex((entry) => entry.row === row)
+      if (index !== -1) pending.splice(index, 1)
+    }
 
     const trySend = (entry: Pending): Promise<void> => {
       if (!transport) return Promise.resolve() // stays queued; flushed on (re)connect
       entry.sent = true
+      entry.row.dataset.inflight = '1'
       entry.row.classList.remove('chat__message--failed')
-      return transport.sendMessage(entry.content, entry.type, entry.payload, entry.replyTo, entry.tempId).then(
+      const p = entry.payload as ImagePayload
+      const payload = entry.type === 'image' ? { path: p.path, mime: p.mime, size: p.size, width: p.width, height: p.height } : entry.payload
+      return transport.sendMessage(entry.content, entry.type, payload, entry.replyTo, entry.tempId).then(
         (saved) => {
           // The ack carries the saved message (the original one on a deduped
           // resend), so the optimistic row reconciles even if the echo was lost.
@@ -1994,6 +2050,7 @@ export const ChatPage: Page = (root, go) => {
         },
         () => {
           entry.sent = false
+          delete entry.row.dataset.inflight
           entry.row.classList.add('chat__message--failed')
         },
       )
@@ -2045,6 +2102,10 @@ export const ChatPage: Page = (root, go) => {
       sendBtn.disabled = editSending
       micBtn.disabled = !!editTarget
       attachBtn.disabled = !!editTarget
+      root.querySelector<HTMLButtonElement>('#sticker-btn')!.disabled = !!editTarget
+      root.querySelector<HTMLButtonElement>('#camera-btn')!.disabled = !!editTarget
+      sendBtn.inert = !hasText; micBtn.inert = hasText
+      sendBtn.setAttribute('aria-hidden', String(!hasText)); micBtn.setAttribute('aria-hidden', String(hasText))
       sendBtn.classList.toggle('chat__input-bar-btn--hidden', !hasText)
       micBtn.classList.toggle('chat__input-bar-btn--hidden', hasText)
     }
@@ -2082,6 +2143,42 @@ export const ChatPage: Page = (root, go) => {
         alarmController?.start({ silent: true }) // you don't need alerting to your own alarm
       }
     }
+
+    const uploadMedia = async (type: 'image' | 'voice', preview: unknown, upload: () => Promise<unknown>, replyTo: string | null): Promise<void> => {
+      const row = appendMessage({ senderId: myUserId, content: '', createdAt: new Date().toISOString(), type, payload: preview, replyTo }, true, true)
+      row.dataset.uploading = '1'
+      const status = document.createElement('span'); status.className = 'chat__upload-status'; status.textContent = 'Sending…'; status.setAttribute('role', 'status')
+      row.querySelector('.chat__message-body')!.append(status)
+      try {
+        const payload = await upload()
+        if (disposed || !row.isConnected) return
+        const own = myRows.indexOf(row); if (own !== -1) myRows.splice(own, 1)
+        row.remove()
+        sendMessage('', type, payload, replyTo)
+      } catch (err) {
+        if (disposed || !row.isConnected) return
+        delete row.dataset.uploading; row.classList.add('chat__message--failed'); status.textContent = 'Not sent'
+        showNotice(err instanceof Error ? err.message : 'Could not send media. Try again.')
+      }
+    }
+    root.querySelector('#sticker-btn')!.addEventListener('click', () => {
+      const dispose = openMediaPicker({ owner: myUserId,
+        onSticker: (sticker) => {
+          const reply = replyTarget?.id ?? null; cancelReply()
+          const localUrl = URL.createObjectURL(sticker.blob); imageObjectUrls.add(localUrl)
+          void uploadMedia('image', { mime: 'image/webp', width: 512, height: 512, localUrl }, async () => {
+            const blob = await stickerBlob(sticker.blob), uploaded = await uploadAttachment(connectionId, 'image', blob)
+            if (uploaded.mime !== 'image/webp' || uploaded.size > 100_000 || !uploaded.path.startsWith(`${connectionId}/`)) throw new Error('Invalid sticker upload response.')
+            return { ...uploaded, width: 512, height: 512, localUrl }
+          }, reply)
+        },
+        onGif: (gif) => {
+          const reply = replyTarget?.id ?? null; cancelReply()
+          void uploadMedia('image', { mime: 'image/gif', width: gif.width, height: gif.height, localUrl: gif.previewUrl }, () => prepareGif(connectionId, gif.id), reply)
+        },
+      })
+      overlays.add(dispose)
+    })
 
     // Acknowledge (recipient) or cancel (raiser) a live alarm. Not optimistic
     // and not queued: the server must record it or the other side keeps
@@ -2223,6 +2320,8 @@ export const ChatPage: Page = (root, go) => {
       })
     }
     attachBtn.addEventListener('click', openAttachMenu)
+    root.querySelector('#camera-btn')!.addEventListener('click', () => root.querySelector<HTMLInputElement>('#camera-input')!.click())
+    root.querySelector<HTMLInputElement>('#camera-input')!.addEventListener('change', (e) => { const pick = e.target as HTMLInputElement; const file = pick.files?.[0]; pick.value = ''; if (file) void sendImage(file) })
 
     // Object URLs created for your own just-sent photos (see sendImage) live
     // for the rest of the session so their bubble keeps rendering from the
@@ -2327,6 +2426,7 @@ export const ChatPage: Page = (root, go) => {
         // flight) would let a poll/reconnect's flushPending() fire trySend
         // with no path yet and send a broken image message.
         const uploaded = await uploadPromise
+        if (disposed || !row.isConnected) return
         const entry: Pending = {
           tempId: crypto.randomUUID(),
           content: '',
@@ -2386,9 +2486,6 @@ export const ChatPage: Page = (root, go) => {
     const MIC_ICON =
       '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>'
     const STOP_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
-    const SPINNER_ICON =
-      '<svg class="chat__icon-spinner" width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="40 56.5"/></svg>'
-
     let recorderHandle: VoiceRecorderHandle | null = null
     let recordingTimer: ReturnType<typeof setInterval> | null = null
     let recordingStartedAt = 0
@@ -2403,7 +2500,8 @@ export const ChatPage: Page = (root, go) => {
     // call, recording or not.
     const resetRecordingUI = (): void => {
       isRecording = false
-      recordingBar.hidden = true
+      composer.dataset.recording = 'false'
+      recordingBar.inert = true; recordingBar.setAttribute('aria-hidden', 'true')
       recordingTime.textContent = formatDuration(0)
       input.hidden = false
       attachBtn.hidden = false
@@ -2413,17 +2511,6 @@ export const ChatPage: Page = (root, go) => {
       micBtn.setAttribute('aria-label', 'Record voice note')
     }
     resetRecordingUI()
-
-    // Shown on the mic button itself while a finished recording uploads in
-    // the background (the composer is already back to idle by then — see
-    // finishRecording). Disabling the button blocks a second tap from
-    // starting a new recording mid-upload.
-    const setMicLoading = (loading: boolean): void => {
-      micBtn.disabled = loading
-      micBtn.innerHTML = loading ? SPINNER_ICON : MIC_ICON
-      micBtn.title = loading ? 'Sending…' : 'Record a voice note'
-      micBtn.setAttribute('aria-label', loading ? 'Sending voice note' : 'Record voice note')
-    }
 
     const beginRecording = async (): Promise<void> => {
       if (isRecording) return
@@ -2443,7 +2530,8 @@ export const ChatPage: Page = (root, go) => {
       isRecording = true
       recordingStartedAt = Date.now()
       recordingTime.textContent = formatDuration(0)
-      recordingBar.hidden = false
+      composer.dataset.recording = 'true'
+      recordingBar.inert = false; recordingBar.setAttribute('aria-hidden', 'false')
       input.hidden = true
       attachBtn.hidden = true
       micBtn.innerHTML = STOP_ICON
@@ -2467,13 +2555,10 @@ export const ChatPage: Page = (root, go) => {
       try {
         const { blob, durationSec } = await handle.stop()
         if (durationSec < MIN_RECORDING_SEC) return // accidental tap — drop silently
-        setMicLoading(true)
-        const uploaded = await uploadAttachment(connectionId, 'voice', blob)
-        sendMessage('', 'voice', { ...uploaded, duration: durationSec })
+        const reply = replyTarget?.id ?? null; cancelReply()
+        await uploadMedia('voice', { duration: durationSec }, async () => ({ ...await uploadAttachment(connectionId, 'voice', blob), duration: durationSec }), reply)
       } catch {
         showNotice('Could not send that voice note — try again.')
-      } finally {
-        setMicLoading(false)
       }
     }
 
@@ -3222,6 +3307,7 @@ export const ChatPage: Page = (root, go) => {
         const ownIndex = myRows.indexOf(oldRow)
         if (ownIndex !== -1) myRows.splice(ownIndex, 1)
         oldRow.replaceWith(row)
+        if (message.deletedAt && !previous?.deletedAt && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) row.animate([{ opacity: .1 }, { opacity: 1 }], { duration: 200 })
         registerMessageRow(message, row)
         updateGroup(row)
         updateGroup(row.nextElementSibling)
@@ -3257,6 +3343,7 @@ export const ChatPage: Page = (root, go) => {
           resolvedTempIds.add(message.tempId)
           noteServerTime(message.createdAt)
           entry.row.classList.remove('chat__message--pending', 'chat__message--failed')
+          entry.row.querySelector('.chat__discard')?.remove()
           const oldAt = entry.row.dataset.at
           entry.row.dataset.at = message.createdAt
           relocateIfDayChanged(entry.row, oldAt, message.createdAt)
@@ -3408,7 +3495,7 @@ export const ChatPage: Page = (root, go) => {
       markReadNow()
       // Mount once — ensureConnected can call attachTransport again on a
       // later successful reconnect after an earlier attempt failed.
-      if (!callBar) callBar = mountCallBar(nav, getCallTransport(), otherName)
+      if (!callBar) { callBar = mountCallBar(nav, getCallTransport(), otherName); callBar.setPhoto(peerPhoto) }
     }
     const ensureConnected = async (): Promise<void> => {
       if (transport || connecting || disposed) return
@@ -3460,6 +3547,8 @@ export const ChatPage: Page = (root, go) => {
         return
       }
       reconcileLeave(next)
+      const nextAvatarIds = `${next.myAvatarId}:${next.otherAvatarId}`
+      if (nextAvatarIds !== avatarIds || Date.now() - avatarsLoadedAt > 55 * 60_000) { avatarIds = nextAvatarIds; void loadPhotos().catch(() => {}) }
       renderBanner(next)
       if (Date.now() - lastPinEvent >= 10_000) {
         pinState = { messageId: next.pinnedMessageId ?? null, pinnedBy: next.pinnedBy ?? null, pinnedAt: next.pinnedAt ?? null }
@@ -3597,16 +3686,19 @@ function renderChat(root: HTMLElement, displayName: string): void {
       </div></div>
       <form class="chat__input-bar" id="composer">
         <div class="chat__input-pill">
-        <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5L13 2a4 4 0 0 1 6 6l-9 9a2 2 0 0 1-3-3l8-8"/></svg></button>
+        <button type="button" class="chat__icon-btn" id="sticker-btn" title="Stickers and GIFs" aria-label="Stickers and GIFs">${STICKER_ICON}</button>
         <textarea id="message-input" aria-label="Message" placeholder="Message" maxlength="4000" autocomplete="off" enterkeyhint="send" rows="1"></textarea>
-        <div class="chat__recording-bar" id="recording-bar" hidden>
+        <div class="chat__recording-bar" id="recording-bar" aria-hidden="true" inert>
           <span class="chat__recording-dot"></span>
           <span class="chat__recording-time" id="recording-time">0:00</span>
           <button type="button" class="chat__recording-cancel" id="recording-cancel">Cancel</button>
         </div>
+        <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5L13 2a4 4 0 0 1 6 6l-9 9a2 2 0 0 1-3-3l8-8"/></svg></button>
+        <button type="button" class="chat__icon-btn" id="camera-btn" title="Camera" aria-label="Camera">${CAMERA_ICON}</button>
         </div>
         <button type="button" class="chat__icon-btn" id="mic-btn"></button>
         <button class="primary chat__send-btn" id="send-btn" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg></button>
+        <input type="file" id="camera-input" accept="image/jpeg,image/png,image/webp" capture="environment" hidden />
         <input type="file" id="attach-image-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden />
         <input type="file" id="attach-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden />
       </form>

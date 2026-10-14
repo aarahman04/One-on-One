@@ -7,6 +7,7 @@ import { CallSession } from './session'
 import * as wakeLock from './wakeLock'
 import { startCallService, stopCallService } from '../../services/callForegroundService'
 import { pushBackHandler } from '../../state/backHandlers'
+import { renderAvatar } from '../profileSettings'
 import {
   CALL_CAM_ICON,
   CALL_CAM_OFF_ICON,
@@ -23,6 +24,7 @@ import {
 type CallState = 'idle' | 'ringing-out' | 'ringing-in' | 'in-call' | 'reconnecting'
 
 export interface CallBarHandle {
+  setPhoto(url: string | null): void
   dispose(): void
   // Start an outgoing call — same entry points as the header buttons, exposed
   // so a "tap to call back" on a missed-call row can reuse them (audio vs
@@ -553,6 +555,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   document.addEventListener('visibilitychange', visibilityHandler)
 
   return {
+    setPhoto: (url) => renderAvatar(avatarEl, url, peerName),
     startAudioCall,
     startVideoCall,
     dispose: () => {
