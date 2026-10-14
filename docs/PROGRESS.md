@@ -2856,3 +2856,11 @@ Notes/deviations: Google Cloud OAuth + Railway/Vercel setup deferred to Stage B 
 Status: done
 What shipped: Repo directory structure (client/server/shared/database/docs), merged user's CLAUDE.md template with project-specific rules, created this progress log and docs/ARCHITECTURE.md.
 Notes/deviations: none.
+
+## Profile photo + GIPHY GIFs (2026-10-14, branch `feat/profile-photo-gif`, not committed)
+- Migration `037_user_avatar.sql`: `users.avatar_path`. Avatars in the private `attachments` bucket under `avatars/<userId>/`;
+  magic-byte checked jpeg/png/webp ≤2 MiB; signed URLs only for you and your live partner; removed on account deletion.
+- `/connections/current` adds `myAvatarId` / `otherAvatarId` (live only; null if the migration isn't applied).
+- GIPHY proxy (`GIPHY_API_KEY`): search/trending, rating pg, 10-min cache; sending fetches the GIF server-side from
+  `*.giphy.com` only (GIF magic, ≤10 MiB) and returns a ready image payload. Contract §9. Tests: `test/avatarGif.test.ts`.
+- Clients: Android implemented; web client not yet (fields are additive, nothing breaks).

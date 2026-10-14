@@ -3,6 +3,7 @@ import { generateConnectionCode } from '../utils/connectionCode.js'
 import { UNIQUE_VIOLATION } from '../utils/pgErrors.js'
 import { getLiveConnectionForUser } from './connectionAccess.js'
 import { deleteConnectionAttachments } from './attachmentService.js'
+import { deleteAvatarFiles } from './avatarService.js'
 
 export interface AppUser {
   id: string
@@ -84,6 +85,11 @@ export async function deleteAccount(user: AppUser): Promise<void> {
     if (live) await deleteConnectionAttachments(live.id)
   } catch (err) {
     console.error('deleteAccount: attachment cleanup failed (continuing)', err)
+  }
+  try {
+    await deleteAvatarFiles(user.id)
+  } catch (err) {
+    console.error('deleteAccount: avatar cleanup failed (continuing)', err)
   }
 
   const { error } = await supabaseAdmin.auth.admin.deleteUser(user.authUserId)

@@ -281,3 +281,18 @@ data: { urgent: "true", type: "alarm", ack: "true|false", cancelled: "true|false
 - `CurrentConnection` additionally carries `pinnedMessageId|null, pinnedBy|null, pinnedAt|null`.
 - History returns deleted messages with `content: ""`, `payload: null`, `deletedAt` set (so replies can say "deleted").
 - The `after` resync cursor does not see edits/deletes (created_at doesn't move): clients refresh the newest page on reconnect.
+
+## 9. Profile photo and GIPHY GIFs (migration 037, 2026-10-14)
+- Migration `037_user_avatar.sql` adds `users.avatar_path`. Run it before using the avatar endpoints; until then `/connections/current` returns null avatar ids (no 500).
+- `CurrentConnection` additionally carries `myAvatarId|null, otherAvatarId|null`: opaque ids of the current photos, non-null only for a live (`active`/`leave_pending`) connection. A new id means "refetch".
+
+| Route | Body | Success | Errors |
+|---|---|---|---|
+| `PUT /api/me/avatar` | raw image, `Content-Type` `image/jpeg\|image/png\|image/webp`, ≤ 2 MiB, magic bytes must match | `200 {avatarId}`; replaces (and deletes) the previous file | 400 `unsupported image type` / `image exceeds size limit` / `empty upload`; strict limiter (10/min) |
+| `DELETE /api/me/avatar` | – | `204` | 401 |
+| `GET /api/me/avatars` | – | `200 {mine: url\|null, other: url\|null}` signed for 1 h, `Cache-Control: no-store`. `other` only for the member of the caller's live connection; never anyone else's. | 401 |
+| `GET /api/gifs?q=&offset=` | – | `200 {results: [{id, title, previewUrl, width, height}], next: number\|null}`. Empty `q` = trending. GIPHY, rating `pg`, 24 per page, cached 10 min. `previewUrl` is always an https `*.giphy.com` URL. | 409 `connection is not active`; 503 `gif search is not configured`; 502 `gif search failed`; 30/min |
+| `POST /api/connections/:id/gifs` | `{id}` (GIPHY id, `[A-Za-z0-9]{1,64}`) | `201 {path, mime: "image/gif", size, width, height}` (a ready `image` payload): the server fetched the GIF from GIPHY's media host and stored it as this connection's attachment. Send it as a normal `image` message (§4). | 400 `invalid gif id` / `gif is too large`; 403/409 membership; 404 `gif not found`; 30/min |
+
+- Avatar files live in the private `attachments` bucket under `avatars/<userId>/`; message payload paths must still start with `<connectionId>/`, so an avatar can never be referenced by a message. Account deletion removes them.
+- GIPHY attribution: clients show "Powered by GIPHY" in the GIF picker. Server env: `GIPHY_API_KEY`.

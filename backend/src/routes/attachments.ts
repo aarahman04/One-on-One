@@ -1,9 +1,11 @@
 import { Router, raw } from 'express'
 import { requireAuth } from '../middleware/requireAuth.js'
-import { strictLimiter } from '../middleware/rateLimit.js'
+import { previewLimiter, strictLimiter } from '../middleware/rateLimit.js'
 import { ConnectionError } from '../utils/connectionError.js'
 import { getConnectionForMember } from '../services/connectionAccess.js'
 import { isAttachmentKind, signAttachments, uploadAttachment } from '../services/attachmentService.js'
+import { getLiveConnectionForUser } from '../services/connectionAccess.js'
+import { attachGif, searchGifs } from '../services/gifService.js'
 
 export const attachmentsRouter = Router()
 
@@ -31,6 +33,20 @@ attachmentsRouter.post(
     res.status(201).json(result)
   },
 )
+
+// GIPHY search / trending (empty q). Only for someone with a live connection.
+attachmentsRouter.get('/gifs', previewLimiter, async (req, res) => {
+  if (!(await getLiveConnectionForUser(req.appUser!.id))) throw new ConnectionError(409, 'connection is not active')
+  res.set('Cache-Control', 'private, max-age=600')
+  res.json(await searchGifs(req.query.q, req.query.offset))
+})
+
+// Store GIPHY gif {id} as an image/gif attachment; the client then sends a normal image message with it.
+attachmentsRouter.post('/connections/:id/gifs', previewLimiter, async (req, res) => {
+  const connectionId = String(req.params.id)
+  await getConnectionForMember(connectionId, req.appUser!.id, { requireLive: true })
+  res.status(201).json(await attachGif(connectionId, req.body?.id))
+})
 
 // Private bucket — the client never gets a durable URL, only short-lived
 // signed ones it fetches (batched) right before rendering.

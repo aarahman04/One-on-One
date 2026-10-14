@@ -1,11 +1,12 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
-import { otherMemberId } from '../utils/connections.js'
+import { isLiveStatus, otherMemberId } from '../utils/connections.js'
 import { RAISE_EXCEPTION } from '../utils/pgErrors.js'
 import { getConnectionForMember, memberOrFilter } from './connectionAccess.js'
 import { ConnectionError } from '../utils/connectionError.js'
 import { deleteConnectionAttachments } from './attachmentService.js'
 import { forceEndCall } from './callService.js'
 import { addBlock, isBlockedBetween } from './blockService.js'
+import { avatarIds } from './avatarService.js'
 
 // Re-exported for the many call sites that import it from here.
 export { ConnectionError }
@@ -182,6 +183,9 @@ interface CurrentConnection {
   pinnedMessageId: string | null
   pinnedBy: string | null
   pinnedAt: string | null
+  // Opaque ids of the current profile photos (change on replace); null = none or not live.
+  myAvatarId: string | null
+  otherAvatarId: string | null
 }
 
 interface CurrentConnectionRow {
@@ -235,6 +239,8 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     otherConnectionCode = otherUser?.connection_code ?? ''
   }
 
+  const avatars = isLiveStatus(data.status) ? await avatarIds(userId, otherUserId) : { mine: null, other: null }
+
   return {
     id: data.id,
     status: data.status,
@@ -254,6 +260,8 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     pinnedMessageId: data.pinned_message_id ?? null,
     pinnedBy: data.pinned_by ?? null,
     pinnedAt: data.pinned_at ?? null,
+    myAvatarId: avatars.mine,
+    otherAvatarId: avatars.other,
   }
 }
 
