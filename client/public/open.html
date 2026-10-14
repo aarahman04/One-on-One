@@ -2,60 +2,42 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0d1117">
-  <meta name="description" content="Install One on One from Google Play.">
-  <title>Get One on One on Google Play</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Get One on One on Google Play.">
+  <title>One on One — Google Play</title>
   <style>
-    :root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
     *{box-sizing:border-box}
-    body{min-height:100vh;margin:0;background:radial-gradient(ellipse at 50% 12%,#19383c 0%,#0d1117 60%);color:#f3f6f7;display:grid;place-items:center;padding:24px}
-    main{width:min(100%,410px);text-align:center}
-    .mark{width:78px;height:78px;border-radius:22px;background:#143c3c;margin:0 auto 24px;display:grid;place-items:center;font-size:35px;font-weight:750;letter-spacing:-4px;color:#b0eecc}
-    h1{font-size:30px;line-height:1.15;margin:0 0 12px;letter-spacing:-1px}
-    p{color:#aebdc1;line-height:1.65;margin:0 0 26px}
-    a,button{display:block;width:100%;font:inherit;text-decoration:none;border-radius:14px;padding:16px 20px;font-weight:650;margin:12px 0;outline-offset:3px;cursor:pointer}
-    .primary{border:0;background:#b4edcd;color:#122620}
-    .secondary{border:1px solid #456366;color:#f3f6f7;background:#152226}
-    .tertiary{color:#aebdc1;font-weight:500;text-decoration:underline;text-underline-offset:3px;background:transparent;border:0}
-    .help{border:1px solid #365354;border-radius:14px;padding:18px;text-align:left;margin-top:24px;color:#b3c4c6;line-height:1.55}
-    .help strong{color:#edf6f4}
-    small{display:block;color:#89989d;margin-top:18px;line-height:1.6}
-    [hidden]{display:none!important}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#fff;color:#171717;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+    main{max-width:340px;width:100%;text-align:center}
+    h1{font-size:23px;line-height:1.3;font-weight:600;letter-spacing:-.5px;margin:0 0 12px}
+    p{margin:0 0 24px;color:#666;font-size:14px;line-height:1.6}
+    a{display:block;border-radius:9px;background:#171717;color:white;text-decoration:none;padding:13px 18px;font-size:14px;font-weight:600}
+    small{display:block;margin-top:17px;color:#777;font-size:12px;line-height:1.6}
   </style>
 </head>
 <body>
   <main>
-    <div class="mark" aria-hidden="true">1:1</div>
     <h1>One on One</h1>
-    <p>One private connection. No feeds, no groups, no noise. Install the Android app from Google Play.</p>
-    <a id="install" class="primary" href="intent://details?id=app.web.oneonone#Intent;scheme=market;package=com.android.vending;action=android.intent.action.VIEW;end">Open in Google Play app</a>
-    <a id="market" class="secondary" href="market://details?id=app.web.oneonone">Try another way to open Play Store</a>
-    <a class="tertiary" href="https://play.google.com/store/apps/details?id=app.web.oneonone">Open Play Store website</a>
-    <section class="help">
-      <strong>Opening from an Instagram Story?</strong>
-      <p style="margin:8px 0 0">If the button does nothing, tap Instagram's three-dot menu and choose <strong>Open in browser</strong> or <strong>Open in Chrome</strong> (wording varies). Then tap “Open in Google Play app” again. This avoids the Google sign-in page inside Instagram.</p>
-    </section>
-    <button id="copy" class="secondary" type="button">Copy Play Store link</button>
-    <small id="copy-status" role="status" aria-live="polite"></small>
-    <small>This link does not install anything automatically. Instagram may prevent external apps from opening inside its browser.</small>
+    <p>Opening Google Play…</p>
+    <a id="open-store" href="intent://details?id=app.web.oneonone#Intent;scheme=market;package=com.android.vending;action=android.intent.action.VIEW;end">Open Google Play</a>
+    <small>If nothing opens, tap the button. Instagram may require you to open this page in your browser.</small>
   </main>
   <script>
-    const playUrl = 'https://play.google.com/store/apps/details?id=app.web.oneonone'
-    const button = document.getElementById('copy')
-    button.addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(playUrl)
-        document.getElementById('copy-status').textContent = 'Copied! Paste into Chrome if Instagram blocks the store.'
-      } catch {
-        document.getElementById('copy-status').textContent = 'Copy this URL manually: ' + playUrl
+    (function () {
+      const playUrl = 'https://play.google.com/store/apps/details?id=app.web.oneonone';
+      const marketUrl = 'market://details?id=app.web.oneonone';
+      const button = document.getElementById('open-store');
+      const android = /Android/i.test(navigator.userAgent);
+      if (!android) {
+        button.href = playUrl;
+        window.location.replace(playUrl);
+        return;
       }
-    })
-    if (!/Android/i.test(navigator.userAgent)) {
-      document.getElementById('install').href = playUrl
-      document.getElementById('install').textContent = 'Open Google Play'
-      document.getElementById('market').hidden = true
-    }
+      // Browsers may deny automatic external app launches without user activation.
+      // Keep the explicit, user-tapped intent link available as a fallback.
+      try { window.location.assign(marketUrl); } catch (_) {}
+    })();
   </script>
 </body>
 </html>
