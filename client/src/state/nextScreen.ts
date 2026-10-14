@@ -9,7 +9,7 @@ import type { CurrentConnection } from '../services/connectionsApi'
 export function nextScreenFor(c: CurrentConnection): Screen {
   if (c.status === 'pending') return c.isRequester ? 'waiting' : 'request'
   if (c.status === 'active' || c.status === 'leave_pending') {
-    return c.otherNickname ? 'chat' : 'nickname'
+    return 'chat' // Chat prompts for a nickname without blocking an emergency acknowledgement.
   }
   return 'connection-id' // terminated / declined — nothing to be in
 }

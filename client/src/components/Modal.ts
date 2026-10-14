@@ -2,6 +2,8 @@
 // ✕, backdrop click, or Esc. Used by the letter composer/viewer and the
 // report-message dialog.
 import { pushBackHandler } from '../state/backHandlers'
+import { animateOutAndRemove } from '../utils/animateOut'
+import { CLOSE_ICON } from '../features/chatIcons'
 
 export interface Modal {
   close: () => void
@@ -50,6 +52,11 @@ const onKey = (e: KeyboardEvent): void => {
 export function openModal(node: HTMLElement, opts: { onClose?: () => void } = {}): Modal {
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
+  const chat = document.querySelector<HTMLElement>('.chat')
+  if (chat) {
+    const theme = getComputedStyle(chat)
+    for (const token of ['--bg', '--bg-raised', '--border', '--text', '--text-dim', '--muted', '--accent-you', '--accent-other', '--danger']) overlay.style.setProperty(token, theme.getPropertyValue(token))
+  }
 
   const panel = document.createElement('div')
   panel.className = 'modal-panel'
@@ -59,7 +66,7 @@ export function openModal(node: HTMLElement, opts: { onClose?: () => void } = {}
   const closeBtn = document.createElement('button')
   closeBtn.type = 'button'
   closeBtn.className = 'modal-close'
-  closeBtn.textContent = '✕'
+  closeBtn.innerHTML = CLOSE_ICON
   closeBtn.setAttribute('aria-label', 'Close')
 
   panel.append(closeBtn, node)
@@ -73,7 +80,7 @@ export function openModal(node: HTMLElement, opts: { onClose?: () => void } = {}
   const close = (): void => {
     if (closed) return
     closed = true
-    overlay.remove()
+    animateOutAndRemove(overlay, 'modal-overlay--closing', 240)
     const i = stack.findIndex((e) => e.overlay === overlay)
     if (i !== -1) stack.splice(i, 1)
     if (stack.length === 0) document.removeEventListener('keydown', onKey)
