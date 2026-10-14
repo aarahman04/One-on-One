@@ -1,6 +1,8 @@
 // Slash-command system: type "/" in the composer to get a drop-up menu.
 // Adding a command is a one-liner in COMMANDS below (groundwork for more later).
 
+import { animateOutAndRemove } from '../utils/animateOut'
+
 export interface SlashContext {
   input: HTMLTextAreaElement
   writeLetter: () => void
@@ -53,7 +55,7 @@ export function mountSlashCommands(composer: HTMLElement, input: HTMLTextAreaEle
   let active = 0
 
   const hide = (): void => {
-    menu?.remove()
+    if (menu) animateOutAndRemove(menu, 'menu--closing')
     menu = null
   }
 
@@ -65,7 +67,7 @@ export function mountSlashCommands(composer: HTMLElement, input: HTMLTextAreaEle
 
   const render = (): void => {
     const val = input.value
-    if (!val.startsWith('/')) {
+    if (!val.startsWith('/') || composer.dataset.editing === 'true') {
       hide()
       return
     }

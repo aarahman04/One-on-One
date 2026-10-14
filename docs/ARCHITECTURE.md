@@ -1,5 +1,38 @@
 # Architecture
 
+## Web chat parity with Android 2.0.3 (2026-10-14)
+
+Chat mutations keep the existing UI → messageService → Transport → InternetTransport boundary. Only InternetTransport emits/listens to Socket.IO or fetches `/api/link-preview`. `IncomingMessage`/history carry `editedAt`, `deletedAt` and reactions; `/connections/current` supplies the initial shared pin. Edit/delete/pin acks apply authoritative records, so failures leave the draft or message intact. The server remains the authorization boundary (sender, membership, 30-minute limit, message type and single-emoji validation).
+
+```mermaid
+flowchart LR
+  UI[ChatPage gestures / selection / composer] --> MS[messageService exports / preview cache]
+  MS --> T[Transport interface]
+  T --> IT[InternetTransport]
+  IT -->|edit / delete / pin / typing / reactions| S[Deployed Socket.IO backend]
+  S -->|message:update / pin:update / typing / reaction:update| IT
+  IT -->|authoritative updates| Rows[Message map / row index / quotes / pin banner]
+  Rows --> UI
+  IT -->|GET link-preview| API[Server-side unfurler]
+  API -->|bounded raster base64 / metadata| MS
+  MS --> Preview[Safe link cards]
+  Preview --> UI
+  Reconnect[Reconnect] --> Refresh[Refresh newest pages through pre-disconnect editable window]
+  Refresh --> Rows
+  Reconnect --> Cursor[Existing after-cursor catch-up / tempId reconciliation]
+  Cursor --> Rows
+```
+
+Double-click/double-tap opens a wallpaper-aware reaction toolbar without moving composer focus. Touch long press, mouse hold, right-click and keyboard Enter/Space select messages; the header handles reply/edit/copy/delete and Pin/Save/Report. Copy orders selected messages oldest first. Own text edits use the shared composer with a separate original-text bar (Up in an empty desktop composer edits the newest eligible message). Deleted rows drop cards, links, reactions and actions; existing reply quotes update to the tombstone. Removing a voice row also stops its audio.
+
+The emoji picker lazily loads the bundled Unicode 17.0 fully-qualified repertoire (3,944 emoji), with categories, name search and 24 local recents; attribution lives in `features/emoji-LICENSE.txt`, regeneration in `client/scripts/generate-emojis.mjs`. Preview promises are cached by URL (up to 200 entries); metadata is rendered with text nodes, final URLs are restricted to http(s), and image MIME/size/base64/signature/dimension checks exclude SVG and decoded surfaces over 8,192 px per side or 16 megapixels. Wide cover images use the full card width; other art sits beside the title. `utils/linkify.ts` mirrors Android's domain/phone/date rules; `utils/chatRules.ts` contains word-start search, mutation eligibility and notification reminder timing.
+
+Typing sends true at most once per three seconds of input, false on empty/send/teardown, expires after six seconds, and clears on an incoming message. Pins update via socket with a ten-second guard against stale connection polls; tapping a quote/pin pages back as needed and highlights the original. An incoming live alarm shows a pulsing chat border plus Acknowledge banner; reopening restores the alert, and only the server-confirmed ack (or the existing two-minute expiry) stops it. Active connections always route to chat: a missing nickname prompts there with a Later action, so acknowledgement stays reachable. The nickname page remains the explicit Rename destination. Notification reminders precede browser permissions and record a local three-day interval. Single taps wait for the double-tap window before opening a card/link/quote/timestamp; a double tap reacts without also opening its viewer.
+
+Strips use an unpadded grid child to fade/fold completely to zero height. Header swaps, menus, group chevrons, reaction chips/counts, emoji dialogs, slash menus, messages (320 ms) and modals respect reduced motion. Closing overlays immediately become inert/hidden to assistive technology while their visual exit finishes. Menus anchored to a message follow layout/scroll changes and stay inside the log, leaving header and composer actions reachable. Read-blue tokens now match `BubbleTokens.kt`; client tests enforce 3:1 against both sent-bubble gradient stops.
+
+Verification entry points: `npm test`, `npm run build`, and `client/test/parity.browser.mjs` (optional installed Playwright or `PLAYWRIGHT_MODULE` path, plus backend dependencies). Browser checks run the real client and Socket.IO against an isolated in-process contract fixture; they replace auth and allow only the local fixture API in the test HTML's CSP. They never send deployed-account mutations. Production CSP, backend, database and native Android are unchanged.
+
 **Chat presentation (2026-10-06):** chat rows always use bubbles, even for legacy shared `messageStyle: line` (client interpretation only). Each message row keeps its existing `data-id`, `data-at`, type/receipt hooks; the clock gutter and sender label nodes are removed. `data-sender` / `data-group-start` control adjacent same-sender grouping within 60 seconds. `.chat__message-body` contains optional quote, content and inline time/ticks; `.chat__reaction-badge` remains below it. The log begins with one encryption system chip; `.chat__composer-area` owns reply bar plus the input pill and external send/mic button. Header call controls exist disabled from first paint; call/controller reuses those nodes without changing call behavior.
 
 **Chat rendering (2026-10-06):** `buildMessageRow` builds detached rows; `registerMessageRow` maintains `rowsById: Map<string, HTMLElement>` separately from the existing quotable-message data Map. Reactions/quote jumps use that index; optimistic reconciliation only adds the saved ID to the DOM index, preserving the existing send/ack/dedupe/resync/receipt flow. Initial history and pagination register rows inside a DocumentFragment, then insert the batch once. Live rows still use the existing createdAt-ordered insertion and midnight relocation; relocation retains the same row/Map entry. A direct-child MutationObserver evicts truly removed rows and disposes countdown/location resources from `rowResources`; synchronous remove/reinsert is detected as still contained and survives. Page cleanup disconnects the observer and clears all remaining resources and the row index. Viewport writes and swipe transforms are coalesced with requestAnimationFrame; content-visibility skips offscreen row paint.
@@ -572,7 +605,7 @@ Visual-only restyle of chat bubbles in `client/src/styles/global.css` (layout, t
 | `--bubble-other-meta` | `#a9c7e4` | `#45637f` | `#eaf3f8` | `#b3ad98` |
 | `--bubble-other-edge` | `rgba(121,192,255,.34)` | `rgba(9,105,218,.32)` | `rgba(255,255,255,.2)` | `rgba(217,211,190,.2)` |
 | `--bubble-ticks` (sent/delivered) | `#cdeed8` | `#4a6b53` | `#4b5b66` | `#fff1f5` |
-| `--bubble-read` (seen) | `#8fd0ff` | `#005b94` | `#0b4f7a` | `#c7ebff` |
+| `--bubble-read` (seen) | `#5ab4ff` | `#0b57d0` | `#0b57d0` | `#80c8ff` |
 
 Wallpaper columns apply in both themes (photo backgrounds). Love "other" is `#476a80` rather than the original `#6f8fa3` so white text is AA.
 

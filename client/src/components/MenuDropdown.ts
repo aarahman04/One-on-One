@@ -3,6 +3,7 @@ import type { Screen } from '../state/router'
 import { animateOutAndRemove } from '../utils/animateOut'
 import { pushBackHandler } from '../state/backHandlers'
 import { openPanel } from '../state/activePanel'
+import { CHEVRON_ICON } from '../features/chatIcons'
 
 export function mountMenuDropdown(
   nav: HTMLElement,
@@ -14,6 +15,7 @@ export function mountMenuDropdown(
   onBlock?: () => void,
   onDeleteAccount?: () => void,
   getNotificationsLabel?: () => Promise<string>,
+  onReport?: () => void,
 ): () => void {
   let panel: HTMLDivElement | null = null
   let unregisterBack: (() => void) | null = null
@@ -50,20 +52,33 @@ export function mountMenuDropdown(
       <button class="menu__item" data-action="rename">Rename</button>
       <button class="menu__item" data-action="export">Export</button>
       <div class="menu__divider"></div>
-      <details class="menu__subgroup">
-      <summary class="menu__item">Connection &amp; account</summary>
+      <div class="menu__subgroup">
+      <button type="button" class="menu__item menu__group-toggle" aria-expanded="false">Connection ${CHEVRON_ICON}</button>
+      <div class="menu__group-content" inert><div>
+      ${onReport ? '<button class="menu__item menu__item--danger" data-action="report">Report person</button>' : ''}
       <button class="menu__item menu__item--danger" data-action="leave">Leave connection</button>
       ${onBlock ? '<button class="menu__item menu__item--danger" data-action="block">Block &amp; end</button>' : ''}
       ${onDeleteAccount ? '<button class="menu__item menu__item--danger" data-action="delete-account">Delete account</button>' : ''}
-      </details>
-      <details class="menu__subgroup">
-      <summary class="menu__item">About</summary>
+      </div></div></div>
+      <div class="menu__subgroup">
+      <button type="button" class="menu__item menu__group-toggle" aria-expanded="false">About ${CHEVRON_ICON}</button>
+      <div class="menu__group-content" inert><div>
       <button class="menu__item" data-action="privacy">Privacy Policy</button>
       <button class="menu__item" data-action="terms">Terms</button>
       <button class="menu__item" data-action="child-safety">Child Safety</button>
-      </details>
+      </div></div></div>
     `
     nav.appendChild(panel)
+    for (const toggle of panel.querySelectorAll<HTMLButtonElement>('.menu__group-toggle')) {
+      toggle.addEventListener('click', (event) => {
+        event.stopPropagation()
+        const expanded = toggle.getAttribute('aria-expanded') !== 'true'
+        toggle.setAttribute('aria-expanded', String(expanded))
+        toggle.parentElement!.classList.toggle('menu__subgroup--open', expanded)
+        ;(toggle.nextElementSibling as HTMLElement).inert = !expanded
+      })
+    }
+    panel.querySelector('[data-action="report"]')?.addEventListener('click', () => { close(); onReport?.() })
     if (getNotificationsLabel) {
       const item = panel.querySelector<HTMLButtonElement>('[data-action="notifications"]')
       void getNotificationsLabel().then((label) => {

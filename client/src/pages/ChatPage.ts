@@ -9,7 +9,7 @@ import {
   formatMessageTime,
   isSameDay,
 } from '../utils/formatTime'
-import { downloadFromUrl, formatFileSize } from '../utils/download'
+import { downloadFile, downloadFromUrl, formatFileSize } from '../utils/download'
 import { loadingScreenHtml } from '../utils/loadingScreen'
 import { mountMenuDropdown } from '../components/MenuDropdown'
 import { openModal } from '../components/Modal'
@@ -37,6 +37,7 @@ import {
   reportConnectionUser,
   reportMessage,
   setWallpaper,
+  setNickname,
   blockAndEnd,
   type CurrentConnection,
   type ReactionSummary,
@@ -46,12 +47,14 @@ import { openDeleteAccountDialog } from '../features/deleteAccount'
 import { ensurePermissionRationale } from '../features/permissionRationale'
 import {
   connectMessaging,
+  getLinkPreview,
   getCallTransport,
   type IncomingMessage,
   type MessageType,
   type ReactionUpdate,
   type Transport,
   type TransportState,
+  type PinState,
 } from '../services/messageService'
 import { mountCallBar, type CallBarHandle } from '../features/call/controller'
 import {
@@ -64,8 +67,11 @@ import {
 } from '../features/call/icons'
 import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
 import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
-import { linkifyInto } from '../utils/linkify'
+import { linkifyInto, messageLinks, safeWebUrl } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
+import { canDelete, canEdit, DELETED_MESSAGE, EDIT_WINDOW_MS, matchRanges, notificationReminderDue, previewImageUrl } from '../utils/chatRules'
+import { openEmojiPicker } from '../features/emojiPicker'
+import { ALARM_ICON, CHECK_ICON, CHOICE_ICON, CLOSE_ICON, COPY_ICON, COUNTDOWN_ICON, DELETE_ICON, EDIT_ICON, FILE_ICON, LETTER_ICON, LOCATION_ICON, LOCK_ICON, MORE_ICON, PIN_ICON, PLUS_ICON, REACT_ICON, REPLY_ICON } from '../features/chatIcons'
 
 const ALLOWED_EMOJI = ['❤️', '👍', '😂', '😮', '😢', '🙏']
 
@@ -78,6 +84,8 @@ interface ChatMessage {
   payload: unknown | null
   replyTo?: string | null
   reactions?: ReactionSummary[]
+  editedAt?: string | null
+  deletedAt?: string | null
 }
 
 // A real (server-issued, uuid) message id — never an optimistic placeholder.
@@ -95,11 +103,8 @@ interface Pending {
 
 // Minimal record kept per rendered message so a reply can show a "sender +
 // snippet" preview without re-fetching. Keyed by the message's server id.
-interface QuotableMessage {
+interface QuotableMessage extends ChatMessage {
   id: string
-  senderId: string
-  content: string
-  type: MessageType
 }
 
 // payload shapes for the three attachment message types (validated
@@ -155,7 +160,7 @@ function mediaLabel(type: MessageType): string | null {
     case 'checkin':
       return 'Check-in'
     case 'alarm':
-      return '🚨 Emergency alarm'
+      return 'Emergency alarm'
     default:
       return null
   }
@@ -244,7 +249,7 @@ export const ChatPage: Page = (root, go) => {
     rowRemovalObserver = new MutationObserver((records) => {
       for (const record of records) for (const node of record.removedNodes) {
         if (!(node instanceof HTMLElement)) continue
-        const removed = [node, ...node.querySelectorAll<HTMLElement>('.chat__message, .chat__system-line, .countdown-card, .location-card')]
+        const removed = [node, ...node.querySelectorAll<HTMLElement>('.chat__message, .chat__system-line, .countdown-card, .location-card, .voice-bubble')]
         for (const el of removed) {
           if (log.contains(el)) continue
           const id = el.dataset.id
@@ -305,23 +310,19 @@ export const ChatPage: Page = (root, go) => {
       let found = false
       for (const node of textNodes) {
         const content = node.nodeValue ?? ''
-        const lower = content.toLowerCase()
-        if (!lower.includes(q)) continue
+        const ranges = matchRanges(content, q)
+        if (!ranges.length) continue
         found = true
         const frag = document.createDocumentFragment()
         let i = 0
-        while (i < content.length) {
-          const idx = lower.indexOf(q, i)
-          if (idx === -1) {
-            frag.appendChild(document.createTextNode(content.slice(i)))
-            break
-          }
+        for (const { start: idx, end } of ranges) {
           if (idx > i) frag.appendChild(document.createTextNode(content.slice(i, idx)))
           const mark = document.createElement('mark')
-          mark.textContent = content.slice(idx, idx + q.length)
+          mark.textContent = content.slice(idx, end)
           frag.appendChild(mark)
-          i = idx + q.length
+          i = end
         }
+        frag.appendChild(document.createTextNode(content.slice(i)))
         node.replaceWith(frag)
       }
       return found
@@ -337,10 +338,10 @@ export const ChatPage: Page = (root, go) => {
       clearHighlights()
       matches = []
       currentMatch = -1
-      const q = raw.trim().toLowerCase()
+      const q = raw.trim()
       if (q) {
         for (const el of log.querySelectorAll<HTMLElement>('.chat__message-text')) {
-          if (!highlightMatches(el, q)) continue
+          if (el.closest<HTMLElement>('.chat__message')?.dataset.deleted || !highlightMatches(el, q)) continue
           const row = el.closest<HTMLElement>('.chat__message')
           if (row) matches.push(row)
         }
@@ -378,7 +379,7 @@ export const ChatPage: Page = (root, go) => {
       searchDebounce = null
       searchInput.value = ''
       runSearch('')
-      searchBar.style.display = 'none'
+      reveal(searchBar, false)
       unregisterSearchBack?.()
       unregisterSearchBack = null
     }
@@ -387,6 +388,11 @@ export const ChatPage: Page = (root, go) => {
     const nav = root.querySelector<HTMLElement>('.chat__nav')!
     const menuBtn = root.querySelector<HTMLButtonElement>('#menu-btn')!
     const chatEl = root.querySelector<HTMLElement>('.chat')!
+    const reveal = (element: HTMLElement, visible: boolean): void => {
+      element.classList.toggle('chat__strip--visible', visible)
+      element.inert = !visible
+      element.setAttribute('aria-hidden', String(!visible))
+    }
 
     // --- Alarm: pulsing red glow while an emergency alert is active. The
     // controller owns sound/vibration/the no-ack auto-clear timer; this page
@@ -395,9 +401,21 @@ export const ChatPage: Page = (root, go) => {
     // taps Acknowledge or the 2min auto-clear fires — focus/visibility no
     // longer silences the sound.
     alarmController = createAlarmController()
+    const alarmBanner = root.querySelector<HTMLElement>('#alarm-banner')!
+    const alarmAcknowledge = root.querySelector<HTMLButtonElement>('#alarm-acknowledge')!
+    let incomingAlarmId: string | null = null
     const setAlarmGlow = (active: boolean): void => {
       chatEl.classList.toggle('chat--alarm', active)
+      if (!active) incomingAlarmId = null
+      reveal(alarmBanner, active && !!incomingAlarmId)
     }
+    root.querySelector<HTMLElement>('#alarm-banner-label')!.textContent = `Emergency alarm from ${otherName}`
+    alarmAcknowledge.addEventListener('click', () => {
+      if (!incomingAlarmId) return
+      alarmAcknowledge.disabled = true
+      void sendAlarmAck(incomingAlarmId, false).catch((err) => showNotice(err instanceof Error ? err.message : 'Could not acknowledge. Try again.'))
+        .finally(() => { alarmAcknowledge.disabled = false })
+    })
     alarmController.onAutoClear(() => setAlarmGlow(false))
     // Single place that marks read. The poll below only calls it as a
     // presence heartbeat (see MARK_HEARTBEAT_MS), not on every 4s tick.
@@ -469,7 +487,7 @@ export const ChatPage: Page = (root, go) => {
       menuBtn,
       go,
       () => {
-        searchBar.style.display = 'flex'
+        reveal(searchBar, true)
         searchInput.focus()
         unregisterSearchBack?.()
         unregisterSearchBack = pushBackHandler(() => {
@@ -487,6 +505,7 @@ export const ChatPage: Page = (root, go) => {
         }),
       () => openDeleteAccountDialog(),
       getNotificationsLabel,
+      () => openReportModal({ person: true }),
     )
 
     // --- Presence: the other side marks read every ~4s while the chat is on
@@ -496,6 +515,7 @@ export const ChatPage: Page = (root, go) => {
     // The one header status element shows connection trouble ("connecting…" /
     // "waiting for network") while the socket is down, else the other side's presence.
     let presenceActive = false
+    let otherTyping = false
     let connLabel: string | null = null
     const renderStatus = (): void => {
       for (const button of nav.querySelectorAll<HTMLButtonElement>('.chat__call-btn')) button.disabled = !transport || connLabel !== null
@@ -505,9 +525,9 @@ export const ChatPage: Page = (root, go) => {
         navStatus.classList.remove('chat__nav-status--away')
         return
       }
-      navStatus.textContent = presenceActive ? 'in chat' : 'away'
+      navStatus.textContent = otherTyping ? 'typing…' : presenceActive ? 'in chat' : 'away'
       navStatus.classList.remove('chat__nav-status--connecting')
-      navStatus.classList.toggle('chat__nav-status--away', !presenceActive)
+      navStatus.classList.toggle('chat__nav-status--away', !presenceActive && !otherTyping)
     }
     const updatePresence = (otherLastReadAt: string | null): void => {
       presenceActive = !!otherLastReadAt && Date.now() - new Date(otherLastReadAt).getTime() < PRESENCE_WINDOW_MS
@@ -527,6 +547,52 @@ export const ChatPage: Page = (root, go) => {
     }
     const resolvedTempIds = new Set<string>() // sends already reconciled — a late/duplicate echo is dropped
     const messagesById = new Map<string, QuotableMessage>()
+    const selectedIds = new Set<string>()
+    let pinState: PinState = { messageId: current.pinnedMessageId ?? null, pinnedBy: current.pinnedBy ?? null, pinnedAt: current.pinnedAt ?? null }
+    let lastPinEvent = 0
+    const pinBanner = root.querySelector<HTMLElement>('#pin-banner')!
+    const snippetOf = (message: ChatMessage): string => message.deletedAt ? DELETED_MESSAGE : mediaLabel(message.type) ?? message.content
+    const renderPin = (): void => {
+      const message = pinState.messageId ? messagesById.get(pinState.messageId) : undefined
+      root.querySelector<HTMLElement>('#pin-author')!.textContent = `Pinned by ${pinState.pinnedBy === myUserId ? 'you' : otherName}`
+      root.querySelector<HTMLElement>('#pin-snippet')!.textContent = message ? snippetOf(message) : 'Pinned message'
+      reveal(pinBanner, !!pinState.messageId)
+    }
+    const applyPin = (pin: PinState): void => { pinState = pin; lastPinEvent = Date.now(); renderPin() }
+    const pinMessage = async (messageId: string | null): Promise<void> => {
+      try {
+        if (!transport) throw new Error('Connect to the internet to pin a message.')
+        applyPin(await transport.pinMessage(messageId))
+      } catch (err) { showNotice(err instanceof Error ? err.message : 'Could not update the pin.') }
+    }
+    root.querySelector<HTMLButtonElement>('#pin-unpin')!.addEventListener('click', () => void pinMessage(null))
+    root.querySelector<HTMLButtonElement>('#pin-open')!.addEventListener('click', () => { if (pinState.messageId) void jumpToMessage(pinState.messageId) })
+    renderPin()
+
+    let typingExpiry: ReturnType<typeof setTimeout> | null = null
+    let typingBubble: HTMLElement | null = null
+    const setOtherTyping = (active: boolean): void => {
+      if (typingExpiry) clearTimeout(typingExpiry)
+      typingExpiry = null
+      otherTyping = active
+      renderStatus()
+      if (active) {
+        if (!typingBubble) {
+          typingBubble = document.createElement('div')
+          typingBubble.className = 'chat__typing chat__strip chat__strip--visible'
+          typingBubble.setAttribute('role', 'status')
+          typingBubble.setAttribute('aria-label', `${otherName} is typing`)
+          typingBubble.innerHTML = '<div class="chat__strip-inner"><div class="chat__typing-body"><span></span><span></span><span></span></div></div>'
+        }
+        log.append(typingBubble)
+        if (stickToBottom) log.scrollTop = log.scrollHeight
+        typingExpiry = setTimeout(() => setOtherTyping(false), 6000)
+      } else if (typingBubble) {
+        animateOutAndRemove(typingBubble, 'chat__typing--closing')
+        typingBubble = null
+      }
+    }
+    overlays.add(() => { if (typingExpiry) clearTimeout(typingExpiry); typingBubble?.remove() })
 
     // --- Reactions: rendered as chips under the message body, updated live
     // via reaction:update from the transport. sendReaction() below is defined
@@ -542,26 +608,35 @@ export const ChatPage: Page = (root, go) => {
       if (!row) return
       const list = reactionsByMessage.get(messageId) ?? []
       let badge = row.querySelector<HTMLElement>('.chat__reaction-badge')
-      if (!list.length) {
-        badge?.remove()
-        return
-      }
+      if (!list.length && !badge) return
       if (!badge) {
         badge = document.createElement('div')
         badge.className = 'chat__reaction-badge'
         row.append(badge)
       }
-      badge.innerHTML = ''
+      for (const chip of badge.querySelectorAll<HTMLElement>('.chat__reaction-chip')) {
+        if (!list.some((r) => r.emoji === chip.dataset.emoji)) animateOutAndRemove(chip, 'chat__reaction-chip--closing')
+      }
       for (const r of list) {
-        const chip = document.createElement('button')
+        let chip = [...badge.querySelectorAll<HTMLButtonElement>('.chat__reaction-chip:not(.chat__reaction-chip--closing)')].find((c) => c.dataset.emoji === r.emoji)
+        const previousCount = chip?.dataset.count
+        if (!chip) {
+          chip = document.createElement('button')
+          chip.dataset.emoji = r.emoji
+          chip.innerHTML = '<span class="chat__reaction-emoji"></span><span class="chat__reaction-count"></span>'
+          chip.querySelector('.chat__reaction-emoji')!.textContent = r.emoji
+          chip.addEventListener('pointerdown', (e) => e.preventDefault())
+          chip.addEventListener('click', (e) => { e.stopPropagation(); toggleReaction(messageId, r.emoji) })
+          badge.append(chip)
+        }
         chip.type = 'button'
         chip.className = 'chat__reaction-chip'
-        chip.textContent = r.emoji
-        chip.addEventListener('click', (e) => {
-          e.stopPropagation()
-          if (r.userIds.includes(myUserId)) toggleReaction(messageId, r.emoji)
-        })
-        badge.append(chip)
+        chip.dataset.count = String(r.userIds.length)
+        chip.setAttribute('aria-label', `${r.emoji}, ${r.userIds.length} reaction${r.userIds.length === 1 ? '' : 's'}`)
+        chip.setAttribute('aria-pressed', String(r.userIds.includes(myUserId)))
+        const count = chip.querySelector<HTMLElement>('.chat__reaction-count')!
+        count.textContent = String(r.userIds.length)
+        if (previousCount && previousCount !== chip.dataset.count && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) count.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 200 })
       }
     }
 
@@ -570,6 +645,7 @@ export const ChatPage: Page = (root, go) => {
     // for every client — the server enforces the same via a unique
     // (message_id, user_id) upsert, so a single 'add' broadcast is enough.
     const applyReactionUpdate = (update: ReactionUpdate): void => {
+      if (messagesById.get(update.messageId)?.deletedAt) return
       const list = reactionsByMessage.get(update.messageId) ?? []
       if (update.op === 'add') {
         for (const r of list) r.userIds = r.userIds.filter((id) => id !== update.userId)
@@ -591,18 +667,21 @@ export const ChatPage: Page = (root, go) => {
     }
 
     const toggleReaction = (messageId: string, emoji: string): void => {
+      if (messagesById.get(messageId)?.deletedAt) return
+      if (!transport || transport.getState() !== 'connected') { showNotice('Connect to the internet to react.'); return }
       const list = reactionsByMessage.get(messageId) ?? []
       const mine = list.find((r) => r.userIds.includes(myUserId))
       const prevEmoji = mine?.emoji ?? null // one-per-user: at most one entry can include me
       const alreadyReacted = prevEmoji === emoji
       const op = alreadyReacted ? 'remove' : 'add'
       applyReactionUpdate({ messageId, emoji, userId: myUserId, op }) // optimistic; server echo reconciles
-      transport?.sendReaction(messageId, emoji, op).catch(() => {
+      transport.sendReaction(messageId, emoji, op).catch((err) => {
         // Revert to exactly what I had before — a plain inverse toggle isn't
         // enough for 'add', since applying it may have replaced a *different*
         // prior emoji of mine (one-per-user), not just added a fresh one.
         applyReactionUpdate({ messageId, emoji, userId: myUserId, op: 'remove' })
         if (prevEmoji) applyReactionUpdate({ messageId, emoji: prevEmoji, userId: myUserId, op: 'add' })
+        showNotice(err instanceof Error ? err.message : 'Could not react. Try again.')
       })
     }
 
@@ -610,24 +689,63 @@ export const ChatPage: Page = (root, go) => {
     // it scrolls to (and briefly flashes) the original.
     const quoteBlock = (replyTo: string): HTMLElement => {
       const original = messagesById.get(replyTo)
-      const q = document.createElement('div')
+      const q = document.createElement('button')
+      q.type = 'button'
       q.className = 'chat__quote'
+      q.dataset.replyTo = replyTo
+      q.setAttribute('aria-label', 'Go to original message')
       const name = document.createElement('div')
       name.className = 'chat__quote-name'
       name.textContent = original ? (original.senderId === myUserId ? 'You' : otherName) : otherName
       const snippet = document.createElement('div')
       snippet.className = 'chat__quote-snippet'
-      snippet.textContent = original ? (mediaLabel(original.type) ?? original.content) : 'Original message'
+      snippet.textContent = original ? snippetOf(original) : 'Original message'
       q.append(name, snippet)
       q.addEventListener('click', (e) => {
         e.stopPropagation()
-        const target = rowsById.get(replyTo)
-        if (!target) return
-        target.scrollIntoView({ block: 'center' })
-        target.classList.add('chat__message--flash')
-        setTimeout(() => target.classList.remove('chat__message--flash'), 900)
+        void jumpToMessage(replyTo)
       })
       return q
+    }
+
+    const linkPreviewCard = (url: string): HTMLElement => {
+      const slot = document.createElement('div')
+      slot.className = 'chat__preview-slot'
+      void getLinkPreview(url).then((preview) => {
+        if (disposed || !slot.isConnected || !preview) return
+        const atBottom = stickToBottom
+        const card = document.createElement('a')
+        card.className = 'chat__link-preview'
+        card.href = safeWebUrl(preview.url) ?? url
+        card.target = '_blank'
+        card.rel = 'noopener noreferrer'
+        card.dataset.messageLink = '1'
+        const info = document.createElement('div')
+        info.className = 'chat__link-preview-info'
+        for (const [className, value] of [['site', preview.siteName], ['title', preview.title], ['description', preview.description]]) {
+          if (!value) continue
+          const text = document.createElement('div')
+          text.className = `chat__link-preview-${className}`
+          text.textContent = value
+          info.append(text)
+        }
+        const imageUrl = previewImageUrl(preview.image, preview.imageMime)
+        if (imageUrl) {
+          const image = document.createElement('img')
+          image.alt = ''
+          image.addEventListener('load', () => {
+            card.classList.toggle('chat__link-preview--wide', preview.imageKind === 'cover' && image.naturalWidth >= image.naturalHeight * 1.4)
+            if (atBottom && stickToBottom) log.scrollTop = log.scrollHeight
+          }, { once: true })
+          image.addEventListener('error', () => image.remove(), { once: true })
+          image.src = imageUrl
+          card.append(image)
+        }
+        card.append(info)
+        slot.append(card)
+        if (atBottom && stickToBottom) log.scrollTop = log.scrollHeight
+      })
+      return slot
     }
 
     // A letter renders as a folded card in the chat; tapping opens the full letter.
@@ -638,7 +756,7 @@ export const ChatPage: Page = (root, go) => {
       card.className = 'letter-card'
       const icon = document.createElement('span')
       icon.className = 'letter-card__icon'
-      icon.textContent = '✉'
+      icon.innerHTML = LETTER_ICON
       const txt = document.createElement('span')
       txt.className = 'letter-card__text'
       txt.textContent = `A letter — to ${p.to ?? ''}, from ${p.from ?? ''}`
@@ -663,7 +781,7 @@ export const ChatPage: Page = (root, go) => {
       card.className = 'countdown-card'
       const icon = document.createElement('span')
       icon.className = 'countdown-card__icon'
-      icon.textContent = '⏳'
+      icon.innerHTML = COUNTDOWN_ICON
       const info = document.createElement('span')
       info.className = 'countdown-card__info'
       const label = document.createElement('span')
@@ -723,7 +841,7 @@ export const ChatPage: Page = (root, go) => {
       mapWrap.className = 'location-card__map'
       const pin = document.createElement('span')
       pin.className = 'location-card__pin'
-      pin.textContent = '📍'
+      pin.innerHTML = LOCATION_ICON
       mapWrap.append(pin)
 
       // zoom 15, single 256px OSM tile centred on the point — good enough to
@@ -807,7 +925,7 @@ export const ChatPage: Page = (root, go) => {
         card.className = 'ask-card ask-card--revealed'
         const icon = document.createElement('span')
         icon.className = 'ask-card__icon'
-        icon.textContent = '💌'
+        icon.innerHTML = LETTER_ICON
         const body = document.createElement('div')
         body.className = 'ask-card__body'
         const q = document.createElement('div')
@@ -835,7 +953,7 @@ export const ChatPage: Page = (root, go) => {
       card.className = 'ask-card'
       const icon = document.createElement('span')
       icon.className = 'ask-card__icon'
-      icon.textContent = '🔒'
+      icon.innerHTML = LOCK_ICON
       const body = document.createElement('span')
       body.className = 'ask-card__body'
       const q = document.createElement('span')
@@ -888,7 +1006,7 @@ export const ChatPage: Page = (root, go) => {
         card.className = 'thisorthat-card thisorthat-card--revealed'
         const icon = document.createElement('span')
         icon.className = 'thisorthat-card__icon'
-        icon.textContent = '🎲'
+        icon.innerHTML = CHOICE_ICON
         const body = document.createElement('div')
         body.className = 'thisorthat-card__body'
         const options = document.createElement('div')
@@ -921,7 +1039,7 @@ export const ChatPage: Page = (root, go) => {
       card.className = 'thisorthat-card'
       const icon = document.createElement('span')
       icon.className = 'thisorthat-card__icon'
-      icon.textContent = '🎲'
+      icon.innerHTML = CHOICE_ICON
       const body = document.createElement('span')
       body.className = 'thisorthat-card__body'
       const prompt = document.createElement('div')
@@ -972,7 +1090,7 @@ export const ChatPage: Page = (root, go) => {
         card.className = 'alarm-card alarm-card--ack'
         const icon = document.createElement('span')
         icon.className = 'alarm-card__icon'
-        icon.textContent = cancelled ? '⛔' : '✅'
+        icon.innerHTML = cancelled ? CLOSE_ICON : CHECK_ICON
         const label = document.createElement('span')
         const who = isMine ? 'You' : otherName
         label.textContent = cancelled ? `${who} cancelled the alarm` : `${who} acknowledged the alarm`
@@ -985,7 +1103,7 @@ export const ChatPage: Page = (root, go) => {
       card.className = 'alarm-card alarm-card--raise'
       const icon = document.createElement('span')
       icon.className = 'alarm-card__icon'
-      icon.textContent = '🚨'
+      icon.innerHTML = ALARM_ICON
       const body = document.createElement('span')
       body.className = 'alarm-card__body'
       const title = document.createElement('div')
@@ -1186,6 +1304,7 @@ export const ChatPage: Page = (root, go) => {
 
       const audio = new Audio()
       audio.preload = 'none'
+      rowResources.set(wrap, () => { audio.pause(); audio.removeAttribute('src'); audio.load() })
       let ready = false
 
       if (p.path) {
@@ -1226,23 +1345,10 @@ export const ChatPage: Page = (root, go) => {
       return wrap
     }
 
-    const FILE_ICONS: Record<string, string> = {
-      pdf: '📄',
-      doc: '📄',
-      docx: '📄',
-      txt: '📄',
-      csv: '📊',
-      xls: '📊',
-      xlsx: '📊',
-      ppt: '📑',
-      pptx: '📑',
-    }
-
     // A file renders as a card (icon + name + size); tap downloads it.
     const fileCard = (message: ChatMessage): HTMLElement => {
       const p = (message.payload ?? {}) as Partial<FilePayload>
       const name = p.name ?? 'File'
-      const ext = name.split('.').pop()?.toLowerCase() ?? ''
 
       const card = document.createElement('button')
       card.type = 'button'
@@ -1250,7 +1356,7 @@ export const ChatPage: Page = (root, go) => {
 
       const icon = document.createElement('span')
       icon.className = 'file-card__icon'
-      icon.textContent = FILE_ICONS[ext] ?? '📎'
+      icon.innerHTML = FILE_ICON
 
       const info = document.createElement('span')
       info.className = 'file-card__info'
@@ -1407,6 +1513,11 @@ export const ChatPage: Page = (root, go) => {
       row.dataset.at = message.createdAt
       row.dataset.type = message.type // lets CSS give image/voice/file their own bubble treatment
       row.dataset.sender = message.senderId
+      if (message.id && !message.deletedAt && message.type !== 'call') {
+        row.tabIndex = 0
+        row.setAttribute('aria-label', 'Message. Press Enter to select.')
+      }
+      if (message.deletedAt) row.dataset.deleted = '1'
       if (message.type === 'image' && message.content) row.dataset.caption = '1'
       if (message.id) row.dataset.id = message.id
 
@@ -1415,11 +1526,13 @@ export const ChatPage: Page = (root, go) => {
 
       const text = document.createElement('div')
       text.className = 'chat__message-text'
-      linkifyInto(text, message.content)
+      if (message.deletedAt) text.textContent = DELETED_MESSAGE
+      else linkifyInto(text, message.content)
 
       const fullTime = document.createElement('div')
       fullTime.className = 'chat__message-full-time'
       fullTime.textContent = formatFullTimestamp(at)
+      if (message.editedAt) fullTime.textContent += ` · edited ${formatFullTimestamp(new Date(message.editedAt))}`
 
       // Time and ticks share the bubble's bottom-right footer.
       const meta = document.createElement('div')
@@ -1427,11 +1540,11 @@ export const ChatPage: Page = (root, go) => {
 
       const bubbleTime = document.createElement('div')
       bubbleTime.className = 'chat__bubble-time'
-      bubbleTime.textContent = formatMessageTime(at)
+      bubbleTime.textContent = message.editedAt && !message.deletedAt ? `edited ${formatMessageTime(new Date(message.editedAt))}` : formatMessageTime(at)
       meta.append(bubbleTime)
 
       const content =
-        message.type === 'letter'
+        message.deletedAt ? text : message.type === 'letter'
           ? letterCard(message)
           : message.type === 'image'
             ? imageBubble(message)
@@ -1459,7 +1572,7 @@ export const ChatPage: Page = (root, go) => {
         letter: 'Letter', countdown: 'Countdown', checkin: 'Check-in', ask: 'Ask', thisorthat: 'This or that',
       }
       const cardTitle = cardTitles[message.type]
-      if (cardTitle) {
+      if (cardTitle && !message.deletedAt) {
         const heading = document.createElement('div')
         heading.className = 'chat__card-heading'
         const icon = content.querySelector<HTMLElement>('[class$="__icon"]')
@@ -1467,7 +1580,11 @@ export const ChatPage: Page = (root, go) => {
         heading.append(document.createTextNode(cardTitle))
         content.prepend(heading)
       }
-      if (message.replyTo) body.append(quoteBlock(message.replyTo))
+      if (message.replyTo && !message.deletedAt) body.append(quoteBlock(message.replyTo))
+      if (message.type === 'text' && !message.deletedAt) {
+        const url = messageLinks(message.content).find((l) => !l.url.startsWith('tel:'))?.url
+        if (url) body.append(linkPreviewCard(url))
+      }
       body.append(content)
       if (isMine) {
         row.dataset.mine = '1' // keyed by the bubble-mode preview
@@ -1489,10 +1606,11 @@ export const ChatPage: Page = (root, go) => {
       // instead of sitting on its own row below the paragraph — the
       // browser's native text reflow wraps around it per-line for free.
       // Every other type keeps the footer as its own row after the content.
-      if (message.type === 'text') text.append(meta)
+      if (message.type === 'text' || message.deletedAt) text.append(meta)
       else body.append(meta)
       body.append(fullTime)
       row.append(body)
+      if (!pending && !message.deletedAt && message.type !== 'call') addHoverActions(row)
       // Tapping content reveals the full timestamp.
       content.addEventListener('click', () => row.classList.toggle('chat__message--expanded'))
       return row
@@ -1500,19 +1618,20 @@ export const ChatPage: Page = (root, go) => {
 
     // Side effects after a row is in the DOM (receipts, id map, reaction chips).
     const registerMessageRow = (message: ChatMessage, row: HTMLElement): void => {
-      if (message.id) rowsById.set(message.id, row)
-      // Call logs and system (appearance-change) notices carry no receipt,
-      // and can't be quoted or reacted to — so they stay out of myRows and
-      // the quotable-message map entirely.
+      if (message.id) {
+        rowsById.set(message.id, row)
+        messagesById.set(message.id, { ...message, id: message.id })
+      }
+      // Index server rows for dedupe; call/system rows have no interaction controls.
       if (message.type === 'call' || message.type === 'system') return
       if (message.senderId === myUserId) {
         myRows.push(row)
         applyReceipt(row)
       }
       if (message.id) {
-        messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
-        if (message.reactions?.length) reactionsByMessage.set(message.id, message.reactions)
-        if (reactionsByMessage.has(message.id)) renderReactionChips(message.id)
+        if (message.deletedAt) reactionsByMessage.delete(message.id)
+        if (message.reactions) reactionsByMessage.set(message.id, message.reactions.map((r) => ({ emoji: r.emoji, userIds: [...r.userIds] })))
+        if (!message.deletedAt && reactionsByMessage.has(message.id)) renderReactionChips(message.id)
       }
     }
 
@@ -1647,13 +1766,13 @@ export const ChatPage: Page = (root, go) => {
     const banner = root.querySelector<HTMLDivElement>('#leave-banner')!
     const renderBanner = (c: CurrentConnection): void => {
       if (c.status !== 'leave_pending') {
-        banner.style.display = 'none'
+        reveal(root.querySelector<HTMLElement>('#leave-strip')!, false)
         return
       }
       if (c.bothLeaving) banner.textContent = "You're both leaving. Open the menu to end now."
       else if (c.myLeaveStep > 0) banner.textContent = `You're leaving — ${dayWord(c.daysRemaining ?? 0)}.`
       else banner.textContent = `${otherName} is leaving — ${dayWord(5 - c.otherLeaveStep)}.`
-      banner.style.display = 'block'
+      reveal(root.querySelector<HTMLElement>('#leave-strip')!, true)
     }
 
     // Leave system-lines must survive navigation (the actor leaves chat to press
@@ -1697,6 +1816,7 @@ export const ChatPage: Page = (root, go) => {
     const HISTORY_PAGE = 50
     let oldestLoadedAt: string | null = null
     let loadingOlder = false
+    let hasOlder = false
 
     const loadOlderBtn = document.createElement('button')
     loadOlderBtn.type = 'button'
@@ -1704,7 +1824,7 @@ export const ChatPage: Page = (root, go) => {
     loadOlderBtn.textContent = 'Load older messages'
 
     const loadOlder = async (): Promise<void> => {
-      if (loadingOlder || !oldestLoadedAt) return
+      if (loadingOlder || !oldestLoadedAt || !hasOlder) return
       loadingOlder = true
       loadOlderBtn.disabled = true
       let older: Awaited<ReturnType<typeof getMessages>> = []
@@ -1719,6 +1839,8 @@ export const ChatPage: Page = (root, go) => {
       }
       if (disposed) return
       if (!older.length) {
+        hasOlder = false
+        loadingOlder = false
         loadOlderBtn.remove()
         return
       }
@@ -1729,6 +1851,7 @@ export const ChatPage: Page = (root, go) => {
       const fragment = document.createDocumentFragment()
       let batchDate: Date | null = null
       for (const m of older) {
+        if (rowsById.has(m.id)) continue
         const at = new Date(m.createdAt)
         if (!Number.isNaN(at.getTime()) && (!batchDate || !isSameDay(batchDate, at))) {
           fragment.appendChild(dateSeparator(at))
@@ -1751,14 +1874,37 @@ export const ChatPage: Page = (root, go) => {
       }
       updateGroup(firstRow)
       oldestLoadedAt = older[0].createdAt
+      hasOlder = older.length >= HISTORY_PAGE
+      loadingOlder = false
+      renderPin()
+      for (const quote of log.querySelectorAll<HTMLElement>('.chat__quote')) {
+        const original = messagesById.get(quote.dataset.replyTo ?? '')
+        if (original) quote.querySelector('.chat__quote-snippet')!.textContent = snippetOf(original)
+      }
       log.scrollTop = prevTop + (log.scrollHeight - prevHeight)
-      if (older.length < HISTORY_PAGE) loadOlderBtn.remove()
+      if (!hasOlder) loadOlderBtn.remove()
       else {
         loadingOlder = false
         loadOlderBtn.disabled = false
       }
     }
     loadOlderBtn.addEventListener('click', () => void loadOlder())
+
+    const jumpToMessage = async (id: string): Promise<void> => {
+      if (loadingOlder) { showNotice('Messages are loading. Try again in a moment.'); return }
+      while (!rowsById.has(id) && hasOlder && !disposed) {
+        const before = oldestLoadedAt
+        await loadOlder()
+        if (oldestLoadedAt === before) break
+      }
+      if (disposed) return
+      const target = rowsById.get(id)
+      if (!target) { showNotice('This message is not available.'); return }
+      target.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+      target.classList.remove('chat__message--flash')
+      requestAnimationFrame(() => target.classList.add('chat__message--flash'))
+      setTimeout(() => target.classList.remove('chat__message--flash'), 900)
+    }
 
     const history = (await getMessages(connectionId))
       .slice()
@@ -1775,6 +1921,8 @@ export const ChatPage: Page = (root, go) => {
     }
     for (const m of history) noteServerTime(m.createdAt)
     const historyFragment = document.createDocumentFragment()
+    // Resolve quotes even when the original occurs later in the same page.
+    for (const message of history) messagesById.set(message.id, message)
     for (const message of history) {
       const at = new Date(message.createdAt)
       if (!Number.isNaN(at.getTime()) && (!lastDate || !isSameDay(lastDate, at))) {
@@ -1810,6 +1958,7 @@ export const ChatPage: Page = (root, go) => {
           // Native already ringing (or the user silenced it there): show the glow
           // and the acknowledge card but never start a second, JS ring.
           const nativeHandled = native.ringing || native.lastStoppedAlarmId === raiseId
+          incomingAlarmId = mine ? null : raiseId
           setAlarmGlow(true)
           alarmController?.start({
             silent: mine || nativeHandled,
@@ -1820,7 +1969,9 @@ export const ChatPage: Page = (root, go) => {
       }
     }
     oldestLoadedAt = history[0]?.createdAt ?? null
-    if (history.length >= HISTORY_PAGE) log.querySelector('.chat__enc-note')!.after(loadOlderBtn)
+    hasOlder = history.length >= HISTORY_PAGE
+    if (hasOlder) log.querySelector('.chat__enc-note')!.after(loadOlderBtn)
+    renderPin()
     refreshReceipts()
     renderBanner(current)
     reconcileLeave(current)
@@ -1856,6 +2007,21 @@ export const ChatPage: Page = (root, go) => {
     const sendBtn = root.querySelector<HTMLButtonElement>('#send-btn')!
     const micBtn = root.querySelector<HTMLButtonElement>('#mic-btn')!
     const attachBtn = root.querySelector<HTMLButtonElement>('#attach-btn')!
+    let editTarget: QuotableMessage | null = null
+    let draftBeforeEdit = ''
+    let editSending = false
+    let lastTypingSent = 0
+    let typingSent = false
+    const sendDraftTyping = (): void => {
+      const active = input.value.trim().length > 0
+      if (!active && typingSent) { transport?.sendTyping(false); typingSent = false }
+      else if (active && transport?.getState() === 'connected' && Date.now() - lastTypingSent >= 3000) {
+        transport.sendTyping(true)
+        typingSent = true
+        lastTypingSent = Date.now()
+      }
+    }
+    overlays.add(() => { if (typingSent) transport?.sendTyping(false) })
 
     // Tapping a <button> moves focus to it on most mobile browsers, which
     // dismisses the soft keyboard — jarring versus WhatsApp/iMessage, where
@@ -1876,6 +2042,9 @@ export const ChatPage: Page = (root, go) => {
     // fight for the same slot.
     const updateComposerMode = (): void => {
       const hasText = input.value.trim().length > 0
+      sendBtn.disabled = editSending
+      micBtn.disabled = !!editTarget
+      attachBtn.disabled = !!editTarget
       sendBtn.classList.toggle('chat__input-bar-btn--hidden', !hasText)
       micBtn.classList.toggle('chat__input-bar-btn--hidden', hasText)
     }
@@ -1883,6 +2052,7 @@ export const ChatPage: Page = (root, go) => {
     const syncComposer = (): void => {
       autoGrow()
       updateComposerMode()
+      sendDraftTyping()
     }
     input.addEventListener('input', syncComposer)
     syncComposer()
@@ -1893,6 +2063,7 @@ export const ChatPage: Page = (root, go) => {
       payload: unknown = null,
       replyTo: string | null = null,
     ): void => {
+      if (typingSent) { transport?.sendTyping(false); typingSent = false }
       const tempId = crypto.randomUUID()
       const row = appendMessage(
         { senderId: myUserId, content, createdAt: new Date().toISOString(), type, payload, replyTo },
@@ -1935,17 +2106,18 @@ export const ChatPage: Page = (root, go) => {
 
     const renderReplyBar = (): void => {
       if (!replyTarget) {
-        replyBar.classList.remove('chat__reply-bar--visible')
+        reveal(replyBar, false)
         return
       }
       replyBarName.textContent = replyTarget.senderId === myUserId ? 'You' : otherName
-      replyBarSnippet.textContent = mediaLabel(replyTarget.type) ?? replyTarget.content
-      replyBar.classList.add('chat__reply-bar--visible')
+      replyBarSnippet.textContent = snippetOf(replyTarget)
+      reveal(replyBar, true)
     }
 
     const startReply = (id: string): void => {
       const target = messagesById.get(id)
-      if (!target) return
+      if (!target || target.deletedAt) return
+      if (editTarget) cancelEdit()
       replyTarget = target
       renderReplyBar()
       // Deferred a frame so the reply-bar's own slide-in transition gets to
@@ -1961,9 +2133,53 @@ export const ChatPage: Page = (root, go) => {
 
     root.querySelector<HTMLButtonElement>('#reply-bar-cancel')!.addEventListener('click', cancelReply)
 
+    const editBar = root.querySelector<HTMLElement>('#edit-bar')!
+    const cancelEdit = (): void => {
+      if (!editTarget) return
+      editTarget = null
+      input.value = draftBeforeEdit
+      editSending = false
+      reveal(editBar, false)
+      composer.dataset.editing = 'false'
+      input.dispatchEvent(new Event('input'))
+    }
+    const startEdit = (id: string): void => {
+      const message = messagesById.get(id)
+      if (!message || !canEdit(message, myUserId)) { showNotice('Only your text messages from the last 30 minutes can be edited.'); return }
+      if (editTarget) cancelEdit()
+      draftBeforeEdit = input.value
+      editTarget = message
+      cancelReply()
+      root.querySelector<HTMLElement>('#edit-bar-snippet')!.textContent = message.content
+      input.value = message.content
+      composer.dataset.editing = 'true'
+      reveal(editBar, true)
+      input.dispatchEvent(new Event('input'))
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    }
+    root.querySelector<HTMLButtonElement>('#edit-bar-cancel')!.addEventListener('click', cancelEdit)
+
     const send = (): void => {
       const content = input.value.trim()
       if (!content) return
+      if (content.length > 4000) { showNotice('Messages must be 1–4000 characters.'); return }
+      if (editTarget) {
+        if (editSending) return
+        const target = editTarget
+        if (!canEdit(target, myUserId)) { showNotice('Messages can only be edited within 30 minutes.'); return }
+        if (!transport) { showNotice('Connect to the internet to edit.'); return }
+        editSending = true
+        if (typingSent) { transport.sendTyping(false); typingSent = false }
+        updateComposerMode()
+        void transport.editMessage(target.id, content).then((message) => {
+          if (disposed) return
+          onMessageUpdate(message)
+          if (editTarget?.id === target.id) cancelEdit()
+        }).catch((err) => showNotice(err instanceof Error ? err.message : 'Could not edit. Your draft is still here.'))
+          .finally(() => { editSending = false; if (!disposed) updateComposerMode() })
+        return
+      }
       input.value = ''
       syncComposer()
       const replyTo = replyTarget?.id ?? null
@@ -2335,7 +2551,7 @@ export const ChatPage: Page = (root, go) => {
     // here too before falling back to a normal send.
     composer.addEventListener('submit', (e) => {
       e.preventDefault()
-      if (runIfCommand(input.value, slashCtx)) {
+      if (!editTarget && runIfCommand(input.value, slashCtx)) {
         input.value = ''
         syncComposer()
         return
@@ -2353,6 +2569,11 @@ export const ChatPage: Page = (root, go) => {
     // slash-menu's own Enter handling (stopImmediatePropagation) takes priority.
     const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches
     input.addEventListener('keydown', (e) => {
+      if (e.isComposing) return
+      if (e.key === 'ArrowUp' && !input.value && !editTarget) {
+        const latest = [...messagesById.values()].filter((m) => canEdit(m, myUserId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+        if (latest) { e.preventDefault(); startEdit(latest.id) }
+      }
       if (e.key === 'Enter' && !e.shiftKey && !isCoarsePointer) {
         e.preventDefault()
         composer.requestSubmit()
@@ -2390,7 +2611,7 @@ export const ChatPage: Page = (root, go) => {
 
     type Anchor = Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>
 
-    const openPopover = (anchor: Anchor, build: (menu: HTMLElement) => void): void => {
+    const openPopover = (anchor: Anchor | HTMLElement, build: (menu: HTMLElement) => void): void => {
       closeCtxMenu()
       const M = 8 // safe margin from every viewport edge
       const menu = document.createElement('div')
@@ -2406,18 +2627,25 @@ export const ChatPage: Page = (root, go) => {
       document.body.append(menu)
 
       const place = (): void => {
+        const target = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : anchor
         const vv = window.visualViewport
         const vw = vv?.width ?? document.documentElement.clientWidth
         const vh = vv?.height ?? document.documentElement.clientHeight
         const ox = vv?.offsetLeft ?? 0
         const oy = vv?.offsetTop ?? 0
+        const logRect = log.getBoundingClientRect()
+        const inLog = anchor instanceof HTMLElement && log.contains(anchor)
+        const topEdge = inLog ? Math.max(oy + M, logRect.top + M) : oy + M
+        const bottomEdge = inLog ? Math.min(oy + vh - M, logRect.bottom - M) : oy + vh - M
         menu.style.maxWidth = `${vw - 2 * M}px`
-        const r = menu.getBoundingClientRect()
-        let left = anchor.left + anchor.width / 2 - r.width / 2
-        left = Math.max(ox + M, Math.min(left, ox + vw - r.width - M))
-        let top = anchor.top - r.height - M // prefer above the message
-        if (top < oy + M) top = anchor.top + anchor.height + M // not enough room — flip below
-        top = Math.max(oy + M, Math.min(top, oy + vh - r.height - M))
+        menu.style.maxHeight = `${Math.max(48, bottomEdge - topEdge)}px`
+        const width = menu.offsetWidth
+        const height = menu.offsetHeight
+        let left = target.left + target.width / 2 - width / 2
+        left = Math.max(ox + M, Math.min(left, ox + vw - width - M))
+        let top = target.top - height - M // prefer above the message
+        if (top < topEdge) top = target.top + target.height + M // not enough room — flip below
+        top = Math.max(topEdge, Math.min(top, bottomEdge - height))
         menu.style.left = `${left}px`
         menu.style.top = `${top}px`
         menu.style.visibility = ''
@@ -2425,7 +2653,13 @@ export const ChatPage: Page = (root, go) => {
       place()
 
       ctxMenu = menu
-      const onScroll = (): void => closeCtxMenu()
+      const onScroll = (): void => {
+        if (!(anchor instanceof HTMLElement) || !anchor.isConnected) { closeCtxMenu(); return }
+        const target = anchor.getBoundingClientRect()
+        const viewport = log.getBoundingClientRect()
+        if (log.contains(anchor) && (target.bottom < viewport.top || target.top > viewport.bottom)) closeCtxMenu()
+        else place()
+      }
       const onResize = (): void => place()
       const onKey = (e: KeyboardEvent): void => {
         if (e.key === 'Escape') closeCtxMenu()
@@ -2456,6 +2690,18 @@ export const ChatPage: Page = (root, go) => {
     }
 
     const buildEmojiRow = (menu: HTMLElement, messageId: string): void => {
+      menu.classList.add('chat__quick-reactions')
+      menu.setAttribute('role', 'toolbar')
+      menu.setAttribute('aria-label', 'Quick reactions')
+      const bubble = rowsById.get(messageId)?.querySelector<HTMLElement>('.chat__message-body')
+      if (bubble) {
+        const colors = getComputedStyle(bubble)
+        menu.style.background = `${colors.backgroundImage} ${colors.backgroundColor}`
+        menu.style.color = colors.color
+        menu.style.setProperty('--text', colors.color)
+        menu.style.setProperty('--bg', colors.backgroundColor)
+        menu.style.transformOrigin = rowsById.get(messageId)?.dataset.mine ? 'right bottom' : 'left bottom'
+      }
       const row = document.createElement('div')
       row.className = 'chat__emoji-picker'
       for (const emoji of ALLOWED_EMOJI) {
@@ -2463,6 +2709,9 @@ export const ChatPage: Page = (root, go) => {
         btn.type = 'button'
         btn.className = 'chat__emoji-picker-btn'
         btn.textContent = emoji
+        btn.setAttribute('aria-label', `React with ${emoji}`)
+        btn.setAttribute('aria-pressed', String((reactionsByMessage.get(messageId) ?? []).some((r) => r.emoji === emoji && r.userIds.includes(myUserId))))
+        btn.addEventListener('pointerdown', (e) => e.preventDefault())
         btn.addEventListener('click', (e) => {
           e.stopPropagation()
           toggleReaction(messageId, emoji)
@@ -2470,6 +2719,19 @@ export const ChatPage: Page = (root, go) => {
         })
         row.append(btn)
       }
+      const more = document.createElement('button')
+      more.type = 'button'
+      more.className = 'chat__emoji-picker-btn'
+      more.innerHTML = PLUS_ICON
+      more.setAttribute('aria-label', 'Choose another emoji')
+      more.addEventListener('pointerdown', (e) => e.preventDefault())
+      more.addEventListener('click', (e) => {
+        e.stopPropagation()
+        closeCtxMenu()
+        const dispose = openEmojiPicker((emoji) => toggleReaction(messageId, emoji), () => overlays.delete(dispose))
+        overlays.add(dispose)
+      })
+      row.append(more)
       menu.append(row)
     }
 
@@ -2483,6 +2745,150 @@ export const ChatPage: Page = (root, go) => {
         onClick()
       })
       return btn
+    }
+
+    const selectionBar = root.querySelector<HTMLElement>('#selection-bar')!
+    let selectionExpiry: ReturnType<typeof setTimeout> | null = null
+    let unregisterSelectionBack: (() => void) | null = null
+    const pickedMessages = (): QuotableMessage[] => [...selectedIds].map((id) => messagesById.get(id))
+      .filter((m): m is QuotableMessage => !!m && !m.deletedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    const updateSelection = (): void => {
+      if (selectionExpiry) clearTimeout(selectionExpiry)
+      selectionExpiry = null
+      const picked = pickedMessages()
+      const single = picked.length === 1 ? picked[0] : null
+      nav.classList.toggle('chat__nav--selecting', selectedIds.size > 0)
+      selectionBar.inert = !selectedIds.size
+      selectionBar.setAttribute('aria-hidden', String(!selectedIds.size))
+      for (const element of nav.querySelectorAll<HTMLElement>('.chat__nav-peer, .chat__nav-actions')) element.inert = selectedIds.size > 0
+      const count = root.querySelector<HTMLElement>('#selection-count')!
+      count.textContent = String(selectedIds.size)
+      count.setAttribute('aria-label', `${selectedIds.size} message${selectedIds.size === 1 ? '' : 's'} selected`)
+      root.querySelector<HTMLButtonElement>('#selection-reply')!.hidden = !single
+      root.querySelector<HTMLButtonElement>('#selection-edit')!.hidden = !single || !canEdit(single, myUserId)
+      root.querySelector<HTMLButtonElement>('#selection-delete')!.hidden = !picked.length || !picked.every((m) => canDelete(m, myUserId))
+      for (const [id, row] of rowsById) row.classList.toggle('chat__message--selected', selectedIds.has(id))
+      if (selectedIds.size && !unregisterSelectionBack) unregisterSelectionBack = pushBackHandler(() => { clearSelection(); return true })
+      if (!selectedIds.size) { unregisterSelectionBack?.(); unregisterSelectionBack = null }
+      const expires = picked.filter((m) => canDelete(m, myUserId)).map((m) => Date.parse(m.createdAt) + EDIT_WINDOW_MS - Date.now() + 1)
+      if (expires.length) selectionExpiry = setTimeout(updateSelection, Math.max(1, Math.min(...expires)))
+    }
+    const clearSelection = (): void => { selectedIds.clear(); closeCtxMenu(); updateSelection() }
+    const showQuickReactions = (id: string): void => {
+      const message = messagesById.get(id)
+      const bubble = rowsById.get(id)?.querySelector<HTMLElement>('.chat__message-body')
+      if (!message || message.deletedAt || !bubble) return
+      openPopover(bubble, (menu) => buildEmojiRow(menu, id))
+    }
+    const selectMessage = (id: string): void => {
+      if (!messagesById.has(id) || messagesById.get(id)?.deletedAt) return
+      selectedIds.add(id)
+      updateSelection()
+      showQuickReactions(id)
+    }
+    const copyText = (text: string): void => {
+      if (!navigator.clipboard?.writeText) { showNotice('Copy is not available in this browser.'); return }
+      void navigator.clipboard.writeText(text).then(() => showNotice('Copied.')).catch(() => showNotice('Could not copy.'))
+    }
+    const selectionText = (): string => pickedMessages().map((m) => m.content || snippetOf(m)).join('\n')
+    root.querySelector<HTMLButtonElement>('#selection-close')!.addEventListener('click', clearSelection)
+    root.querySelector<HTMLButtonElement>('#selection-copy')!.addEventListener('click', () => { copyText(selectionText()); clearSelection() })
+    root.querySelector<HTMLButtonElement>('#selection-reply')!.addEventListener('click', () => { const m = pickedMessages()[0]; if (m) startReply(m.id); clearSelection() })
+    root.querySelector<HTMLButtonElement>('#selection-edit')!.addEventListener('click', () => { const m = pickedMessages()[0]; if (m) startEdit(m.id); clearSelection() })
+    root.querySelector<HTMLButtonElement>('#selection-delete')!.addEventListener('click', () => {
+      const picked = pickedMessages()
+      if (!picked.length || !picked.every((m) => canDelete(m, myUserId))) { updateSelection(); return }
+      closeCtxMenu()
+      const box = document.createElement('div')
+      box.className = 'notice-popup'
+      box.innerHTML = '<h2>Delete for everyone?</h2><p>These messages will be replaced with “This message was deleted” for both of you.</p><div class="report-dialog__actions"><button type="button" data-cancel>Cancel</button><button type="button" class="danger" data-delete>Delete</button></div>'
+      const dispose = (): void => modal.close()
+      const modal = openModal(box, { onClose: () => overlays.delete(dispose) })
+      modal.panel.setAttribute('aria-label', 'Delete for everyone?')
+      overlays.add(dispose)
+      box.querySelector('[data-cancel]')!.addEventListener('click', modal.close)
+      box.querySelector<HTMLButtonElement>('[data-delete]')!.addEventListener('click', async (e) => {
+        const button = e.currentTarget as HTMLButtonElement
+        button.disabled = true
+        try {
+          if (!transport) throw new Error('Connect to the internet to delete.')
+          for (const message of picked) {
+            if (disposed) return
+            if (!canDelete(message, myUserId)) throw new Error('Messages can only be deleted within 30 minutes.')
+            onMessageUpdate(await transport.deleteMessage(message.id))
+          }
+          modal.close()
+          clearSelection()
+        } catch (err) { button.disabled = false; showNotice(err instanceof Error ? err.message : 'Could not delete. Try again.') }
+      })
+    })
+    const openSelectionMenu = (anchor: HTMLElement): void => {
+      const picked = pickedMessages()
+      const single = picked.length === 1 ? picked[0] : null
+      openPopover(anchor, (menu) => {
+        if (single) menu.append(menuItem(pinState.messageId === single.id ? 'Unpin' : 'Pin', false, () => {
+          void pinMessage(pinState.messageId === single.id ? null : single.id)
+          clearSelection()
+        }))
+        menu.append(menuItem('Save a copy', false, () => {
+          closeCtxMenu()
+          const path = single ? mediaPathOf(single) : null
+          if (path) {
+            void getSignedUrls(connectionId, [path]).then((urls) => {
+              if (!urls[path]) throw new Error('File is not available.')
+              const name = (single?.payload as { name?: string } | null)?.name ?? `message.${path.split('.').pop()}`
+              return downloadFromUrl(urls[path], name)
+            }).catch(() => showNotice('Could not save a copy. Try again.'))
+          } else downloadFile('one-on-one-messages.txt', 'text/plain;charset=utf-8', selectionText())
+          clearSelection()
+        }))
+        const report = menuItem('Report message', true, () => {
+          if (!single) return
+          clearSelection()
+          openReportModal({ messageId: single.id })
+        })
+        report.disabled = !single || single.senderId === myUserId
+        menu.append(report)
+      })
+    }
+    root.querySelector<HTMLButtonElement>('#selection-more')!.addEventListener('click', (e) => openSelectionMenu(e.currentTarget as HTMLElement))
+    const onEscape = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || document.querySelector('.modal-overlay:not(.modal-overlay--closing)')) return
+      if (linkTimer) clearTimeout(linkTimer)
+      if (selectedIds.size) clearSelection()
+      else if (editTarget) cancelEdit()
+      else if (replyTarget) cancelReply()
+      else closeSearch()
+    }
+    document.addEventListener('keydown', onEscape)
+    overlays.add(() => {
+      document.removeEventListener('keydown', onEscape)
+      if (selectionExpiry) clearTimeout(selectionExpiry)
+      unregisterSelectionBack?.()
+    })
+
+    // Function declaration: history builds rows before the gesture controls initialise.
+    function addHoverActions(row: HTMLElement): void {
+      if (row.querySelector('.chat__hover-actions')) return
+      const actions = document.createElement('div')
+      actions.className = 'chat__hover-actions'
+      actions.setAttribute('role', 'toolbar')
+      actions.setAttribute('aria-label', 'Message actions')
+      for (const [label, icon, action] of [
+        ['React', REACT_ICON, (id: string) => showQuickReactions(id)],
+        ['Reply', REPLY_ICON, (id: string) => startReply(id)],
+        ['More message options', MORE_ICON, (id: string) => { selectedIds.add(id); updateSelection(); openSelectionMenu(row.querySelector('.chat__message-body')!) }],
+      ] as const) {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.innerHTML = icon
+        button.setAttribute('aria-label', label)
+        button.title = label
+        button.addEventListener('pointerdown', (e) => e.preventDefault())
+        button.addEventListener('click', (e) => { e.stopPropagation(); if (row.dataset.id) action(row.dataset.id) })
+        actions.append(button)
+      }
+      row.append(actions)
     }
 
     // Report a specific message or the other person. Both capture a category
@@ -2583,44 +2989,6 @@ export const ChatPage: Page = (root, go) => {
       })
     }
 
-    // The message menu: emoji row + Copy + Report everywhere; Reply only on
-    // desktop (phone replies via the right-swipe gesture).
-    const buildMessageMenu = (menu: HTMLElement, messageId: string, isDesktop: boolean): void => {
-      buildEmojiRow(menu, messageId)
-      const message = messagesById.get(messageId)
-      if (isDesktop) {
-        menu.append(
-          menuItem('Reply', false, () => {
-            startReply(messageId)
-            closeCtxMenu()
-          }),
-        )
-      }
-      if (message?.type === 'text') {
-        menu.append(
-          menuItem('Copy', false, () => {
-            closeCtxMenu()
-            const text = message.content
-            if (navigator.clipboard?.writeText) {
-              void navigator.clipboard.writeText(text).catch(() => showNotice('Could not copy.'))
-            } else {
-              showNotice('Copy is not available in this browser.')
-            }
-          }),
-        )
-      }
-      menu.append(
-        menuItem('Report message', true, () => {
-          closeCtxMenu()
-          openReportModal({ messageId })
-        }),
-        menuItem(`Report ${otherName.toLowerCase()}`, true, () => {
-          closeCtxMenu()
-          openReportModal({ person: true })
-        }),
-      )
-    }
-
     // --- Reply / react gestures: right-swipe = reply, long-press = react on
     // phone; right-click opens Reply/React on desktop.
     const SWIPE_TRIGGER = 60
@@ -2660,7 +3028,8 @@ export const ChatPage: Page = (root, go) => {
       'touchstart',
       (e) => {
         const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
-        if (!row?.dataset.id || row.dataset.type === 'call') return
+        if (!row?.dataset.id || row.dataset.type === 'call' || row.dataset.deleted || e.touches.length !== 1) return
+        cancelLongPress()
         swipeRow = row
         swipeStartX = e.touches[0].clientX
         swipeStartY = e.touches[0].clientY
@@ -2669,14 +3038,15 @@ export const ChatPage: Page = (root, go) => {
         const rowRect = row.getBoundingClientRect()
         const logRect = log.getBoundingClientRect()
         swipeIconTop = rowRect.top - logRect.top + log.scrollTop + rowRect.height / 2 - 8
-        const bubbleRect = (row.querySelector<HTMLElement>('.chat__message-body') ?? row).getBoundingClientRect()
         const id = row.dataset.id
+        const link = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[data-message-link]')
         longPressTimer = setTimeout(() => {
           longPressTimer = null
           swipeRow = null // cancel any in-progress reply-swipe tracking
           suppressClickUntil = Date.now() + 600 // eat the trailing touchend->click
           lastMenuFor = id
-          openPopover(bubbleRect, (menu) => buildMessageMenu(menu, id, false))
+          if (link) copyText(link.href.startsWith('tel:') ? link.textContent ?? link.href.slice(4) : link.href)
+          else selectMessage(id)
         }, LONG_PRESS_MS)
       },
       { passive: true },
@@ -2695,6 +3065,7 @@ export const ChatPage: Page = (root, go) => {
             swipeRow = null // vertical scroll — let it through, not a reply swipe
             return
           }
+          if (selectedIds.size) { swipeRow = null; return }
           swiping = true
           swipeRow.style.transition = 'none'
         }
@@ -2733,7 +3104,7 @@ export const ChatPage: Page = (root, go) => {
       swipeIcon?.remove()
       swipeIcon = null
       swipeRow = null
-      if (triggered) startReply(id)
+      if (triggered) { suppressClickUntil = Date.now() + 450; startReply(id) }
     }
     log.addEventListener('touchend', () => finishSwipe(true))
     log.addEventListener('touchcancel', () => finishSwipe(false))
@@ -2741,29 +3112,140 @@ export const ChatPage: Page = (root, go) => {
 
     log.addEventListener('contextmenu', (e) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
-      if (!row?.dataset.id || row.dataset.type === 'call') return
+      if (!row?.dataset.id || row.dataset.type === 'call' || row.dataset.deleted) return
       e.preventDefault()
-      // Long-press (touchstart/touchmove/touchend) already owns this gesture
-      // on touch — Android can fire a native contextmenu around the same
-      // ~450ms threshold as our own long-press timer, racing to open a
-      // second, differently-sized menu (this path always includes Reply,
-      // since it doesn't know it's actually a touch gesture) right on top of
-      // the first — reads as the popover flashing big then shrinking, and
-      // cuts its pop-in animation off mid-flight. Right-click only exists on
-      // desktop, so just don't build a menu here at all on a coarse pointer.
-      if (isCoarsePointer) return
       const id = row.dataset.id
       // The long-press timer already opened this menu on touch — don't rebuild.
       if (Date.now() < suppressClickUntil && lastMenuFor === id) return
       // Anchor to the bubble, not the cursor (e.clientX/Y), so the menu opens
       // in the same place relative to the message every time — not shifted
       // left/right depending on where inside it you happened to right-click.
-      const bubble = row.querySelector<HTMLElement>('.chat__message-body') ?? row
-      openPopover(bubble.getBoundingClientRect(), (menu) => buildMessageMenu(menu, id, true))
+      cancelLongPress()
+      const link = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[data-message-link]')
+      if (link) copyText(link.href.startsWith('tel:') ? link.textContent ?? link.href.slice(4) : link.href)
+      else selectMessage(id)
     })
+
+    // Mouse hold follows the same selection/copy rules as touch long press.
+    let holdStartX = 0
+    let holdStartY = 0
+    log.addEventListener('pointerdown', (e) => {
+      if (document.activeElement === input && (e.target as HTMLElement).closest('.chat__message-body')) e.preventDefault()
+      if (e.pointerType !== 'mouse' || e.button !== 0) return
+      const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
+      if (!row?.dataset.id || row.dataset.deleted || row.dataset.type === 'call' || (e.target as HTMLElement).closest('.chat__hover-actions, .chat__reaction-badge')) return
+      holdStartX = e.clientX
+      holdStartY = e.clientY
+      const link = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[data-message-link]')
+      cancelLongPress()
+      longPressTimer = setTimeout(() => {
+        suppressClickUntil = Date.now() + 600
+        if (link) copyText(link.href.startsWith('tel:') ? link.textContent ?? link.href.slice(4) : link.href)
+        else selectMessage(row.dataset.id!)
+      }, LONG_PRESS_MS)
+    })
+    log.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse' && (Math.abs(e.clientX - holdStartX) > 10 || Math.abs(e.clientY - holdStartY) > 10)) cancelLongPress() })
+    document.addEventListener('pointerup', cancelLongPress)
+    log.addEventListener('pointerleave', cancelLongPress)
+    let lastTapId = ''
+    let lastTapAt = 0
+    let linkTimer: ReturnType<typeof setTimeout> | null = null
+    let forwardingClick = false
+    log.addEventListener('click', (e) => {
+      if (forwardingClick) return
+      const target = e.target as HTMLElement
+      const row = target.closest<HTMLElement>('.chat__message')
+      if (!row?.dataset.id || row.dataset.deleted || row.dataset.type === 'call' || target.closest('.chat__hover-actions, .chat__reaction-badge')) return
+      const id = row.dataset.id
+      if (selectedIds.size) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        if (selectedIds.has(id)) selectedIds.delete(id)
+        else selectedIds.add(id)
+        closeCtxMenu()
+        updateSelection()
+        return
+      }
+      if (e.detail && lastTapId === id && Date.now() - lastTapAt < 320) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        if (linkTimer) clearTimeout(linkTimer)
+        lastTapAt = 0
+        showQuickReactions(id)
+        return
+      }
+      lastTapId = id
+      if (!e.detail) return
+      lastTapAt = Date.now()
+      const link = target.closest<HTMLAnchorElement>('a[data-message-link]')
+      // Wait for a second tap before opening a card, link, quote or timestamp.
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      if (linkTimer) clearTimeout(linkTimer)
+      linkTimer = setTimeout(() => {
+        if (disposed || !target.isConnected) return
+        if (link) {
+          if (link.href.startsWith('tel:')) location.assign(link.href)
+          else if (safeWebUrl(link.href)) window.open(link.href, '_blank', 'noopener,noreferrer')
+        } else {
+          forwardingClick = true
+          target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+          forwardingClick = false
+        }
+      }, 320)
+    }, { capture: true })
+    log.addEventListener('dblclick', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('.chat__message')
+      if (!row?.dataset.id || row.dataset.deleted || row.dataset.type === 'call' || selectedIds.size) return
+      e.preventDefault()
+      if (linkTimer) clearTimeout(linkTimer)
+      if (!ctxMenu) showQuickReactions(row.dataset.id)
+    })
+    log.addEventListener('keydown', (e) => {
+      if (e.key !== ' ' && e.key !== 'Enter') return
+      if (e.target !== (e.target as HTMLElement).closest('.chat__message')) return
+      const row = e.target as HTMLElement
+      if (row.dataset.id && !row.dataset.deleted) { e.preventDefault(); selectMessage(row.dataset.id) }
+    })
+    overlays.add(() => { cancelLongPress(); if (linkTimer) clearTimeout(linkTimer); document.removeEventListener('pointerup', cancelLongPress) })
+
+    const onMessageUpdate = (message: IncomingMessage): void => {
+      if (disposed) return
+      const previous = messagesById.get(message.id)
+      if (previous?.deletedAt && !message.deletedAt) return
+      if (previous?.editedAt && !message.deletedAt && (!message.editedAt || Date.parse(previous.editedAt) > Date.parse(message.editedAt))) return
+      messagesById.set(message.id, message)
+      const oldRow = rowsById.get(message.id)
+      if (oldRow) {
+        const atBottom = stickToBottom
+        const row = buildMessageRow(message, false)
+        const ownIndex = myRows.indexOf(oldRow)
+        if (ownIndex !== -1) myRows.splice(ownIndex, 1)
+        oldRow.replaceWith(row)
+        registerMessageRow(message, row)
+        updateGroup(row)
+        updateGroup(row.nextElementSibling)
+        if (atBottom) log.scrollTop = log.scrollHeight
+      }
+      for (const quote of log.querySelectorAll<HTMLElement>('.chat__quote')) {
+        if (quote.dataset.replyTo === message.id) quote.querySelector('.chat__quote-snippet')!.textContent = snippetOf(message)
+      }
+      if (message.deletedAt) {
+        reactionsByMessage.delete(message.id)
+        selectedIds.delete(message.id)
+        closeCtxMenu()
+        if (replyTarget?.id === message.id) cancelReply()
+        if (editTarget?.id === message.id) cancelEdit()
+      } else if (replyTarget?.id === message.id) { replyTarget = message; renderReplyBar() }
+      updateSelection()
+      renderPin()
+      if (searchInput.value.trim()) runSearch(searchInput.value)
+    }
 
     // --- Incoming ----------------------------------------------------------
     const onIncoming = (message: IncomingMessage): void => {
+      if (disposed) return
+      if (message.senderId !== myUserId) setOtherTyping(false)
       // A send already reconciled (via the ack or an earlier echo) — drop the repeat.
       if (message.tempId && resolvedTempIds.has(message.tempId)) return
       // Reconcile our own optimistic row by the client tempId echoed back —
@@ -2792,7 +3274,11 @@ export const ChatPage: Page = (root, go) => {
             }
           }
           entry.row.dataset.delivered = '1'
-          messagesById.set(message.id, { id: message.id, senderId: message.senderId, content: message.content, type: message.type })
+          messagesById.set(message.id, message)
+          if (message.type !== 'call' && message.type !== 'system') {
+            addHoverActions(entry.row)
+            entry.row.tabIndex = 0
+          }
           applyReceipt(entry.row)
           return
         }
@@ -2812,6 +3298,7 @@ export const ChatPage: Page = (root, go) => {
             setAlarmGlow(false)
           }
         } else if (message.senderId !== myUserId && Date.now() - Date.parse(message.createdAt) < ALARM_AUTO_CLEAR_MS) {
+          incomingAlarmId = message.id
           setAlarmGlow(true)
           // Hidden/backgrounded or native already ringing: native owns the sound,
           // so this layer shows the glow only (never two rings).
@@ -2819,7 +3306,7 @@ export const ChatPage: Page = (root, go) => {
           const hidden = document.visibilityState === 'hidden'
           void getNativeAlarmState().then((native) => {
             if (disposed || isAlarmSilenced(raiseId) || ackedRaises.has(raiseId)) return
-            alarmController?.start({ silent: hidden || native.ringing, alarmId: raiseId })
+            alarmController?.start({ silent: hidden || native.ringing, alarmId: raiseId, remainingMs: ALARM_AUTO_CLEAR_MS - (Date.now() - Date.parse(message.createdAt)) })
           })
         }
       }
@@ -2856,6 +3343,20 @@ export const ChatPage: Page = (root, go) => {
       try {
         await flushPending()
         let cursor = newestServerAt
+        // Include the editable window from BEFORE disconnect, even after a large backlog.
+        const refreshSince = (cursor ? Date.parse(cursor) : Date.now()) - EDIT_WINDOW_MS
+        let before: string | undefined
+        while (!disposed) {
+          const recent = await getMessages(connectionId, before)
+          if (disposed) return
+          for (const message of recent) {
+            if (rowsById.has(message.id)) onMessageUpdate(message)
+            else if (!cursor || message.createdAt > cursor) onIncoming(message)
+          }
+          const nextBefore = recent[0]?.createdAt
+          if (recent.length < HISTORY_PAGE || !nextBefore || nextBefore === before || Date.parse(nextBefore) <= refreshSince) break
+          before = nextBefore
+        }
         for (let pass = 0; pass < 10 && !disposed; pass++) {
           const batch = (await getMessages(connectionId, undefined, cursor ?? undefined))
             .slice()
@@ -2876,6 +3377,9 @@ export const ChatPage: Page = (root, go) => {
       transport = t
       unsubscribe = t.onMessage(onIncoming)
       unsubscribeReactions = t.onReaction(applyReactionUpdate)
+      overlays.add(t.onMessageUpdate(onMessageUpdate))
+      overlays.add(t.onPin(applyPin))
+      overlays.add(t.onTyping((update) => { if (!disposed && update.userId !== myUserId) setOtherTyping(update.typing) }))
       unsubscribeEnded = t.onConnectionEnded(() => {
         if (!disposed) go('connection-id')
       })
@@ -2883,6 +3387,8 @@ export const ChatPage: Page = (root, go) => {
       t.onStateChange((state, reconnected) => {
         if (disposed) return
         setConnState(state)
+        if (state !== 'connected') { setOtherTyping(false); typingSent = false; lastTypingSent = 0 }
+        else sendDraftTyping()
         if (state === 'connected' && reconnected) void resyncAfterReconnect()
       })
       // Receipts pushed over the socket flip ticks/presence instantly; the 4s
@@ -2955,6 +3461,10 @@ export const ChatPage: Page = (root, go) => {
       }
       reconcileLeave(next)
       renderBanner(next)
+      if (Date.now() - lastPinEvent >= 10_000) {
+        pinState = { messageId: next.pinnedMessageId ?? null, pinnedBy: next.pinnedBy ?? null, pinnedAt: next.pinnedAt ?? null }
+        renderPin()
+      }
       otherLastRead = next.otherLastReadAt
       otherLastDelivered = next.otherLastDeliveredAt
       refreshReceipts()
@@ -2982,6 +3492,43 @@ export const ChatPage: Page = (root, go) => {
       }, 4000)
     }
     if (!disposed) schedulePoll()
+
+    // A gentle in-app reminder precedes the browser's permission prompt.
+    const notificationReminder = async (): Promise<void> => {
+      if (!isPushSupported() || await isPushSubscribed() || disposed) return
+      let lastAsked = 0
+      try { lastAsked = Number(localStorage.getItem('notificationReminderAt')) } catch { /* private mode */ }
+      if (!notificationReminderDue(lastAsked)) return
+      try { localStorage.setItem('notificationReminderAt', String(Date.now())) } catch { /* private mode */ }
+      const box = document.createElement('div')
+      box.className = 'notice-popup'
+      box.innerHTML = '<h2>Turn on notifications?</h2><p>Get a gentle heads-up when a message arrives while the chat is closed.</p><div class="report-dialog__actions"><button type="button" data-later>Not now</button><button type="button" class="primary" data-enable>Turn on</button></div>'
+      const dispose = (): void => modal.close()
+      const modal = openModal(box, { onClose: () => overlays.delete(dispose) })
+      modal.panel.setAttribute('aria-label', 'Turn on notifications?')
+      overlays.add(dispose)
+      box.querySelector('[data-later]')!.addEventListener('click', modal.close)
+      box.querySelector('[data-enable]')!.addEventListener('click', () => { modal.close(); void toggleNotifications() })
+    }
+    if (!current.otherNickname) {
+      const box = document.createElement('form')
+      box.className = 'notice-popup'
+      box.innerHTML = '<h2>What would you like to call this person?</h2><input aria-label="Nickname" placeholder="Type a nickname" maxlength="40" required/><div class="report-dialog__actions"><button type="button" data-later>Later</button><button type="submit" class="primary">Save</button></div>'
+      const dispose = (): void => modal.close()
+      const modal = openModal(box, { onClose: () => { overlays.delete(dispose); if (!disposed) void notificationReminder() } })
+      modal.panel.setAttribute('aria-label', 'Choose a nickname')
+      overlays.add(dispose)
+      box.querySelector('[data-later]')!.addEventListener('click', modal.close)
+      box.addEventListener('submit', async (e) => {
+        e.preventDefault()
+        const name = box.querySelector<HTMLInputElement>('input')!.value.trim()
+        if (!name) return
+        const save = box.querySelector<HTMLButtonElement>('[type="submit"]')!
+        save.disabled = true
+        try { await setNickname(connectionId, name); if (!disposed) go('chat') }
+        catch (err) { save.disabled = false; showNotice(err instanceof Error ? err.message : 'Could not save nickname.') }
+      })
+    } else void notificationReminder()
   })().catch(() => {
     if (!disposed) go('connection-id')
   })
@@ -3005,15 +3552,31 @@ function renderChat(root: HTMLElement, displayName: string): void {
           <button type="button" class="chat__call-btn" id="call-btn" aria-label="Start audio call" disabled>${CALL_PHONE_ICON}</button>
           <button type="button" class="chat__menu-btn" id="menu-btn" aria-label="More options"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
         </div>
+        <div class="chat__selection" id="selection-bar" role="toolbar" aria-label="Selected message actions" aria-hidden="true" inert>
+          <button type="button" id="selection-close" aria-label="Clear selection">${CLOSE_ICON}</button>
+          <span id="selection-count" aria-live="polite">0</span>
+          <button type="button" id="selection-reply" aria-label="Reply" title="Reply">${REPLY_ICON}</button>
+          <button type="button" id="selection-edit" aria-label="Edit" title="Edit">${EDIT_ICON}</button>
+          <button type="button" id="selection-copy" aria-label="Copy" title="Copy">${COPY_ICON}</button>
+          <button type="button" id="selection-delete" aria-label="Delete for everyone" title="Delete for everyone">${DELETE_ICON}</button>
+          <button type="button" id="selection-more" aria-label="More selected message options">${MORE_ICON}</button>
+        </div>
       </div>
-      <div class="chat__search" id="chat-search" style="display: none;">
+      <div class="chat__strip" id="pin-banner" aria-hidden="true" inert><div class="chat__pin-banner">
+        <button type="button" class="chat__pin-open" id="pin-open" aria-label="Go to pinned message">${PIN_ICON}<span><strong id="pin-author"></strong><span id="pin-snippet"></span></span></button>
+        <button type="button" class="chat__strip-close" id="pin-unpin" aria-label="Unpin">${CLOSE_ICON}</button>
+      </div></div>
+      <div class="chat__strip" id="alarm-banner" aria-hidden="true" inert><div class="chat__alarm-banner" role="alert">
+        ${ALARM_ICON}<span id="alarm-banner-label"></span><span aria-hidden="true">·</span><button type="button" id="alarm-acknowledge">Acknowledge</button>
+      </div></div>
+      <div class="chat__strip" id="chat-search" aria-hidden="true" inert><div class="chat__search">
         <input id="search-input" aria-label="Search messages" placeholder="Search messages…" autocomplete="off" />
         <span class="chat__search-count" id="search-count">0/0</span>
-        <button type="button" class="chat__search-nav" id="search-prev" title="Older match">▲</button>
-        <button type="button" class="chat__search-nav" id="search-next" title="Newer match">▼</button>
-        <button type="button" class="chat__search-close" id="search-close" aria-label="Close search">✕</button>
-      </div>
-      <div class="chat__leave-banner" id="leave-banner" style="display: none;"></div>
+        <button type="button" class="chat__search-nav" id="search-prev" aria-label="Older match" title="Older match"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button>
+        <button type="button" class="chat__search-nav" id="search-next" aria-label="Newer match" title="Newer match"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button type="button" class="chat__search-close" id="search-close" aria-label="Close search">${CLOSE_ICON}</button>
+      </div></div>
+      <div class="chat__strip" id="leave-strip" aria-hidden="true" inert><div class="chat__leave-banner" id="leave-banner"></div></div>
       <div class="chat__log" id="chat-log">
         <div class="chat__enc-note chat__system-line">
           <svg class="chat__enc-note-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
@@ -3021,17 +3584,21 @@ function renderChat(root: HTMLElement, displayName: string): void {
         </div>
       </div>
       <div class="chat__composer-area">
-      <div class="chat__reply-bar" id="reply-bar">
+      <div class="chat__strip chat__reply-bar" id="reply-bar" aria-hidden="true" inert><div class="chat__reply-bar-content">
         <div class="chat__reply-bar-info">
           <div class="chat__reply-bar-name" id="reply-bar-name"></div>
           <div class="chat__reply-bar-snippet" id="reply-bar-snippet"></div>
         </div>
-        <button type="button" class="chat__reply-bar-cancel" id="reply-bar-cancel" aria-label="Cancel reply">✕</button>
-      </div>
+        <button type="button" class="chat__reply-bar-cancel" id="reply-bar-cancel" aria-label="Cancel reply">${CLOSE_ICON}</button>
+      </div></div>
+      <div class="chat__strip chat__reply-bar" id="edit-bar" aria-hidden="true" inert><div class="chat__reply-bar-content">
+        <div class="chat__reply-bar-info"><div class="chat__reply-bar-name">Edit message</div><div class="chat__reply-bar-snippet" id="edit-bar-snippet"></div></div>
+        <button type="button" class="chat__reply-bar-cancel" id="edit-bar-cancel" aria-label="Cancel edit">${CLOSE_ICON}</button>
+      </div></div>
       <form class="chat__input-bar" id="composer">
         <div class="chat__input-pill">
         <button type="button" class="chat__icon-btn" id="attach-btn" title="Attach" aria-label="Attach"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5L13 2a4 4 0 0 1 6 6l-9 9a2 2 0 0 1-3-3l8-8"/></svg></button>
-        <textarea id="message-input" aria-label="Message" placeholder="Message" autocomplete="off" enterkeyhint="send" rows="1"></textarea>
+        <textarea id="message-input" aria-label="Message" placeholder="Message" maxlength="4000" autocomplete="off" enterkeyhint="send" rows="1"></textarea>
         <div class="chat__recording-bar" id="recording-bar" hidden>
           <span class="chat__recording-dot"></span>
           <span class="chat__recording-time" id="recording-time">0:00</span>
@@ -3047,6 +3614,13 @@ function renderChat(root: HTMLElement, displayName: string): void {
     </div>
   `
 
+  // An unpadded grid child lets hidden strips fold fully to zero height.
+  for (const strip of root.querySelectorAll<HTMLElement>('.chat__strip')) {
+    const inner = document.createElement('div')
+    inner.className = 'chat__strip-inner'
+    inner.append(...strip.childNodes)
+    strip.append(inner)
+  }
   root.querySelector<HTMLDivElement>('#nav-title')!.textContent = displayName
   root.querySelector<HTMLElement>('#nav-avatar')!.textContent = Array.from(displayName.trim())[0]?.toUpperCase() ?? '?'
 }

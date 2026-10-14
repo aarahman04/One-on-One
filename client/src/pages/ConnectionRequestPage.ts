@@ -36,7 +36,7 @@ export const ConnectionRequestPage: Page = (root, go) => {
         declineBtn.disabled = true
         try {
           await acceptConnection(current.id)
-          go('nickname')
+          go('chat')
         } catch (err) {
           errorEl.textContent = err instanceof Error ? err.message : 'Failed to accept.'
           errorEl.style.display = 'block'

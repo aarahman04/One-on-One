@@ -3,6 +3,8 @@
 // prefers-reduced-motion. A safety timeout backs up `animationend` in case
 // the animation doesn't fire (e.g. the class has no matching keyframes).
 export function animateOutAndRemove(el: HTMLElement, closingClass: string, fallbackMs = 200): void {
+  el.inert = true
+  el.setAttribute('aria-hidden', 'true')
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     el.remove()
     return

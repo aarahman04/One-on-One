@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "test": "node --test test/chatRules.test.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

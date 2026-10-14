@@ -13,6 +13,30 @@ export interface IncomingMessage {
   payload: unknown | null
   replyTo: string | null
   tempId?: string // echoed back to the sender for optimistic reconciliation
+  reactions?: { emoji: string; userIds: string[] }[]
+  editedAt?: string | null
+  deletedAt?: string | null
+}
+
+export interface PinState {
+  messageId: string | null
+  pinnedBy: string | null
+  pinnedAt: string | null
+}
+
+export interface TypingUpdate {
+  userId: string
+  typing: boolean
+}
+
+export interface LinkPreview {
+  url: string
+  title: string | null
+  description: string | null
+  siteName: string
+  image: string | null
+  imageMime: string | null
+  imageKind: 'cover' | 'icon' | null
 }
 
 export interface ReactionUpdate {
@@ -43,6 +67,14 @@ export interface Transport {
     tempId?: string,
   ): Promise<IncomingMessage | undefined>
   onMessage(callback: (message: IncomingMessage) => void): () => void
+  editMessage(messageId: string, content: string): Promise<IncomingMessage>
+  deleteMessage(messageId: string): Promise<IncomingMessage>
+  onMessageUpdate(callback: (message: IncomingMessage) => void): () => void
+  pinMessage(messageId: string | null): Promise<PinState>
+  onPin(callback: (pin: PinState) => void): () => void
+  sendTyping(typing: boolean): void
+  onTyping(callback: (update: TypingUpdate) => void): () => void
+  getLinkPreview(url: string): Promise<LinkPreview | null>
   sendReaction(messageId: string, emoji: string, op: 'add' | 'remove'): Promise<void>
   onReaction(callback: (update: ReactionUpdate) => void): () => void
   onConnectionEnded(callback: () => void): () => void
