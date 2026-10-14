@@ -1,5 +1,18 @@
 # Progress Log
 
+## [Web parity] Android 2.0.3 chat features — 2026-10-14
+Status: implemented on `feat/web-android-chat-parity`; client build and nine focused tests pass. Browser contract-fixture checks pass at 360px and 1280px in Chromium, installed Chrome/Edge and Firefox, in light/dark with off/love/samurai wallpapers. PR targets `main`; no merge or deployment.
+What shipped:
+- Transport support for edit/delete/pin/typing/link-preview and authoritative mutation updates; history types share the full message shape. Reconnect refreshes pages through the pre-disconnect 30-minute window, then preserves the existing cursor catch-up and optimistic-send reconciliation. A 55-message backlog test covers an edited row pushed outside the newest page.
+- Double-click/double-tap quick reactions in the bubble palette, highlighted current reaction, toggle-to-remove and animated counted chips. “+” opens a lazy full Unicode picker with categories, search and local recents (no new production dependency).
+- Long press / mouse hold / right-click / keyboard selection; header actions reply, edit, chronological copy, confirmed delete, Pin/Unpin, Save a copy and Report. Desktop hover actions; Escape clears selection/edit/reply. Edit uses the composer and Up shortcut; failures retain drafts. Deleted rows and quotes show “This message was deleted”, with no cards/reactions/actions.
+- Shared pin banner (initial connection fields + live events + poll fallback), paging/highlight jumps for pins and reply quotes. Typing status and staggered three-dot bubble: three-second send throttle, six-second expiry, clears on incoming/send/empty.
+- Cached server-side link cards; wide covers vs thumbnails, safe http(s) targets, bounded raster decoding checks (MIME, bytes, signature, dimensions). Android domain/phone/date fixtures and word-start search; links/numbers copy on hold/right-click, double-click still reacts.
+- Contrast-checked Android read-blue tokens, pulsing emergency border and acknowledge banner; reopening does not silence or acknowledge. Existing short-history paging rule retained, nickname prompt reachable, notification reminder stored for three days.
+- Animated selection/header swap, menus/group chevrons, search/banners/composer bars, slash menu, dialogs, picker, chips and 320ms messages. Reduced motion respected; exiting overlays become inert; hidden strips fold to zero height. Menus follow their message within the log without covering the header.
+Verification: `npm test` (9 passing), `npm run build` passing; isolated browser checks cover reactions/picker/card double-taps, copy/eligibility, edit/delete failures and success, pins/unloaded jumps, typing/expiry, safe previews, search/deleted quotes, alarm reopening/ack, paging, reminders, nickname prompt/save, copy downloads, reports, hover reply, touch double-tap/long-press/swipe, mouse hold and responsive overflow checks. Production CSP is unchanged. The fixture replaces auth, permits its local API in test HTML only, and never writes to deployed accounts.
+Not verified: two real accounts against the deployed backend; real push permission/subscription/delivery or tapping an OS notification; audible alarms in a physical/backgrounded browser; physical phone keyboards; attachment downloading and report moderation on the live service. Native Android, `backend/`, `database/`, and the user's existing untracked files were not edited.
+
 ## RESUME HERE — native Android 2.0.0 (versionCode 7) built with D1–D5 design fixes, awaiting device test (2026-10-10)
 Native Kotlin app in https://github.com/aarahman04/One-on-One-Android.git. A0–A7 (PRs #1–#9), restyle S1–S5 (#10–#14) and design fixes D1–D5 (#16–#20) merged.
 Signed release **2.0.0 / versionCode 7** built 2026-10-10 (Android repo Actions run 38031209794, `android-release` artifact). Not uploaded to Play; next upload needs versionCode 8+. Release table: Android repo `docs/PROGRESS.md` → Releases.
@@ -10,14 +23,14 @@ Owner to-dos:
 Then: W6 (remove Capacitor `android/` from this repo).
 
 ## [Backend] Edit / delete / pin / typing / any-emoji reactions / link previews — 2026-10-14
-Status: built + unit-tested, NOT deployed (needs migration 036 first).
+Status: built + unit-tested; deployed and migration 036 applied per the 2026-10-14 web-parity task.
 What shipped (branch `feat/edit-delete-pin-typing-preview`):
 - Migration 036: `messages.edited_at/deleted_at`, `connections.pinned_message_id/pinned_by/pinned_at`.
 - Socket `message:edit` / `message:delete` (sender only, 30 min, server clock) -> `message:update`; `message:pin` (one shared pin, replaces) -> `pin:update`; `typing` relay (not stored). `/connections/current` returns the pin.
 - Reactions accept any single emoji (regex-validated), not just the six.
 - `GET /api/link-preview?url=`: server-side Open Graph unfurl (cover art / favicon as base64) so the reader's phone never contacts the site. SSRF-guarded (public IPs only, checked at connect and per redirect; 80/443; size/time caps; no SVG). Verified live: YouTube, Shorts, youtu.be, Spotify, Apple Music, Instagram, X, Facebook, LinkedIn, GitHub, Amazon, Reddit, SoundCloud, Vimeo, Wikipedia, BBC, Flipkart, Pinterest. Medium blocks the server's TLS fingerprint (no card); TikTok uses its oEmbed (unverifiable from India).
 - Tests: `backend/test/messageChanges.test.ts` (edit/delete rules, SSRF guard, meta parsing, emoji validation).
-Notes/deviations: the web client is unchanged — it ignores the new events/fields (edits/deletes show after a reload there).
+Notes/deviations: web client support now ships in the Web parity entry above.
 
 ## [Android] Design fixes D1–D5 — 2026-10-10
 Status: merged (Android PRs #16–#20); no web/backend changes.
