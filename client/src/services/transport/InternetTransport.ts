@@ -1,6 +1,7 @@
 import { io, type Socket } from 'socket.io-client'
 import { supabase } from '../supabaseClient'
-import type { IncomingMessage, MessageType, ReactionUpdate, ReceiptUpdate, Transport, TransportState } from './Transport'
+import type { IncomingMessage, LinkPreview, MessageType, PinState, ReactionUpdate, ReceiptUpdate, Transport, TransportState, TypingUpdate } from './Transport'
+import { authedFetch } from '../apiClient'
 import type { CallTransport } from './CallTransport'
 import { InternetCallTransport } from './InternetCallTransport'
 
@@ -95,15 +96,16 @@ export class InternetTransport implements Transport {
     return new InternetCallTransport(this.socket)
   }
 
-  private emitWithAck(event: string, payload: unknown): Promise<{ message?: IncomingMessage }> {
+  private emitWithAck(event: string, payload: unknown): Promise<{ message?: IncomingMessage; pin?: PinState }> {
     const socket = this.socket
     if (!socket || !socket.connected) throw new Error('not connected')
-    return new Promise<{ message?: IncomingMessage }>((resolve, reject) => {
+    return new Promise<{ message?: IncomingMessage; pin?: PinState }>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('send timeout')), ACK_TIMEOUT_MS)
-      socket.emit(event, payload, (res: { ok?: boolean; error?: string; message?: IncomingMessage }) => {
+      socket.emit(event, payload, (res: { ok?: boolean; error?: string; message?: IncomingMessage; pin?: PinState }) => {
         clearTimeout(timer)
         if (res?.error) reject(new Error(res.error))
-        else resolve({ message: res?.message })
+        else if (!res?.ok) reject(new Error('Server did not confirm the action.'))
+        else resolve(res)
       })
     })
   }
@@ -128,6 +130,56 @@ export class InternetTransport implements Transport {
     return () => {
       socket.off('message:new', callback)
     }
+  }
+
+  async editMessage(messageId: string, content: string): Promise<IncomingMessage> {
+    const { message } = await this.emitWithAck('message:edit', { messageId, content })
+    if (!message?.id) throw new Error('Server did not confirm the edit.')
+    return message
+  }
+
+  async deleteMessage(messageId: string): Promise<IncomingMessage> {
+    const { message } = await this.emitWithAck('message:delete', { messageId })
+    if (!message?.id) throw new Error('Server did not confirm the deletion.')
+    return message
+  }
+
+  onMessageUpdate(callback: (message: IncomingMessage) => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    socket.on('message:update', callback)
+    return () => { socket.off('message:update', callback) }
+  }
+
+  async pinMessage(messageId: string | null): Promise<PinState> {
+    const { pin } = await this.emitWithAck('message:pin', { messageId })
+    if (!pin) throw new Error('Server did not confirm the pin.')
+    return pin
+  }
+
+  onPin(callback: (pin: PinState) => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    socket.on('pin:update', callback)
+    return () => { socket.off('pin:update', callback) }
+  }
+
+  sendTyping(typing: boolean): void {
+    // Never buffer ephemeral typing while offline.
+    if (this.socket?.connected) this.socket.emit('typing', { typing })
+  }
+
+  onTyping(callback: (update: TypingUpdate) => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    socket.on('typing', callback)
+    return () => { socket.off('typing', callback) }
+  }
+
+  async getLinkPreview(url: string): Promise<LinkPreview | null> {
+    const res = await authedFetch(`/api/link-preview?url=${encodeURIComponent(url)}`)
+    if (!res.ok) throw new Error('Could not load the link preview.')
+    return ((await res.json()) as { preview: LinkPreview | null }).preview
   }
 
   async sendReaction(messageId: string, emoji: string, op: 'add' | 'remove'): Promise<void> {

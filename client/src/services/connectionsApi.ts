@@ -1,4 +1,5 @@
 import { authedFetch } from './apiClient'
+import type { IncomingMessage } from './transport/Transport'
 
 async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -26,6 +27,9 @@ export interface CurrentConnection {
   otherLastDeliveredAt: string | null
   wallpaper: string
   messageStyle: string
+  pinnedMessageId: string | null
+  pinnedBy: string | null
+  pinnedAt: string | null
 }
 
 export interface LeaveResult {
@@ -41,14 +45,7 @@ export interface ReactionSummary {
   userIds: string[]
 }
 
-export interface HistoryMessage {
-  id: string
-  senderId: string
-  content: string
-  createdAt: string
-  type: 'text' | 'letter' | 'voice' | 'image' | 'file' | 'alarm' | 'call'
-  payload: unknown | null
-  replyTo: string | null
+export interface HistoryMessage extends IncomingMessage {
   reactions: ReactionSummary[]
 }
 
