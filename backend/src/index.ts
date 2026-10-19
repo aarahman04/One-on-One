@@ -7,7 +7,7 @@ import { messagesRouter } from './routes/messages.js'
 import { attachmentsRouter } from './routes/attachments.js'
 import { pushRouter } from './routes/push.js'
 import { turnRouter } from './routes/turn.js'
-import { ConnectionError } from './services/connectionService.js'
+import { ConnectionError, startEndedConnectionSweeper } from './services/connectionService.js'
 import { createSocketServer } from './websocket/socketServer.js'
 import { apiLimiter } from './middleware/rateLimit.js'
 
@@ -45,7 +45,7 @@ app.use((err: unknown, _req: express.Request, res: express.Response, next: expre
     return
   }
   if (err instanceof ConnectionError) {
-    res.status(err.status).json({ error: err.message })
+    res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) })
     return
   }
   console.error(err)
@@ -58,3 +58,4 @@ createSocketServer(httpServer, allowedOrigins)
 httpServer.listen(port, () => {
   console.log(`server listening on port ${port}`)
 })
+startEndedConnectionSweeper()

@@ -53,7 +53,8 @@ attachmentsRouter.post('/connections/:id/gifs', previewLimiter, async (req, res)
 attachmentsRouter.post('/connections/:id/attachments/signed', async (req, res) => {
   const user = req.appUser!
   const connectionId = req.params.id
-  await getConnectionForMember(connectionId, user.id, { requireLive: true })
+  // The partner of a just-ended connection still views media until purge.
+  await getConnectionForMember(connectionId, user.id, { requireLive: true, allowEndedPartner: true })
 
   const paths = Array.isArray(req.body?.paths) ? req.body.paths.filter((p: unknown) => typeof p === 'string') : []
   const prefix = `${connectionId}/`

@@ -1,5 +1,6 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
-import { isLiveStatus, otherMemberId } from '../utils/connections.js'
+import { ENDED_RETENTION_MS, isLiveStatus, otherMemberId } from '../utils/connections.js'
 import { RAISE_EXCEPTION } from '../utils/pgErrors.js'
 import { getConnectionForMember, memberOrFilter } from './connectionAccess.js'
 import { ConnectionError } from '../utils/connectionError.js'
@@ -7,11 +8,12 @@ import { deleteConnectionAttachments } from './attachmentService.js'
 import { forceEndCall } from './callService.js'
 import { addBlock, isBlockedBetween } from './blockService.js'
 import { avatarIds } from './avatarService.js'
+import { sendToUser } from './pushService.js'
 
 // Re-exported for the many call sites that import it from here.
 export { ConnectionError }
 
-type ConnectionStatus = 'pending' | 'active' | 'leave_pending' | 'terminated' | 'declined'
+type ConnectionStatus = 'pending' | 'active' | 'leave_pending' | 'terminated' | 'declined' | 'ended'
 
 interface ConnectionRow {
   id: string
@@ -94,6 +96,7 @@ export async function requestConnection(requesterUserId: string, targetCode: str
     throw memberError
   }
 
+  await purgeEndedForPartner(requesterUserId)
   return data
 }
 
@@ -128,7 +131,9 @@ export async function acceptConnection(connectionId: string, userId: string): Pr
   if (await isBlockedBetween(userId, otherMemberId(connection, userId))) {
     throw new ConnectionError(409, "couldn't send a request to that connection ID")
   }
-  return transitionStatus(connectionId, 'pending', 'active', 'connection is no longer pending')
+  const accepted = await transitionStatus(connectionId, 'pending', 'active', 'connection is no longer pending')
+  await purgeEndedForPartner(userId)
+  return accepted
 }
 
 export async function declineConnection(connectionId: string, userId: string): Promise<ConnectionRow> {
@@ -145,8 +150,9 @@ export async function cancelRequest(connectionId: string, userId: string): Promi
   return transitionStatus(connectionId, 'pending', 'declined', 'connection is no longer pending')
 }
 
-// Stage E leave model (overrides spec §25 auto-expire): 5 deliberate steps, one per 24h,
-// solo-completable — reaching step 5 terminates on its own. See docs/PROGRESS.md.
+// The old 5-step / 24h leave countdown (Stage E) is gone — leaving is instant
+// (leaveConnection). The step fields stay in CurrentConnection so Android
+// 2.0.5 keeps parsing; migration 039 reset them to 0 / null.
 const LEAVE_STEPS_TOTAL = 5
 const LEAVE_STEP_INTERVAL_MS = 24 * 60 * 60 * 1000
 
@@ -186,6 +192,10 @@ interface CurrentConnection {
   // Opaque ids of the current profile photos (change on replace); null = none or not live.
   myAvatarId: string | null
   otherAvatarId: string | null
+  // Set only for status 'ended' (shown to the partner, never the leaver).
+  endedBy: string | null
+  endedAt: string | null
+  purgeAt: string | null
 }
 
 interface CurrentConnectionRow {
@@ -198,7 +208,17 @@ interface CurrentConnectionRow {
   pinned_message_id: string | null
   pinned_by: string | null
   pinned_at: string | null
+  ended_at: string | null
+  ended_by: string | null
   connection_members: MemberLeaveRow[]
+}
+
+const CURRENT_SELECT =
+  'id, status, user_a_id, user_b_id, wallpaper, message_style, pinned_message_id, pinned_by, pinned_at, ended_at, ended_by, ' +
+  'connection_members(user_id, nickname, leave_step, leave_last_step_at, last_read_at, last_delivered_at)'
+
+function purgeAtFor(endedAt: string): string {
+  return new Date(new Date(endedAt).getTime() + ENDED_RETENTION_MS).toISOString()
 }
 
 export async function getCurrentConnection(userId: string): Promise<CurrentConnection | null> {
@@ -207,16 +227,29 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
   // 016) must not 500 every request and lock the user out. Newest wins.
   const { data: connRows, error } = await supabaseAdmin
     .from('connections')
-    .select(
-      'id, status, user_a_id, user_b_id, wallpaper, message_style, pinned_message_id, pinned_by, pinned_at, ' +
-        'connection_members(user_id, nickname, leave_step, leave_last_step_at, last_read_at, last_delivered_at)',
-    )
+    .select(CURRENT_SELECT)
     .in('status', ['pending', 'active', 'leave_pending'])
     .or(memberOrFilter(userId))
     .order('updated_at', { ascending: false })
     .limit(1)
   if (error) throw error
-  const data = (connRows?.[0] as unknown as CurrentConnectionRow | undefined) ?? null
+  let data = (connRows?.[0] as unknown as CurrentConnectionRow | undefined) ?? null
+  if (!data) {
+    // Nothing live: the partner of a connection the OTHER member left still
+    // gets it (read-only) until they acknowledge or the 7 days run out. The
+    // leaver never matches (ended_by = them) and sees "no connection".
+    const { data: endedRows, error: endedError } = await supabaseAdmin
+      .from('connections')
+      .select(CURRENT_SELECT)
+      .eq('status', 'ended')
+      .neq('ended_by', userId)
+      .gt('ended_at', new Date(Date.now() - ENDED_RETENTION_MS).toISOString())
+      .or(memberOrFilter(userId))
+      .order('ended_at', { ascending: false })
+      .limit(1)
+    if (endedError) throw endedError
+    data = (endedRows?.[0] as unknown as CurrentConnectionRow | undefined) ?? null
+  }
   if (!data) return null
 
   const otherUserId = otherMemberId(data, userId)
@@ -262,6 +295,9 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     pinnedAt: data.pinned_at ?? null,
     myAvatarId: avatars.mine,
     otherAvatarId: avatars.other,
+    endedBy: data.status === 'ended' ? data.ended_by : null,
+    endedAt: data.status === 'ended' ? data.ended_at : null,
+    purgeAt: data.status === 'ended' && data.ended_at ? purgeAtFor(data.ended_at) : null,
   }
 }
 
@@ -302,158 +338,182 @@ export async function markDelivered(connectionId: string, userId: string): Promi
   receiptEmitter?.(connectionId, userId, { lastDeliveredAt: now })
 }
 
-async function getMemberLeave(connectionId: string, userId: string): Promise<MemberLeaveRow> {
-  const { data, error } = await supabaseAdmin
-    .from('connection_members')
-    .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
-    .eq('connection_id', connectionId)
-    .eq('user_id', userId)
-    .maybeSingle()
-  if (error) throw error
-  if (!data) throw new ConnectionError(404, 'connection membership not found')
-  return data as MemberLeaveRow
+const RETRY_DELAY_MS = 500
+
+// Storage deletes can hiccup; three tries with a short backoff before giving up.
+async function withRetry(fn: () => Promise<void>, attempts = 3): Promise<void> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      if (i >= attempts) throw err
+      await delay(RETRY_DELAY_MS * i)
+    }
+  }
 }
 
-// Both member rows in one query (leave paths that need to look at both members).
-async function getMemberLeaveRows(connectionId: string, userIds: string[]): Promise<MemberLeaveRow[]> {
-  const { data, error } = await supabaseAdmin
-    .from('connection_members')
-    .select('user_id, nickname, leave_step, leave_last_step_at, last_read_at')
-    .eq('connection_id', connectionId)
-    .in('user_id', userIds)
-  if (error) throw error
-  return (data ?? []) as MemberLeaveRow[]
-}
-
-// Termination deletes the whole conversation — the data belongs to the
-// participants (they can export first). connection_members + messages cascade
-// off the connection FK (on delete cascade), so one delete clears everything.
+// Block-and-end only: the connection row goes first (safety beats tidiness);
+// connection_members + messages cascade off its FK. Storage is cleaned after,
+// with retries; a leftover object under a dead prefix is unreachable anyway
+// (every route checks membership first) and is logged.
 async function terminate(connectionId: string): Promise<void> {
   // The connection is the app's authorization unit (spec §20) — a live call
-  // has no basis to keep running once it's gone, so end it before the delete
-  // rather than leave two peers mid-call on a connection that no longer
-  // exists. The messages FK cascades on delete, so any call-log row this
-  // writes is gone a moment later regardless — matches "termination deletes
-  // the whole conversation" below.
+  // has no basis to keep running once it's gone.
   forceEndCall(connectionId)
 
   const { error } = await supabaseAdmin.from('connections').delete().eq('id', connectionId)
   if (error) throw error
 
-  // Storage isn't covered by the connections table's FK cascade — clean it up
-  // separately. Best-effort: a Storage hiccup shouldn't leave the connection
-  // half-terminated, but a leftover object under a dead connection's prefix
-  // is unreachable anyway (every route checks live membership first).
   try {
-    await deleteConnectionAttachments(connectionId)
+    await withRetry(() => deleteConnectionAttachments(connectionId))
   } catch (err) {
-    console.error('terminate: failed to clean up attachments', err)
+    console.error(`terminate: failed to clean up attachments for ${connectionId}`, err)
+  }
+}
+
+// Hard delete of an ended connection: every Storage object (all pages, with
+// retries) FIRST, then the row (members/messages cascade). If Storage still
+// fails the row survives, so the hourly sweep retries instead of orphaning
+// objects nobody could list again.
+export async function purgeConnection(connectionId: string): Promise<void> {
+  await withRetry(() => deleteConnectionAttachments(connectionId))
+  const { error } = await supabaseAdmin.from('connections').delete().eq('id', connectionId)
+  if (error) throw error
+}
+
+// Starting a new connection implicitly acknowledges any ended one this user
+// was left by. Best-effort: the sweep still purges it within 7 days.
+async function purgeEndedForPartner(userId: string): Promise<void> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('connections')
+      .select('id')
+      .eq('status', 'ended')
+      .neq('ended_by', userId)
+      .or(memberOrFilter(userId))
+    if (error) throw error
+    for (const row of data ?? []) await purgeConnection(row.id)
+  } catch (err) {
+    console.error('purgeEndedForPartner failed (sweep will retry)', err)
   }
 }
 
 interface LeaveResult {
   status: ConnectionStatus
+  // Legacy countdown fields, kept so Android 2.0.5 still parses the response.
   myLeaveStep: number
   daysRemaining: number | null
   bothLeaving: boolean
   terminated: boolean
+  endedAt: string
+  purgeAt: string
 }
 
-// Advance MY leave countdown by one step (gated to once per 24h). Reaching the
-// final step terminates the connection solo — no agreement from the other member.
-export async function advanceLeave(connectionId: string, userId: string): Promise<LeaveResult> {
+// Instant leave: one tap ends the connection for both. The leaver's access
+// stops now and they (and the partner) can start a new connection at once —
+// 'ended' isn't a live status, so migration 016's guards ignore it. The
+// partner keeps read-only history until acknowledge-end or ended_at + 7 days.
+export async function leaveConnection(connectionId: string, userId: string): Promise<LeaveResult> {
   const connection = await getConnectionForMember(connectionId, userId, { requireLive: true })
-
-  // Both member rows up front — the other member's step (read after the RPC for
-  // `bothLeaving`) can't change during my own advance, so no second fetch.
-  const otherUserId = otherMemberId(connection, userId)
-  const memberRows = await getMemberLeaveRows(connectionId, [userId, otherUserId])
-  const mine = memberRows.find((r) => r.user_id === userId)
-  if (!mine) throw new ConnectionError(404, 'connection membership not found')
-  const otherLeaveStep = memberRows.find((r) => r.user_id === otherUserId)?.leave_step ?? 0
-  if (!canAdvance(mine.leave_last_step_at)) {
-    throw new ConnectionError(429, 'you can advance the countdown once every 24 hours')
-  }
-
-  // Conditional advance done entirely in SQL (migration 019): pins the from-step
-  // and re-checks the 24h cooldown against the DB clock, so two parallel
-  // requests can't both advance and a server clock change can't shift the gate.
-  // No row back = another request got there first, or the cooldown isn't up.
-  const newStep = mine.leave_step + 1
-  const { data: updatedRows, error } = await supabaseAdmin.rpc('advance_leave_step', {
-    p_connection_id: connectionId,
-    p_user_id: userId,
-    p_from_step: mine.leave_step,
-  })
+  const endedAt = new Date().toISOString()
+  // Conditional on still-live status: a double tap, or both members leaving at
+  // once, ends it exactly once; the loser gets 409 and is the partner.
+  const { data, error } = await supabaseAdmin
+    .from('connections')
+    .update({ status: 'ended', ended_at: endedAt, ended_by: userId, updated_at: endedAt })
+    .eq('id', connectionId)
+    .in('status', ['active', 'leave_pending'])
+    .select('id')
+    .maybeSingle()
   if (error) throw error
-  const updated = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows
-  if (!updated) throw new ConnectionError(429, 'the countdown was already advanced')
+  if (!data) throw new ConnectionError(409, 'connection is not active')
 
-  if (newStep >= LEAVE_STEPS_TOTAL) {
-    await terminate(connectionId)
-    return { status: 'terminated', myLeaveStep: newStep, daysRemaining: 0, bothLeaving: false, terminated: true }
-  }
-
-  if (connection.status !== 'leave_pending') {
-    const { error: statusError } = await supabaseAdmin
-      .from('connections')
-      .update({ status: 'leave_pending', updated_at: new Date().toISOString() })
-      .eq('id', connectionId)
-    if (statusError) throw statusError
-  }
-
+  // Same reason as terminate(): no call outlives the connection.
+  forceEndCall(connectionId)
+  void notifyPartnerLeft(connection, userId)
   return {
-    status: 'leave_pending',
-    myLeaveStep: newStep,
-    daysRemaining: LEAVE_STEPS_TOTAL - newStep,
-    bothLeaving: newStep > 0 && otherLeaveStep > 0,
-    terminated: false,
+    status: 'ended',
+    myLeaveStep: LEAVE_STEPS_TOTAL,
+    daysRemaining: 0,
+    bothLeaving: false,
+    terminated: true,
+    endedAt,
+    purgeAt: purgeAtFor(endedAt),
   }
 }
 
-// Cancel MY leave countdown. If neither member is leaving anymore, connection returns to active.
-export async function cancelLeave(connectionId: string, userId: string): Promise<LeaveResult> {
+// Push to the partner. The title uses what the partner calls the leaver —
+// stored on the leaver's own member row (nicknames are local, spec §11).
+async function notifyPartnerLeft(
+  connection: { id: string; user_a_id: string; user_b_id: string },
+  leaverId: string,
+): Promise<void> {
+  try {
+    const { data } = await supabaseAdmin
+      .from('connection_members')
+      .select('nickname')
+      .eq('connection_id', connection.id)
+      .eq('user_id', leaverId)
+      .maybeSingle()
+    const title = `${data?.nickname || 'Your connection'} left the connection`
+    const body = 'Open One on One to save your conversation.'
+    await sendToUser(otherMemberId(connection, leaverId), {
+      title,
+      body,
+      native: { type: 'connection_left', connectionId: connection.id, title, body },
+    })
+  } catch (err) {
+    console.error(`leave: partner push failed for ${connection.id}`, err)
+  }
+}
+
+// The partner is done with the read-only history (saved or not): purge now.
+export async function acknowledgeEnd(connectionId: string, userId: string): Promise<void> {
   const connection = await getConnectionForMember(connectionId, userId)
-  if (connection.status !== 'leave_pending') throw new ConnectionError(409, 'no leave in progress')
+  if (connection.status !== 'ended') throw new ConnectionError(409, 'connection has not ended')
+  if (connection.ended_by === userId) throw new ConnectionError(403, 'only the other member can acknowledge')
+  await purgeConnection(connectionId)
+}
 
-  const { error } = await supabaseAdmin
-    .from('connection_members')
-    .update({ leave_step: 0, leave_last_step_at: null, updated_at: new Date().toISOString() })
-    .eq('connection_id', connectionId)
-    .eq('user_id', userId)
-  if (error) throw error
-
-  const other = await getMemberLeave(connectionId, otherMemberId(connection, userId))
-  let status: ConnectionStatus = 'leave_pending'
-  if (other.leave_step === 0) {
-    const { error: statusError } = await supabaseAdmin
+// Purge every ended connection past its 7-day window. Overlap-guarded so a
+// slow run (big Storage prefixes) never runs twice at once; one failing
+// connection is logged and retried next run without blocking the others.
+const SWEEP_INTERVAL_MS = 60 * 60 * 1000
+let sweeping = false
+export async function sweepEndedConnections(now = Date.now()): Promise<number> {
+  if (sweeping) return 0
+  sweeping = true
+  try {
+    const { data, error } = await supabaseAdmin
       .from('connections')
-      .update({ status: 'active', updated_at: new Date().toISOString() })
-      .eq('id', connectionId)
-    if (statusError) throw statusError
-    status = 'active'
+      .select('id')
+      .eq('status', 'ended')
+      .lte('ended_at', new Date(now - ENDED_RETENTION_MS).toISOString())
+      .limit(500)
+    if (error) throw error
+    let purged = 0
+    for (const row of data ?? []) {
+      try {
+        await purgeConnection(row.id)
+        purged++
+      } catch (err) {
+        console.error(`sweep: purge failed for ${row.id} (retrying next run)`, err)
+      }
+    }
+    if (purged) console.log(`sweep: purged ${purged} ended connection(s)`)
+    return purged
+  } finally {
+    sweeping = false
   }
-
-  return { status, myLeaveStep: 0, daysRemaining: null, bothLeaving: false, terminated: false }
 }
 
-// Mutual fast-path: when BOTH members are leaving, either can end immediately,
-// skipping the remaining days. Requires both steps > 0.
-export async function confirmEndLeave(connectionId: string, userId: string): Promise<LeaveResult> {
-  const connection = await getConnectionForMember(connectionId, userId)
-  if (connection.status !== 'leave_pending') throw new ConnectionError(409, 'no leave in progress')
-
-  const otherUserId = otherMemberId(connection, userId)
-  const memberRows = await getMemberLeaveRows(connectionId, [userId, otherUserId])
-  const mine = memberRows.find((r) => r.user_id === userId)
-  const other = memberRows.find((r) => r.user_id === otherUserId)
-  if (!mine || !other) throw new ConnectionError(404, 'connection membership not found')
-  if (mine.leave_step === 0 || other.leave_step === 0) {
-    throw new ConnectionError(409, 'both members must be leaving to end immediately')
+// Once at startup, then hourly. unref'd so it never keeps the process alive.
+export function startEndedConnectionSweeper(): void {
+  const run = (): void => {
+    sweepEndedConnections().catch((err) => console.error('sweep failed', err))
   }
-
-  await terminate(connectionId)
-  return { status: 'terminated', myLeaveStep: mine.leave_step, daysRemaining: 0, bothLeaving: true, terminated: true }
+  run()
+  setInterval(run, SWEEP_INTERVAL_MS).unref()
 }
 
 // "Block & end" (Play UGC safety): end the connection immediately — no 5-step

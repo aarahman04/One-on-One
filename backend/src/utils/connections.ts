@@ -19,3 +19,22 @@ export function otherMemberId(
 export function room(connectionId: string): string {
   return `conn:${connectionId}`
 }
+
+// Partner keeps read-only history this long after the other member leaves.
+export const ENDED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
+// An ended connection the caller may still READ: they did not leave it and
+// the 7-day window is open. The leaver loses access at once.
+export function isEndedReadable(
+  conn: { status: string; ended_by?: string | null; ended_at?: string | null },
+  userId: string,
+  now = Date.now(),
+): boolean {
+  return (
+    conn.status === 'ended' &&
+    !!conn.ended_by &&
+    conn.ended_by !== userId &&
+    !!conn.ended_at &&
+    new Date(conn.ended_at).getTime() + ENDED_RETENTION_MS > now
+  )
+}

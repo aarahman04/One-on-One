@@ -5,6 +5,8 @@ export class ConnectionError extends Error {
   constructor(
     public status: number,
     message: string,
+    // Optional machine-readable code, sent as `code` next to `error`.
+    public code?: string,
   ) {
     super(message)
   }

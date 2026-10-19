@@ -1,5 +1,13 @@
 # Progress Log
 
+## [Backend] Instant leave, sign-in gates, game relay, instant receipts — 2026-10-19
+
+Implemented on `feat/leave-games-gates` for review; no merge, no migration run, no deploy.
+- Migrations `038_user_gates.sql` (gate timestamps on users) and `039_instant_leave.sql` (`ended` status, `ended_at`/`ended_by`, sweep index, reset of in-flight countdowns). Run both in Supabase **before** deploying the backend.
+- Leave is instant; the partner keeps read-only history and media for 7 days or until acknowledge / starting a new connection; then a hard delete including every Storage page. Hourly sweep. Old countdown routes return 410. Block-and-end unchanged.
+- `GET/POST /api/me/gates`, `connection_left` push, `game:*` socket relay (validated, partner-only, 40 moves/s), socket `message:read`, `POST /connections/:id/delivered`, paginated attachment cleanup. Contract: `docs/API-CONTRACT.md` §10.
+- Validation: `npm test` (new `test/leaveGames.test.ts` on an in-memory Supabase fake) and `npm run build`. Not checked against a real Supabase/Postgres (trigger/constraint behaviour is from reading migrations 016/033) or a device. The web client (`client/`) was not changed; its leave countdown UI now gets instant leave / 410.
+
 ## [Web] Android 2.0.5 owner feedback — 2026-10-19
 
 Implemented on `feat/web-owner-feedback-1019` for review; no merge or production deployment.

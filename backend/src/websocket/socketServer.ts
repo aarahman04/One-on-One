@@ -2,8 +2,8 @@ import type { Server as HttpServer } from 'node:http'
 import { Server, type Socket } from 'socket.io'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { resolveUserFromToken } from '../services/authToken.js'
-import { ConnectionError, markDelivered, setReceiptEmitter } from '../services/connectionService.js'
-import { getLiveConnectionForUser, type MemberConnection } from '../services/connectionAccess.js'
+import { ConnectionError, markDelivered, markRead, setReceiptEmitter } from '../services/connectionService.js'
+import { getLiveConnectionForUser, hasInactiveConnection, type MemberConnection } from '../services/connectionAccess.js'
 import {
   saveMessage,
   bumpSenderLastRead,
@@ -33,6 +33,7 @@ import {
 } from '../services/callService.js'
 import { getIceServers } from '../services/turnService.js'
 import { registerPresence } from './presence.js'
+import { registerGameHandlers } from './games.js'
 
 interface SocketData {
   userId: string
@@ -483,6 +484,27 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         console.error('typing relay failed:', err)
       }
     })
+
+    // Instant read receipt over the open socket — same effect and checks
+    // (membership + live) as POST /connections/:id/read, which stays.
+    socket.on(
+      'message:read',
+      async (msg: { connectionId?: unknown }, ack?: (res: unknown) => void) => {
+        try {
+          if (!withinRateLimit()) return ack?.({ ok: false, error: 'slow down' })
+          const { userId } = socket.data as SocketData
+          const connectionId = typeof msg?.connectionId === 'string' ? msg.connectionId : ''
+          if (!connectionId) return ack?.({ ok: false, error: 'connectionId is required' })
+          await markRead(connectionId, userId)
+          ack?.({ ok: true })
+        } catch (err) {
+          ack?.({ ok: false, error: clientError(err, 'failed to mark read') })
+        }
+      },
+    )
+
+    // game:* relay (games.ts): non-move events share the flood guard above.
+    registerGameHandlers(io, socket, { withinRateLimit, getConnection: getLiveConnectionForUser, hasInactiveConnection })
 
     socket.on(
       'reaction:add',

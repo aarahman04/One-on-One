@@ -83,18 +83,24 @@ export async function signAttachments(paths: string[]): Promise<Record<string, s
   return urls
 }
 
-// Called from connectionService.terminate() â€” Storage isn't covered by the
-// connections table's FK cascade, so a left connection's media would
-// otherwise outlive it (privacy leak). Best-effort: the caller logs and
-// swallows failures rather than blocking termination on a Storage hiccup.
+// Called from connectionService (purge / block-terminate / account delete) —
+// Storage isn't covered by the connections table's FK cascade, so a gone
+// connection's media would otherwise outlive it (privacy leak). Lists every
+// page (Storage caps a list at 1000) before removing, so nothing is skipped;
+// throws on any Storage error so the caller can retry.
+const LIST_PAGE = 1000
 export async function deleteConnectionAttachments(connectionId: string): Promise<void> {
-  const { data, error } = await supabaseAdmin.storage.from(BUCKET).list(connectionId, { limit: 1000 })
-  if (error) throw error
-  if (!data?.length) return
-
-  const paths = data.map((f) => `${connectionId}/${f.name}`)
-  const { error: removeError } = await supabaseAdmin.storage.from(BUCKET).remove(paths)
-  if (removeError) throw removeError
+  const paths: string[] = []
+  for (let offset = 0; ; offset += LIST_PAGE) {
+    const { data, error } = await supabaseAdmin.storage.from(BUCKET).list(connectionId, { limit: LIST_PAGE, offset })
+    if (error) throw error
+    paths.push(...(data ?? []).map((f) => `${connectionId}/${f.name}`))
+    if ((data?.length ?? 0) < LIST_PAGE) break
+  }
+  for (let i = 0; i < paths.length; i += LIST_PAGE) {
+    const { error } = await supabaseAdmin.storage.from(BUCKET).remove(paths.slice(i, i + LIST_PAGE))
+    if (error) throw error
+  }
 }
 
 // One attachment, after its message was deleted for everyone. Best-effort: logs, never throws.
