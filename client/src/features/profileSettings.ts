@@ -1,6 +1,7 @@
 import { openModal } from '../components/Modal'
 import { getAvatars, putAvatar, removeAvatar } from '../services/profileGifApi'
 import { privatePhoto } from './stickerLibrary'
+import { listBlocks, unblock } from '../services/meApi'
 import { readPhoto } from './stickerMaker'
 
 export function renderAvatar(el: HTMLElement, url: string | null, name: string): void {
@@ -42,6 +43,26 @@ export function openProfileSettings(owner: string, connectionId: string, onChang
       if (target === 'mine') await putAvatar(blob)
       else await privatePhoto(owner, connectionId, blob)
     })
+  })
+  const blocked = document.createElement('section')
+  blocked.innerHTML = '<h3>Blocked accounts</h3><button type="button">Show blocked accounts</button><div role="status"></div>'
+  box.querySelector('[data-close]')!.before(blocked)
+  blocked.querySelector('button')!.addEventListener('click', async () => {
+    const list = blocked.querySelector('div')!
+    list.textContent = 'Loading…'
+    try {
+      const accounts = await listBlocks()
+      if (closed) return
+      list.replaceChildren()
+      if (!accounts.length) list.textContent = 'No blocked accounts'
+      for (const account of accounts) {
+        const row = document.createElement('div'), label = document.createElement('span'), remove = document.createElement('button')
+        label.textContent = `Account blocked on ${new Date(account.createdAt).toLocaleDateString()}`
+        remove.type = 'button'; remove.textContent = 'Unblock'
+        remove.addEventListener('click', async () => { remove.disabled = true; try { await unblock(account.blockedUserId); row.remove() } catch { remove.disabled = false; error.textContent = 'Could not unblock. Try again.' } })
+        row.append(label, remove); list.append(row)
+      }
+    } catch { if (!closed) list.textContent = 'Could not load blocked accounts. Try again.' }
   })
   box.querySelector('[data-close]')!.addEventListener('click', modal.close)
   void load().catch((err) => { if (!closed) error.textContent = err instanceof Error ? err.message : 'Could not load photos.' })

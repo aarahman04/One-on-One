@@ -12,6 +12,8 @@ export interface SlashContext {
   writeThisOrThat: () => void
   writeAlarm: () => void
   writeLocation: () => void
+  playGames: () => void
+  writeAudio: () => void
 }
 
 interface SlashCommand {
@@ -21,6 +23,8 @@ interface SlashCommand {
 }
 
 const COMMANDS: SlashCommand[] = [
+  { name: 'games', description: 'Play a game together', run: (ctx) => { ctx.input.value = ''; ctx.playGames() } },
+  { name: 'audio', description: 'Speak and turn it into text', run: (ctx) => { ctx.input.value = ''; ctx.writeAudio() } },
   { name: 'letter', description: 'Write a letter', run: (ctx) => { ctx.input.value = ''; ctx.writeLetter() } },
   { name: 'countdown', description: 'Start a shared countdown', run: (ctx) => { ctx.input.value = ''; ctx.writeCountdown() } },
   { name: 'checkin', description: 'How are you, really?', run: (ctx) => { ctx.input.value = ''; ctx.writeCheckin() } },
@@ -47,6 +51,7 @@ export function runIfCommand(value: string, ctx: SlashContext): boolean {
   const cmd = matchCommand(value)
   if (!cmd) return false
   cmd.run(ctx)
+  ctx.input.dispatchEvent(new Event('input', { bubbles: true }))
   return true
 }
 
@@ -65,6 +70,7 @@ export function mountSlashCommands(composer: HTMLElement, input: HTMLTextAreaEle
     if (!cmd) return
     hide()
     cmd.run(ctx)
+    ctx.input.dispatchEvent(new Event('input', { bubbles: true }))
   }
 
   const render = (): void => {

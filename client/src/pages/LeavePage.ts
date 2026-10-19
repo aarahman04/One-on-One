@@ -1,123 +1,35 @@
 import type { Page } from '../state/router'
-import { getCurrentConnection, advanceLeave, cancelLeave, confirmEndLeave } from '../services/connectionsApi'
+import { getCurrentConnection, leaveConnection } from '../services/connectionsApi'
 import { loadingScreenHtml } from '../utils/loadingScreen'
-import { openBlockConfirm } from '../features/blockUser'
+import { openArchiveSave } from '../features/conversationArchive'
+import { nextScreenFor } from '../state/nextScreen'
 
 export const LeavePage: Page = (root, go) => {
+  let disposed = false, closeArchive: (() => void) | undefined
   root.innerHTML = loadingScreenHtml()
-
-  getCurrentConnection()
-    .then((current) => {
-      if (!current || (current.status !== 'active' && current.status !== 'leave_pending')) {
-        go('connection-id')
-        return
-      }
-
-      const id = current.id
-      const errorHtml = `<div class="screen__subtitle screen__error" id="leave-error"></div>`
-      const showError = (msg: string): void => {
-        const el = root.querySelector<HTMLDivElement>('#leave-error')!
-        el.textContent = msg
-        el.style.display = 'block'
-      }
-
-      // Both members are leaving — offer the immediate mutual end.
-      if (current.bothLeaving) {
-        root.innerHTML = `
-          <div class="screen">
-            <div class="screen__eyebrow">END CONNECTION</div>
-            <div class="screen__title">This conversation is going to end.</div>
-            <div class="screen__subtitle">You both chose to leave. You can end it now instead of waiting out the countdown.</div>
-            <div class="screen__actions">
-              <button id="cancel-btn">Back to chat</button>
-              <button id="end-btn" class="danger">Leave now</button>
-            </div>
-            ${errorHtml}
-          </div>
-        `
-        root.querySelector<HTMLButtonElement>('#cancel-btn')!.addEventListener('click', () => go('chat'))
-        const endBtn = root.querySelector<HTMLButtonElement>('#end-btn')!
-        endBtn.addEventListener('click', async () => {
-          endBtn.disabled = true
-          try {
-            await confirmEndLeave(id)
-            go('connection-id')
-          } catch (err) {
-            showError(err instanceof Error ? err.message : 'Failed to end connection.')
-            endBtn.disabled = false
-          }
-        })
-        return
-      }
-
-      const inProgress = current.myLeaveStep > 0
-      const remaining = current.daysRemaining ?? 5
-      const cooling = inProgress && !current.canAdvanceLeave
-
-      const dayLabel = `${remaining} ${remaining === 1 ? 'day' : 'days'} remaining`
-      const subtitle = inProgress
-        ? `You're leaving this connection — ${dayLabel}.`
-        : `Leaving is deliberate: five daily steps, one every 24 hours. Either of you can stop it, and no one can be forced out.`
-      // The 24h wait is information, not an action — shown as text, not a dead button.
-      const note = cooling
-        ? `<div class="screen__subtitle" style="opacity:0.7;">Next step available in about 24 hours.</div>`
-        : ''
-
-      root.innerHTML = `
-        <div class="screen">
-          <div class="screen__eyebrow">LEAVE CONNECTION</div>
-          <div class="screen__subtitle">${subtitle}</div>
-          ${note}
-          <div class="screen__actions">
-            <button id="cancel-btn">${inProgress ? 'Keep connection' : 'Cancel'}</button>
-            <button id="ok-btn" class="primary">OK</button>
-          </div>
-          <button type="button" class="screen__alt" id="block-btn">Block &amp; end now — if this person is harassing you</button>
-          ${errorHtml}
-        </div>
-      `
-
-      const cancelBtn = root.querySelector<HTMLButtonElement>('#cancel-btn')!
-      const okBtn = root.querySelector<HTMLButtonElement>('#ok-btn')!
-
-      root.querySelector<HTMLButtonElement>('#block-btn')!.addEventListener('click', () => {
-        openBlockConfirm({
-          connectionId: id,
-          peerName: (current.otherNickname ?? 'they').toLowerCase(),
-          onBlocked: () => go('connection-id'),
-        })
-      })
-
-      cancelBtn.addEventListener('click', async () => {
-        cancelBtn.disabled = true
-        okBtn.disabled = true
-        if (inProgress) {
-          try {
-            await cancelLeave(id)
-          } catch {
-            /* fall through to chat regardless */
-          }
-        }
-        go('chat')
-      })
-
-      okBtn.addEventListener('click', async () => {
-        // In the 24h cooldown, OK just returns; otherwise it advances the countdown.
-        if (cooling) {
-          go('chat')
-          return
-        }
-        cancelBtn.disabled = true
-        okBtn.disabled = true
-        try {
-          const result = await advanceLeave(id)
-          go(result.terminated ? 'connection-id' : 'chat')
-        } catch (err) {
-          showError(err instanceof Error ? err.message : 'Failed to update leave.')
-          cancelBtn.disabled = false
-          okBtn.disabled = false
-        }
-      })
-    })
-    .catch(() => go('connection-id'))
+  void getCurrentConnection().then((current) => {
+    if (disposed) return
+    if (!current || !['active', 'leave_pending'].includes(current.status)) { go(current ? nextScreenFor(current) : 'connection-id'); return }
+    root.innerHTML = `<div class="screen"><div class="screen__title">Leave connection?</div>
+      <p class="screen__subtitle">Chat, photos, letters and files will be deleted for both of you.</p>
+      <div class="screen__actions"><button class="primary" data-save>Save a copy first</button>
+      <button class="danger" data-leave>Leave without saving</button><button data-cancel>Cancel</button></div>
+      <p role="status" class="media-error"></p></div>`
+    let leaving = false
+    const leave = async () => {
+      if (disposed || leaving) return
+      leaving = true
+      root.querySelectorAll('button').forEach((b) => { b.disabled = true })
+      try { await leaveConnection(current.id); if (!disposed) go('connection-id') }
+      catch (err) {
+        if (disposed) return
+        root.querySelector('[role="status"]')!.textContent = err instanceof Error ? err.message : 'Could not leave. Try again.'
+        root.querySelectorAll('button').forEach((b) => { b.disabled = false })
+      } finally { leaving = false }
+    }
+    root.querySelector('[data-save]')!.addEventListener('click', () => { closeArchive = openArchiveSave(current, () => void leave()) })
+    root.querySelector('[data-leave]')!.addEventListener('click', () => void leave())
+    root.querySelector('[data-cancel]')!.addEventListener('click', () => go('chat'))
+  }).catch(() => { if (!disposed) go('chat') })
+  return () => { disposed = true; closeArchive?.() }
 }

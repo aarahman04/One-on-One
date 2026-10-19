@@ -47,10 +47,12 @@ export function openThisOrThatComposer(opts: {
       btn.type = 'button'
       btn.className = 'thisorthat-pick-opt' + (o.id === pickSender ? ' thisorthat-pick-opt--active' : '')
       btn.textContent = o.label
+      btn.setAttribute('aria-pressed', String(o.id === pickSender))
       btn.addEventListener('click', () => {
         pickSender = o.id
         renderPicker()
       })
+      if (o.id === 'b') { const or = document.createElement('span'); or.className = 'thisorthat-card__vs'; or.textContent = 'or'; picker.append(or) }
       picker.append(btn)
     }
   }
@@ -73,44 +75,4 @@ export function openThisOrThatComposer(opts: {
     onSend(`${optionA} vs ${optionB}`, { optionA, optionB, pickSender })
     modal.close()
   })
-}
-
-// Answer modal: the recipient sees both options — never the sender's pick —
-// and taps one. Picking sends immediately and reveals both at once (no
-// separate confirm step; that immediacy is the point of the format).
-export function openThisOrThatAnswerModal(opts: {
-  optionA: string
-  optionB: string
-  onPick: (pickRecipient: ThisOrThatPick) => void
-}): void {
-  const { optionA, optionB, onPick } = opts
-  const container = document.createElement('div')
-  container.className = 'thisorthat-compose'
-  container.innerHTML = `
-    <div class="msg-compose__title">This or that?</div>
-    <div class="thisorthat-compose__picker"></div>
-    <div class="msg-compose__actions">
-      <button type="button" id="thisorthat-answer-cancel">Cancel</button>
-    </div>
-  `
-  const modal = openModal(container)
-  const picker = container.querySelector<HTMLDivElement>('.thisorthat-compose__picker')!
-
-  const options: { id: ThisOrThatPick; label: string }[] = [
-    { id: 'a', label: optionA },
-    { id: 'b', label: optionB },
-  ]
-  for (const o of options) {
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = 'thisorthat-pick-opt'
-    btn.textContent = o.label
-    btn.addEventListener('click', () => {
-      onPick(o.id)
-      modal.close()
-    })
-    picker.append(btn)
-  }
-
-  container.querySelector('#thisorthat-answer-cancel')!.addEventListener('click', () => modal.close())
 }

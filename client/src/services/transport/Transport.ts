@@ -62,6 +62,16 @@ export interface ReceiptUpdate {
 // UI text: "connecting…" / "waiting for network".
 export type TransportState = 'connected' | 'connecting' | 'offline'
 
+export type GameEventName = 'game:invite' | 'game:accept' | 'game:decline' | 'game:move' | 'game:end'
+export interface GamePacket {
+  gameId: string
+  game?: string
+  seq?: number
+  data?: unknown
+  reason?: string
+}
+export interface GameEvent extends GamePacket { name: GameEventName; from: string }
+
 export interface Transport {
   connect(): Promise<void>
   disconnect(): void
@@ -92,4 +102,7 @@ export interface Transport {
   // anything missed while away).
   onStateChange(callback: (state: TransportState, reconnected: boolean) => void): () => void
   getState(): TransportState
+  markRead(connectionId: string): Promise<void>
+  sendGame(event: GameEventName, payload: GamePacket): Promise<void>
+  onGame(callback: (event: GameEvent) => void): () => void
 }

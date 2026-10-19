@@ -19,7 +19,7 @@ import { openLetter, openLetterComposer, type LetterPayload } from '../features/
 import { formatCountdown, openCountdownComposer, type CountdownPayload } from '../features/countdown'
 import { moodEmoji, openCheckinComposer, type CheckinPayload } from '../features/checkin'
 import { openAskAnswerModal, openAskComposer, type AskPayload } from '../features/ask'
-import { openThisOrThatAnswerModal, openThisOrThatComposer, type ThisOrThatPayload } from '../features/thisorthat'
+import { openThisOrThatComposer, type ThisOrThatPayload } from '../features/thisorthat'
 import { AUTO_CLEAR_MS as ALARM_AUTO_CLEAR_MS, confirmSendAlarm, createAlarmController, type AlarmController } from '../features/alarm'
 import {
   getNativeAlarmState,
@@ -28,6 +28,10 @@ import {
   setNativeChatActive,
 } from '../features/alarmNative'
 import { writeLocationFlow, type LocationPayload } from '../features/location'
+import { nextScreenFor } from '../state/nextScreen'
+import { mountGames } from '../features/games/ui'
+import { startVoiceTyping } from '../features/voiceTyping'
+import { swipeClaim, swipeOffset } from '../utils/swipeReply'
 import { commandHints, mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { getNotificationsLabel, isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
@@ -146,6 +150,7 @@ interface FilePayload {
 }
 
 function mediaPathOf(message: ChatMessage): string | null {
+  if (message.deletedAt) return null
   if (message.type !== 'image' && message.type !== 'voice' && message.type !== 'file') return null
   const p = message.payload as { path?: unknown } | null
   return typeof p?.path === 'string' ? p.path : null
@@ -244,7 +249,7 @@ export const ChatPage: Page = (root, go) => {
     const current = await getCurrentConnection()
     if (disposed) return
     if (!current || (current.status !== 'active' && current.status !== 'leave_pending')) {
-      go('connection-id')
+      go(current ? nextScreenFor(current) : 'connection-id')
       return
     }
 
@@ -430,8 +435,10 @@ export const ChatPage: Page = (root, go) => {
     // presence heartbeat (see MARK_HEARTBEAT_MS), not on every 4s tick.
     let lastMarkAt = 0
     const markReadNow = (): void => {
+      if (document.visibilityState !== 'visible' || disposed) return
       lastMarkAt = Date.now()
-      void markRead(connectionId).catch(() => {})
+      if (transport?.getState() === 'connected') void transport.markRead(connectionId).catch(() => { if (!disposed && document.visibilityState === 'visible') void markRead(connectionId).catch(() => {}) })
+      else void markRead(connectionId).catch(() => {})
     }
     // Native rings whenever the app is open on any screen EXCEPT this one.
     void setNativeChatActive(true)
@@ -628,10 +635,7 @@ export const ChatPage: Page = (root, go) => {
     // after `transport` is populated by connectMessaging().
     const reactionsByMessage = new Map<string, ReactionSummary[]>()
 
-    // Plain emoji, no badge box — sits below the bubble as its own line in
-    // the message row (a child of `row`, NOT `.chat__message-body`, so it's
-    // never drawn over the bubble's own background). One reaction per user
-    // per message, so a 1:1 chat needs at most two emoji here (me + other).
+    // One rounded reaction pill overlaps the bubble's lower edge.
     const renderReactionChips = (messageId: string): void => {
       const row = rowsById.get(messageId)
       if (!row) return
@@ -641,6 +645,7 @@ export const ChatPage: Page = (root, go) => {
       if (!badge) {
         badge = document.createElement('div')
         badge.className = 'chat__reaction-badge'
+        badge.setAttribute('role', 'group')
         row.append(badge)
       }
       for (const chip of badge.querySelectorAll<HTMLElement>('.chat__reaction-chip')) {
@@ -648,11 +653,10 @@ export const ChatPage: Page = (root, go) => {
       }
       for (const r of list) {
         let chip = [...badge.querySelectorAll<HTMLButtonElement>('.chat__reaction-chip:not(.chat__reaction-chip--closing)')].find((c) => c.dataset.emoji === r.emoji)
-        const previousCount = chip?.dataset.count
         if (!chip) {
           chip = document.createElement('button')
           chip.dataset.emoji = r.emoji
-          chip.innerHTML = '<span class="chat__reaction-emoji"></span><span class="chat__reaction-count"></span>'
+          chip.innerHTML = '<span class="chat__reaction-emoji"></span>'
           chip.querySelector('.chat__reaction-emoji')!.textContent = r.emoji
           chip.addEventListener('pointerdown', (e) => e.preventDefault())
           chip.addEventListener('click', (e) => { e.stopPropagation(); toggleReaction(messageId, r.emoji) })
@@ -660,13 +664,15 @@ export const ChatPage: Page = (root, go) => {
         }
         chip.type = 'button'
         chip.className = 'chat__reaction-chip'
-        chip.dataset.count = String(r.userIds.length)
         chip.setAttribute('aria-label', `${r.emoji}, ${r.userIds.length} reaction${r.userIds.length === 1 ? '' : 's'}`)
         chip.setAttribute('aria-pressed', String(r.userIds.includes(myUserId)))
-        const count = chip.querySelector<HTMLElement>('.chat__reaction-count')!
-        count.textContent = String(r.userIds.length)
-        if (previousCount && previousCount !== chip.dataset.count && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) count.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 200 })
       }
+      badge.querySelector('.chat__reaction-total')?.remove()
+      const total = list.reduce((sum, r) => sum + r.userIds.length, 0)
+      badge.hidden = !total
+      row.classList.toggle('chat__message--has-reactions', total > 0)
+      badge.setAttribute('aria-label', `${total} reactions`)
+      if (total > 1) { const count = document.createElement('span'); count.className = 'chat__reaction-total'; count.textContent = String(total); badge.append(count) }
     }
 
     // One reaction per user per message: adding an emoji replaces whatever
@@ -796,7 +802,7 @@ export const ChatPage: Page = (root, go) => {
       card.append(icon, txt)
       card.addEventListener('click', (e) => {
         e.stopPropagation() // don't also toggle the row's timestamp
-        openLetter(message.content, p, message.createdAt)
+        overlays.add(openLetter(message.content, p, message.createdAt))
       })
       return card
     }
@@ -950,7 +956,7 @@ export const ChatPage: Page = (root, go) => {
 
       if (p.answerB) {
         const original = message.replyTo ? messagesById.get(message.replyTo) : undefined
-        const aName = original ? (original.senderId === myUserId ? 'You' : otherName) : otherName
+        const aName = original ? (original.senderId === myUserId ? 'You' : otherName) : isMine ? otherName : 'You'
         const bName = isMine ? 'You' : otherName
 
         const card = document.createElement('div')
@@ -1025,13 +1031,13 @@ export const ChatPage: Page = (root, go) => {
         // is pickRecipient's, not pickSender's — resolve the poll author from
         // the original message it replies to (same as askCard above).
         const original = message.replyTo ? messagesById.get(message.replyTo) : undefined
-        const senderName = original ? (original.senderId === myUserId ? 'You' : otherName) : otherName
+        const senderName = original ? (original.senderId === myUserId ? 'You' : otherName) : isMine ? otherName : 'You'
         const recipientName = isMine ? 'You' : otherName
-        const picksFor = (opt: 'a' | 'b'): string => {
+        const picksFor = (opt: 'a' | 'b'): string[] => {
           const names: string[] = []
           if (p.pickSender === opt) names.push(senderName)
           if (p.pickRecipient === opt) names.push(recipientName)
-          return names.join(' & ')
+          return names
         }
 
         const card = document.createElement('div')
@@ -1052,22 +1058,22 @@ export const ChatPage: Page = (root, go) => {
           text.textContent = label
           const picks = document.createElement('div')
           picks.className = 'thisorthat-card__picks'
-          picks.textContent = picksFor(opt)
+          for (const name of picksFor(opt)) { const chip = document.createElement('span'); chip.className = 'thisorthat-card__pick'; chip.textContent = name; picks.append(chip) }
           cell.append(text, picks)
           return cell
         }
 
         const vs = document.createElement('span')
         vs.className = 'thisorthat-card__vs'
-        vs.textContent = 'vs'
+        vs.textContent = 'or'
         options.append(buildOption('a', optionA), vs, buildOption('b', optionB))
         body.append(options)
+        if (p.pickSender === p.pickRecipient) { const matched = document.createElement('div'); matched.className = 'thisorthat-card__matched'; matched.textContent = 'You matched!'; body.append(matched) }
         card.append(icon, body)
         return card
       }
 
-      const card = document.createElement('button')
-      card.type = 'button'
+      const card = document.createElement('div')
       card.className = 'thisorthat-card'
       const icon = document.createElement('span')
       icon.className = 'thisorthat-card__icon'
@@ -1076,31 +1082,22 @@ export const ChatPage: Page = (root, go) => {
       body.className = 'thisorthat-card__body'
       const prompt = document.createElement('div')
       prompt.className = 'thisorthat-card__prompt'
-      prompt.textContent = `${optionA} vs ${optionB}`
+      prompt.classList.add('thisorthat-card__options')
+      for (const [index, label] of [optionA, optionB].entries()) {
+        if (index) { const or = document.createElement('span'); or.className = 'thisorthat-card__vs'; or.textContent = 'or'; prompt.append(or) }
+        const tile = document.createElement('button')
+        tile.type = 'button'; tile.className = 'thisorthat-card__option'; tile.textContent = label; tile.disabled = isMine
+        tile.addEventListener('click', (event) => {
+          event.stopPropagation()
+          sendMessage(`${optionA} vs ${optionB}`, 'thisorthat', { optionA, optionB, pickSender: p.pickSender ?? 'a', pickRecipient: index === 0 ? 'a' : 'b' }, message.id ?? null)
+        })
+        prompt.append(tile)
+      }
       const hint = document.createElement('div')
       hint.className = 'thisorthat-card__hint'
-      hint.textContent = isMine ? `sealed — waiting for ${otherName.toLowerCase()} to pick` : 'sealed — tap to pick'
+      hint.textContent = isMine ? `sealed — waiting for ${otherName.toLowerCase()} to pick` : 'Their choice is sealed. Tap yours.'
       body.append(prompt, hint)
       card.append(icon, body)
-      card.addEventListener('click', (e) => {
-        e.stopPropagation() // don't also toggle the row's timestamp
-        if (isMine) {
-          showNotice(`Waiting for ${otherName.toLowerCase()} to pick.`)
-          return
-        }
-        openThisOrThatAnswerModal({
-          optionA,
-          optionB,
-          onPick: (pickRecipient) => {
-            sendMessage(
-              `${optionA} vs ${optionB}`,
-              'thisorthat',
-              { optionA, optionB, pickSender: p.pickSender ?? 'a', pickRecipient },
-              message.id ?? null,
-            )
-          },
-        })
-      })
       return card
     }
 
@@ -1804,66 +1801,6 @@ export const ChatPage: Page = (root, go) => {
       for (const row of myRows) applyReceipt(row)
     }
 
-    // --- System lines (leave events) --------------------------------------
-    const appendSystemLine = (line: string): void => {
-      const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80
-      const el = document.createElement('div')
-      el.className = 'chat__system-line'
-      el.textContent = line
-      log.appendChild(el)
-      if (atBottom) log.scrollTop = log.scrollHeight
-    }
-    const dayWord = (n: number): string => `${n} ${n === 1 ? 'day' : 'days'} remaining`
-
-    const banner = root.querySelector<HTMLDivElement>('#leave-banner')!
-    const renderBanner = (c: CurrentConnection): void => {
-      if (c.status !== 'leave_pending') {
-        reveal(root.querySelector<HTMLElement>('#leave-strip')!, false)
-        return
-      }
-      if (c.bothLeaving) banner.textContent = "You're both leaving. Open the menu to end now."
-      else if (c.myLeaveStep > 0) banner.textContent = `You're leaving — ${dayWord(c.daysRemaining ?? 0)}.`
-      else banner.textContent = `${otherName} is leaving — ${dayWord(5 - c.otherLeaveStep)}.`
-      reveal(root.querySelector<HTMLElement>('#leave-strip')!, true)
-    }
-
-    // Leave system-lines must survive navigation (the actor leaves chat to press
-    // OK, then returns), so the last-announced steps live in sessionStorage.
-    const leaveKey = `leaveSeen:${connectionId}`
-    let prevMine = current.myLeaveStep
-    let prevOther = current.otherLeaveStep
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(leaveKey) ?? 'null') as { mine: number; other: number } | null
-      if (saved) {
-        prevMine = saved.mine
-        prevOther = saved.other
-      }
-    } catch {
-      /* ignore */
-    }
-
-    const reconcileLeave = (c: CurrentConnection): void => {
-      if (c.myLeaveStep !== prevMine) {
-        appendSystemLine(
-          c.myLeaveStep === 0 ? 'You kept the connection.' : `You moved to leave — ${dayWord(5 - c.myLeaveStep)}.`,
-        )
-        prevMine = c.myLeaveStep
-      }
-      if (c.otherLeaveStep !== prevOther) {
-        appendSystemLine(
-          c.otherLeaveStep === 0
-            ? `${otherName} kept the connection.`
-            : `${otherName} moved to leave — ${dayWord(5 - c.otherLeaveStep)}.`,
-        )
-        prevOther = c.otherLeaveStep
-      }
-      try {
-        sessionStorage.setItem(leaveKey, JSON.stringify({ mine: prevMine, other: prevOther }))
-      } catch {
-        /* ignore */
-      }
-    }
-
     // --- Load history (paginated newest-first; "load older" pages back) -----
     const HISTORY_PAGE = 50
     let oldestLoadedAt: string | null = null
@@ -2025,8 +1962,6 @@ export const ChatPage: Page = (root, go) => {
     if (hasOlder) log.querySelector('.chat__enc-note')!.after(loadOlderBtn)
     renderPin()
     refreshReceipts()
-    renderBanner(current)
-    reconcileLeave(current)
     log.scrollTop = log.scrollHeight
     updatePresence(current.otherLastReadAt)
     markReadNow()
@@ -2587,7 +2522,16 @@ export const ChatPage: Page = (root, go) => {
       stopRecordingTimer()
     })
 
+    const games = mountGames(chatEl, otherName, (event, packet) => {
+      if (!transport) return Promise.reject(new Error('not connected'))
+      return transport.sendGame(event, packet)
+    }, showNotice)
+    overlays.add(games.dispose)
+    let stopDictation = () => {}
+    overlays.add(() => stopDictation())
     const slashCtx = {
+      playGames: games.open,
+      writeAudio: () => { stopDictation(); stopDictation = startVoiceTyping(composer, input, showNotice) },
       input,
       writeLetter: () =>
         openLetterComposer({
@@ -3088,11 +3032,11 @@ export const ChatPage: Page = (root, go) => {
     // --- Reply / react gestures: right-swipe = reply, long-press = react on
     // phone; right-click opens Reply/React on desktop.
     const SWIPE_TRIGGER = 60
-    const SWIPE_MAX = 80
     const LONG_PRESS_MS = 450
     let swipeRow: HTMLElement | null = null
     let swipeStartX = 0
     let swipeStartY = 0
+    let swipeStartScroll = 0
     let swiping = false
     let swipeIcon: HTMLElement | null = null
     let swipeFrame = 0
@@ -3129,6 +3073,7 @@ export const ChatPage: Page = (root, go) => {
         swipeRow = row
         swipeStartX = e.touches[0].clientX
         swipeStartY = e.touches[0].clientY
+        swipeStartScroll = log.scrollTop
         swiping = false
         swipeDistance = 0
         const rowRect = row.getBoundingClientRect()
@@ -3155,9 +3100,10 @@ export const ChatPage: Page = (root, go) => {
         const dx = e.touches[0].clientX - swipeStartX
         const dy = e.touches[0].clientY - swipeStartY
         if (!swiping) {
-          if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return
+          const claim = swipeClaim(dx, dy, swipeRow.dataset.mine === '1', log.scrollTop !== swipeStartScroll)
+          if (claim === 'wait') return
           cancelLongPress()
-          if (Math.abs(dy) > Math.abs(dx)) {
+          if (claim === 'scroll') {
             swipeRow = null // vertical scroll — let it through, not a reply swipe
             return
           }
@@ -3171,16 +3117,18 @@ export const ChatPage: Page = (root, go) => {
         // touch-action: pan-y on .chat__log keeps vertical scroll native/smooth
         // for gestures that never reach here.
         e.preventDefault()
-        swipeDistance = Math.max(0, Math.min(dx, SWIPE_MAX))
+        swipeDistance = swipeOffset(dx, swipeRow.dataset.mine === '1')
         if (!swipeFrame) swipeFrame = requestAnimationFrame(() => {
           swipeFrame = 0
           if (!swipeRow || disposed) return
           swipeRow.style.transform = `translateX(${swipeDistance}px)`
-          const ready = swipeDistance >= SWIPE_TRIGGER
+          const ready = Math.abs(swipeDistance) >= SWIPE_TRIGGER
           swipeRow.classList.toggle('chat__message--swipe-ready', ready)
           const icon = ensureSwipeIcon()
           icon.style.top = `${swipeIconTop}px`
-          icon.style.opacity = String(Math.min(swipeDistance / SWIPE_TRIGGER, 1))
+          icon.style.left = swipeRow.dataset.mine === '1' ? 'auto' : '12px'
+          icon.style.right = swipeRow.dataset.mine === '1' ? '12px' : 'auto'
+          icon.style.opacity = String(Math.min(Math.abs(swipeDistance) / SWIPE_TRIGGER, 1))
           icon.classList.toggle('chat__swipe-icon--ready', ready)
         })
       },
@@ -3192,7 +3140,7 @@ export const ChatPage: Page = (root, go) => {
       cancelAnimationFrame(swipeFrame)
       swipeFrame = 0
       if (!swipeRow) return
-      const triggered = reply && swipeDistance >= SWIPE_TRIGGER
+      const triggered = reply && Math.abs(swipeDistance) >= SWIPE_TRIGGER
       const id = swipeRow.dataset.id!
       swipeRow.style.transition = ''
       swipeRow.style.transform = ''
@@ -3483,21 +3431,24 @@ export const ChatPage: Page = (root, go) => {
         livePresence = update
         if (!update.online) setOtherTyping(false)
         updatePresence(otherLastRead)
+        syncGames()
       }))
+      overlays.add(t.onGame(games.receive))
       unsubscribeEnded = t.onConnectionEnded(() => {
-        if (!disposed) go('connection-id')
+        void getCurrentConnection().then((next) => { if (!disposed) go(next ? nextScreenFor(next) : 'connection-id') }).catch(() => { /* poll retries without losing the export opportunity */ })
       })
       setConnState(t.getState())
-      t.onStateChange((state, reconnected) => {
+      overlays.add(t.onStateChange((state, reconnected) => {
         if (disposed) return
         setConnState(state)
         if (state !== 'connected') { livePresence = null; setOtherTyping(false); typingSent = false; lastTypingSent = 0 }
         else { sendDraftTyping(); syncPresence() }
+        syncGames()
         if (state === 'connected' && reconnected) void resyncAfterReconnect()
-      })
+      }))
       // Receipts pushed over the socket flip ticks/presence instantly; the 4s
       // poll below stays as the fallback.
-      t.onReceipt((u) => {
+      overlays.add(t.onReceipt((u) => {
         if (disposed || u.userId === myUserId) return
         if (u.lastReadAt && (!otherLastRead || Date.parse(u.lastReadAt) > Date.parse(otherLastRead))) {
           otherLastRead = u.lastReadAt
@@ -3507,7 +3458,7 @@ export const ChatPage: Page = (root, go) => {
           otherLastDelivered = u.lastDeliveredAt
         }
         refreshReceipts()
-      })
+      }))
       void flushPending()
       syncPresence()
       markReadNow()
@@ -3538,7 +3489,9 @@ export const ChatPage: Page = (root, go) => {
     // taps Acknowledge (or the 2min no-ack auto-clear) — opening or focusing
     // the chat no longer silences it, so a raise can't be missed by glancing
     // at the tab.
+    const syncGames = (): void => games.availability(transport?.getState() === 'connected' && livePresence?.online === true && document.visibilityState === 'visible', livePresence?.userId)
     const syncPresence = (): void => {
+      syncGames()
       transport?.sendPresence(!disposed && document.visibilityState === 'visible' && document.hasFocus())
     }
     const blurHandler = (): void => transport?.sendPresence(false)
@@ -3571,22 +3524,20 @@ export const ChatPage: Page = (root, go) => {
         return
       }
       if (disposed) return
-      if (!next) {
-        go('connection-id') // terminated; router runs cleanup
+      if (!next || next.status !== 'active' && next.status !== 'leave_pending' || next.id !== connectionId) {
+        go(next ? nextScreenFor(next) : 'connection-id')
         return
       }
-      reconcileLeave(next)
       const nextAvatarIds = `${next.myAvatarId}:${next.otherAvatarId}`
       if (nextAvatarIds !== avatarIds || Date.now() - avatarsLoadedAt > 55 * 60_000) { avatarIds = nextAvatarIds; void loadPhotos().catch(() => {}) }
-      renderBanner(next)
       if (Date.now() - lastPinEvent >= 10_000) {
         pinState = { messageId: next.pinnedMessageId ?? null, pinnedBy: next.pinnedBy ?? null, pinnedAt: next.pinnedAt ?? null }
         renderPin()
       }
-      otherLastRead = next.otherLastReadAt
-      otherLastDelivered = next.otherLastDeliveredAt
+      if (next.otherLastReadAt && (!otherLastRead || Date.parse(next.otherLastReadAt) > Date.parse(otherLastRead))) otherLastRead = next.otherLastReadAt
+      if (next.otherLastDeliveredAt && (!otherLastDelivered || Date.parse(next.otherLastDeliveredAt) > Date.parse(otherLastDelivered))) otherLastDelivered = next.otherLastDeliveredAt
       refreshReceipts()
-      updatePresence(next.otherLastReadAt)
+      updatePresence(otherLastRead)
       if (next.wallpaper !== currentWallpaper || next.messageStyle !== currentStyle) {
         currentWallpaper = next.wallpaper
         currentStyle = next.messageStyle
@@ -3694,11 +3645,10 @@ function renderChat(root: HTMLElement, displayName: string): void {
         <button type="button" class="chat__search-nav" id="search-next" aria-label="Newer match" title="Newer match"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
         <button type="button" class="chat__search-close" id="search-close" aria-label="Close search">${CLOSE_ICON}</button>
       </div></div>
-      <div class="chat__strip" id="leave-strip" aria-hidden="true" inert><div class="chat__leave-banner" id="leave-banner"></div></div>
       <div class="chat__log" id="chat-log">
         <div class="chat__enc-note chat__system-line">
           <svg class="chat__enc-note-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-          <span>Messages are encrypted</span>
+          <span>Messages are encrypted on our servers</span>
         </div>
       </div>
       <div class="chat__composer-area">

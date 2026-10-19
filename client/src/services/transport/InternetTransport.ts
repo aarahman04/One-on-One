@@ -4,6 +4,7 @@ import type { IncomingMessage, LinkPreview, MessageType, PinState, PresenceUpdat
 import { authedFetch } from '../apiClient'
 import type { CallTransport } from './CallTransport'
 import { InternetCallTransport } from './InternetCallTransport'
+import type { GameEvent, GameEventName, GamePacket } from './Transport'
 
 const API_URL = import.meta.env.VITE_API_URL
 const CONNECT_TIMEOUT_MS = 15000
@@ -13,6 +14,7 @@ export class InternetTransport implements Transport {
   private socket: Socket | null = null
   private state: TransportState = 'connecting'
   private connectedOnce = false
+  private pendingAcks = new Set<(error: Error) => void>()
   private stateListeners = new Set<(state: TransportState, reconnected: boolean) => void>()
   private onlineHandler = (): void => this.setState(this.socket?.connected ? 'connected' : 'connecting', false)
   private offlineHandler = (): void => {
@@ -81,6 +83,7 @@ export class InternetTransport implements Transport {
   }
 
   disconnect(): void {
+    for (const cancel of this.pendingAcks) cancel(new Error('not connected'))
     window.removeEventListener('online', this.onlineHandler)
     window.removeEventListener('offline', this.offlineHandler)
     this.stateListeners.clear()
@@ -100,9 +103,12 @@ export class InternetTransport implements Transport {
     const socket = this.socket
     if (!socket || !socket.connected) throw new Error('not connected')
     return new Promise<{ message?: IncomingMessage; pin?: PinState }>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('send timeout')), ACK_TIMEOUT_MS)
+      const cancel = (error: Error) => { clearTimeout(timer); this.pendingAcks.delete(cancel); reject(error) }
+      const timer = setTimeout(() => cancel(new Error('send timeout')), ACK_TIMEOUT_MS)
+      this.pendingAcks.add(cancel)
       socket.emit(event, payload, (res: { ok?: boolean; error?: string; message?: IncomingMessage; pin?: PinState }) => {
         clearTimeout(timer)
+        this.pendingAcks.delete(cancel)
         if (res?.error) reject(new Error(res.error))
         else if (!res?.ok) reject(new Error('Server did not confirm the action.'))
         else resolve(res)
@@ -222,5 +228,27 @@ export class InternetTransport implements Transport {
     return () => {
       socket.off('connection:ended', callback)
     }
+  }
+
+  async markRead(connectionId: string): Promise<void> {
+    await this.emitWithAck('message:read', { connectionId })
+  }
+
+  async sendGame(event: GameEventName, payload: GamePacket): Promise<void> {
+    if (!/^[A-Za-z0-9-]{1,64}$/.test(payload.gameId) || new TextEncoder().encode(JSON.stringify(payload)).length > 4096) throw new Error('invalid_payload')
+    await this.emitWithAck(event, payload)
+  }
+
+  onGame(callback: (event: GameEvent) => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    const handlers = (['game:invite', 'game:accept', 'game:decline', 'game:move', 'game:end'] as const).map((name) => {
+      const handler = (packet: GamePacket & { from: string }) => {
+        if (packet && /^[A-Za-z0-9-]{1,64}$/.test(packet.gameId) && typeof packet.from === 'string') callback({ ...packet, name })
+      }
+      socket.on(name, handler)
+      return () => socket.off(name, handler)
+    })
+    return () => { for (const off of handlers) off() }
   }
 }

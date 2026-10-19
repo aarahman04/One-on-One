@@ -11,6 +11,7 @@ import { NicknamePage } from './pages/NicknamePage'
 import { ChatPage } from './pages/ChatPage'
 import { ExportPage } from './pages/ExportPage'
 import { LeavePage } from './pages/LeavePage'
+import { PartnerLeftPage } from './pages/PartnerLeftPage'
 import { PrivacyPage } from './pages/PrivacyPage'
 import { TermsPage } from './pages/TermsPage'
 import { ChildSafetyPage } from './pages/ChildSafetyPage'
@@ -81,6 +82,7 @@ registerPage('nickname', NicknamePage)
 registerPage('chat', ChatPage)
 registerPage('export', ExportPage)
 registerPage('leave', LeavePage)
+registerPage('partner-left', PartnerLeftPage)
 registerPage('privacy', PrivacyPage)
 registerPage('terms', TermsPage)
 registerPage('child-safety', ChildSafetyPage)

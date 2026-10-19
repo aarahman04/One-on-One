@@ -16,6 +16,7 @@ await mkdir(screenshotDir, { recursive: true })
 const ME = 'me'
 const OTHER = 'other'
 const id = (n) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+const gates = new Map()
 let messages
 let connection
 let events
@@ -27,6 +28,7 @@ let uploadDelay = 0
 let avatars = { mine: null, other: null }
 const ownerState = { failDeleteAccount: false, failAlarmAck: false, alarmAckDelay: 0 }
 const reset = (fullPage = false, nickname = 'Arfah') => {
+  gates.clear()
   const now = Date.now()
   const msg = (n, senderId, content, extra = {}) => ({ id: id(n), senderId, content, createdAt: new Date(now - (10 - n) * 20_000).toISOString(), type: 'text', payload: null, replyTo: null, reactions: [], editedAt: null, deletedAt: null, ...extra })
   messages = [
@@ -55,10 +57,17 @@ const api = createHttpServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204).end(); return }
   const url = new URL(req.url, 'http://fixture')
   res.setHeader('Content-Type', 'application/json')
-  if (url.pathname === '/api/me') {
-    if (req.method !== 'DELETE') res.end(JSON.stringify({ connectionCode: 'ABCDEFGH' }))
+  if (url.pathname === '/api/me/gates') {
+    let raw = ''; for await (const chunk of req) raw += chunk
+    const input = JSON.parse(raw), key = req.headers.authorization
+    const value = gates.get(key) || { ageVerifiedAt: null, termsAcceptedAt: null }
+    if (input.ageVerified) value.ageVerifiedAt ||= new Date().toISOString()
+    if (input.termsAccepted) value.termsAcceptedAt ||= new Date().toISOString()
+    gates.set(key, value); res.end(JSON.stringify(value))
+  } else if (url.pathname === '/api/me') {
+    if (req.method !== 'DELETE') res.end(JSON.stringify({ connectionCode: 'ABCDEFGH', ...(gates.get(req.headers.authorization) || { ageVerifiedAt: null, termsAcceptedAt: null }) }))
     else if (ownerState.failDeleteAccount) res.writeHead(500).end(JSON.stringify({ error: 'Delete failed (fixture)' }))
-    else res.writeHead(204).end()
+    else { gates.delete(req.headers.authorization); res.writeHead(204).end() }
   }
   else if (url.pathname === '/api/me/avatars') res.end(JSON.stringify(avatars))
   else if (url.pathname === '/api/me/avatar') {
@@ -95,6 +104,7 @@ const api = createHttpServer(async (req, res) => {
 const io = new Server(api, { cors: { origin: '*' } })
 io.on('connection', (socket) => {
   const update = (event, data, ack) => { io.emit(event, data); ack?.({ ok: true, ...(event === 'pin:update' ? { pin: data } : { message: data }) }) }
+  socket.on('message:read', (data, ack) => { events.push(['message:read', data]); ack?.({ ok: true }) })
   socket.on('typing', (data) => events.push(['typing', data]))
   socket.on('presence', (data) => events.push(['presence', data]))
   socket.on('message:send', (data, ack) => {
@@ -145,7 +155,7 @@ const vite = await createViteServer({
   plugins: [{ name: 'isolated-auth', enforce: 'pre', configureServer(server) {
     server.middlewares.use('/fixture-setup.js', (_req, res) => { res.setHeader('Content-Type', 'text/javascript'); res.end("localStorage.setItem('ageVerified:fixture','1');localStorage.setItem('termsAcceptedAt:fixture','fixture');localStorage.setItem('notificationReminderAt',String(Date.now()))") })
   }, transformIndexHtml(html) { return html.replace("connect-src 'self'", `connect-src 'self' ${apiOrigin} ${apiOrigin.replace('http:', 'ws:')}`).replace('</head>', process.env.PARITY_MANUAL ? '<script src="/fixture-setup.js"></script></head>' : '</head>') }, transform(_code, moduleId) {
-    if (moduleId.replaceAll('\\', '/').endsWith('/src/services/supabaseClient.ts')) return "export const supabase = {auth:{getSession:async()=>({data:{session:{access_token:'fixture',user:{id:new URLSearchParams(location.search).get('owner')||'fixture'}}}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}}),signOut:async()=>({})}}"
+    if (moduleId.replaceAll('\\', '/').endsWith('/src/services/supabaseClient.ts')) return "export const supabase = {auth:{getSession:async()=>({data:{session:{access_token:new URLSearchParams(location.search).get('owner')||'fixture',user:{id:new URLSearchParams(location.search).get('owner')||'fixture'}}}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}}),signOut:async()=>({})}}"
     if (_code.includes('import.meta.env.VITE_API_URL')) return _code.replaceAll('import.meta.env.VITE_API_URL', JSON.stringify(apiOrigin))
   } }], server: { host: '127.0.0.1', port: 0, hmr: false },
 })
@@ -429,7 +439,7 @@ try {
           await page.keyboard.press('Escape')
           await page.waitForTimeout(650)
           await touch('touchstart')
-          await touch('touchmove', 72)
+          await touch('touchmove', -72)
           await touch('touchend')
           await visible(page, '#reply-bar')
           assert.equal(await page.evaluate(() => document.activeElement.id), 'message-input', 'swipe reply focuses composer')

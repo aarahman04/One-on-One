@@ -674,15 +674,6 @@ input:focus {
   opacity: 0.5;
 }
 
-.chat__leave-banner {
-  padding: var(--radius-md) var(--text-lg);
-  background: rgba(248, 81, 73, 0.08);
-  border-bottom: calc(var(--space-half) / 2) solid var(--border);
-  color: var(--danger);
-  font-size: var(--text-sm);
-  text-align: center;
-}
-
 .chat__system-line {
   align-self: center;
   flex: none;
@@ -943,43 +934,15 @@ input:focus {
   background: var(--bg);
 }
 
-/* Reaction badge: plain emoji, no box — sits below the bubble as its own
-   line in the message row, not overlapping the bubble it reacts to. It's a
-   child of .chat__message (the row), NOT .chat__message-body (the bubble) —
-   that's what "below the bubble" requires: the row is a flex container, so
-   flex-wrap here (see .chat__message below) lets the badge fall onto its own
-   line under everything else, in normal flow rather than absolutely
-   positioned over the bubble's own background. One reaction per user per
-   message caps a 1:1 chat at two chips (me + other), so no counting is
-   needed. */
+/* A single reaction pill overlaps the bubble edge, with space reserved in the row. */
 .chat__reaction-badge {
-  display: flex;
-  gap: var(--radius-sm);
-  width: 100%;
-  /* Tucked against the bubble's bottom edge, WhatsApp-style, so it reads as
-     part of the message rather than a detached row. The calc(-1 * calc(var(--space-1) - var(--space-half) / 2)) lands inside the
-     bubble's var(--space-2) bottom padding — strictly below the text baseline and below
-     the inline .chat__meta time/ticks — so it never covers content the way the
-     old absolutely-positioned badge did. The inline padding mirrors WhatsApp's
-     ~var(--radius-md) inset from the bubble's outer edge. */
-  margin-top: calc(-1 * calc(var(--space-1) - var(--space-half) / 2));
-  padding: 0 var(--radius-md);
+  display: flex; align-items: center; gap: 2px; width: fit-content; position: absolute; bottom: 0; left: 16px;
+  margin: 0; padding: 1px 6px; border-radius: var(--radius-pill);
+  background: var(--bg-raised); border: 2px solid var(--bg); box-shadow: var(--elevation-1); z-index: 1;
 }
-
-/* Line mode has no bubbles/sides to mirror — both senders' text already
-   starts at the same left edge, so the reaction does too. Bubble mode is
-   where "my message, my reaction" earns a right-aligned line to match. */
-.chat--bubbles .chat__message[data-mine='1'] .chat__reaction-badge {
-  justify-content: flex-end;
-}
-
-.chat__reaction-chip {
-  background: transparent;
-  border: none;
-  padding: 0;
-  font-size: var(--text-base);
-  line-height: 1;
-}
+.chat__message--has-reactions { padding-bottom: 18px; }
+.chat--bubbles .chat__message[data-mine='1'] .chat__reaction-badge { left: auto; right: 16px; }
+.chat__reaction-total { font-size: 11px; padding: 0 3px; color: var(--text-dim); }
 
 
 
@@ -3134,18 +3097,11 @@ input:focus {
 @keyframes reaction-in { from { opacity: 0; transform: scale(.65) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 @keyframes reaction-out { to { opacity: 0; transform: scale(.75) translateY(6px); } }
 .chat .chat__reaction-chip {
-  gap: 4px;
-  min-width: 0;
-  min-height: 28px;
-  padding: 4px 8px;
-  color: var(--text);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  min-width: 24px; min-height: 26px; padding: 2px; color: var(--text); background: transparent; border: 0;
   animation: reaction-in 240ms cubic-bezier(.2, 1.4, .4, 1);
 }
 .chat__reaction-chip[aria-pressed='true'] { box-shadow: inset 0 0 0 1px var(--accent-other); }
 .chat .chat__reaction-chip--closing { animation: reaction-out 160ms ease forwards; pointer-events: none; }
-.chat__reaction-count { font-size: 11px; }
 .chat__reaction-badge:empty { display: none; }
 .chat__pin-banner { display: flex; align-items: center; background: var(--bg-raised); border-bottom: 1px solid var(--border); }
 .chat__pin-open { display: flex; flex: 1; min-width: 0; align-items: center; gap: 10px; text-align: left; border: 0; padding: 6px 12px; background: transparent; color: var(--accent-other); }
@@ -3288,3 +3244,49 @@ input:focus {
 @media (prefers-reduced-motion: reduce) { .chat :is(#send-btn, #mic-btn), .chat__recording-bar { transition: none; } }
 
 .chat--bubbles .chat__message[data-deleted] .chat__meta { position: static; background: transparent; color: inherit; padding: 0; }
+
+/* Android 2.0.6 parity: shared tokens keep games and speech in the chat's theme. */
+.archive-save progress { width: 100%; accent-color: var(--accent-you); margin: 12px 0; }
+.letter-view__heading { display: flex; align-items: center; gap: 12px; padding-right: 32px; }
+.letter-view__heading h2 { flex: 1; }
+.letter-view__heading button { display: grid; place-items: center; min-height: 40px; min-width: 40px; }
+.thisorthat-card__options, .thisorthat-compose__picker { display: grid; grid-template-columns: minmax(0,1fr) 24px minmax(0,1fr); align-items: stretch; gap: 4px; width: 100%; }
+.thisorthat-card__option, .thisorthat-pick-opt { min-width: 0; padding: 12px 8px; border-radius: 12px; background: color-mix(in srgb, currentColor 8%, transparent); border: 1px solid color-mix(in srgb, currentColor 20%, transparent); overflow-wrap: anywhere; display: flex; flex-direction: column; justify-content: center; text-align: center; }
+.thisorthat-card__vs { display: grid; place-items: center; align-self: center; border-radius: 50%; height: 24px; width: 24px; background: var(--bg-raised); font-size: 11px; color: var(--text-dim); z-index: 1; }
+.thisorthat-card__picks { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+.thisorthat-card__pick { padding: 2px 6px; border-radius: 16px; background: color-mix(in srgb, currentColor 12%, transparent); font-size: 11px; }
+.thisorthat-card__matched { margin-top: 8px; text-align: center; font-weight: 600; }
+.thisorthat-card__body { width: 100%; }
+.chat__message[data-type='ask'] .chat__meta { justify-content: flex-end; margin-left: auto; }
+.chat__message { transition: transform 320ms cubic-bezier(.2,1.4,.4,1); }
+.voice-typing, .game-invite { display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--bg-raised); border-top: 1px solid var(--border); flex-wrap: wrap; }
+.voice-typing span, .game-invite span { flex: 1; min-width: 100px; overflow-wrap: anywhere; }
+.game-hub { display: grid; gap: 10px; }
+.game-hub > button { display: flex; align-items: center; gap: 16px; text-align: left; padding: 12px; }
+.game-hub svg { width: 36px; height: 36px; color: var(--accent-you); }
+.game-surface { position: absolute; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 12px; overflow: auto; overscroll-behavior: contain; background: var(--bg); color: var(--text); padding: 12px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)); }
+.game-surface header { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.game-surface h2 { font: 600 20px var(--font-body); margin: 0; }
+.game-surface p { text-align: center; margin: 4px 0; }
+.game-board { width: min(100%, 520px, 65dvh); aspect-ratio: 1; display: grid; flex-shrink: 0; border-radius: 12px; overflow: hidden; background: var(--bg-raised); }
+.game-board > button { padding: 4px; min-width: 0; min-height: 0; border: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text-dim); touch-action: manipulation; }
+.game-board > button[aria-disabled='true'] { cursor: default; }
+.game-board > button:focus-visible { outline: 3px solid var(--accent-other); outline-offset: -3px; z-index: 1; }
+.game-board svg { width: 100%; height: 100%; display: block; }
+.game-board--tictactoe { grid-template-columns: repeat(3,1fr); grid-template-rows: repeat(3,minmax(0,1fr)); }
+.game-board--connect4 { grid-template-columns: repeat(7,1fr); grid-template-rows: repeat(6,1fr); aspect-ratio: 7/6; }
+.game-board--chess { grid-template-columns: repeat(8,1fr); grid-template-rows: repeat(8,minmax(0,1fr)); touch-action: none; }
+.game-board--chess > button { border: 0; touch-action: none; }
+.game-board > .game-cell--mine, .game-box.game-cell--mine { color: var(--accent-you); }
+.game-board > .game-cell--other, .game-box.game-cell--other { color: var(--accent-other); }
+.game-board .game-cell--dark { background: var(--border); }
+.game-board .game-cell--selected, .game-board .game-cell--winning { background: color-mix(in srgb, var(--accent-you) 25%, transparent); }
+.game-board .game-cell--legal { box-shadow: inset 0 0 0 3px var(--accent-you); }
+.game-captured { font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
+.game-board--dots { grid-template-columns: repeat(11,1fr); grid-template-rows: repeat(11,1fr); }
+.game-board--dots > button { border: 0; padding: 0; }
+.game-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text); place-self: center; }
+.game-box { display: grid; place-items: center; font-size: 12px; background: color-mix(in srgb, var(--accent-you) 7%, transparent); }
+.game-board--pong { display: block; position: relative; touch-action: none; border: 1px solid var(--border); }
+.game-paddle { position: absolute; bottom: 4px; width: 70%; left: 15%; accent-color: var(--accent-you); }
+@media (prefers-reduced-motion: reduce) { .chat__message { transition: none; } }

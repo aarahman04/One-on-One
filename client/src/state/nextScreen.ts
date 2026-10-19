@@ -7,6 +7,7 @@ import type { CurrentConnection } from '../services/connectionsApi'
 // WaitingPage). Callers handle the no-connection case themselves — the rule
 // there differs per page.
 export function nextScreenFor(c: CurrentConnection): Screen {
+  if (c.status === 'ended') return 'partner-left'
   if (c.status === 'pending') return c.isRequester ? 'waiting' : 'request'
   if (c.status === 'active' || c.status === 'leave_pending') {
     return 'chat' // Chat prompts for a nickname without blocking an emergency acknowledgement.

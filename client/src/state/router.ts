@@ -8,6 +8,7 @@ export type Screen =
   | 'chat'
   | 'export'
   | 'leave'
+  | 'partner-left'
   // Public legal pages — reachable signed-out (mounted by main.ts before the
   // session lookup and the age/consent gate).
   | 'privacy'
@@ -39,6 +40,8 @@ const BACK_TARGET: Partial<Record<Screen, Screen>> = {
 export function getCurrentScreen(): Screen | null {
   return current
 }
+
+export function navigateToScreen(screen: Screen): void { navigate?.(screen) }
 
 // Returns true if the press was consumed by a screen change.
 export function goBackScreen(): boolean {

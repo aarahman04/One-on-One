@@ -7,6 +7,8 @@
 import { Capacitor } from '@capacitor/core'
 import { authedFetch } from '../services/apiClient'
 import { getSession } from '../services/authService'
+import { getCurrentConnection, markDelivered } from '../services/connectionsApi'
+import { getCurrentScreen, navigateToScreen } from '../state/router'
 
 const isNative = Capacitor.isNativePlatform()
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined
@@ -184,12 +186,17 @@ function ensureNativeSetup(): Promise<void> {
       console.warn('push: registration error', err.message)
       for (const w of tokenWaiters.splice(0)) w.reject(err)
     })
-    // Tapping a notification relaunches the singleTask MainActivity and boot
-    // state re-resolves the screen, so there is nothing to route here. A
-    // foreground receipt needs no extra notification — the socket has already
-    // delivered the message live.
-    await PN.addListener('pushNotificationReceived', () => {})
-    await PN.addListener('pushNotificationActionPerformed', () => {})
+    const receive = async (data: Record<string, unknown> | undefined): Promise<void> => {
+      if (!(await getSession())) return
+      const current = await getCurrentConnection()
+      if (data?.type === 'connection_left') {
+        if (current?.status === 'ended' && getCurrentScreen() !== 'partner-left' && (!data.connectionId || data.connectionId === current.id)) navigateToScreen('partner-left')
+      } else if (current && ['active', 'leave_pending'].includes(current.status) && (!data?.connectionId || data.connectionId === current.id)) {
+        await markDelivered(current.id)
+      }
+    }
+    await PN.addListener('pushNotificationReceived', (notification) => { void receive(notification.data).catch(() => {}) })
+    await PN.addListener('pushNotificationActionPerformed', (action) => { void receive(action.notification.data).catch(() => {}) })
   })().catch((err) => {
     setupPromise = null // retry next time
     throw err
