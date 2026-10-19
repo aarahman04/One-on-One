@@ -1,4 +1,4 @@
-# API Contract (instant leave, gates, games, instant receipts: 2026-10-19)
+# API Contract (instant leave, gates, games, instant receipts, speech 2.0.6: 2026-10-19)
 
 Source of truth for the native Android app (and any other client). **Derived only from the backend code** (`backend/src/index.ts`, `routes/*.ts`, `services/*.ts`, `websocket/socketServer.ts`, `middleware/*.ts`); where behaviour is not visible in code it is not described. File references are given so a disagreement can be settled by reading the code.
 
@@ -119,6 +119,7 @@ Flow: upload -> take `{path, mime, size}` -> send a `message:send` of type image
 REST (express-rate-limit, per client IP, `trust proxy` = 1; `RateLimit-*` draft-7 headers):
 - All `/api`: 240 requests / 60 s -> `429 {"error":"too many requests — slow down"}`. This includes `POST /connections/:id/delivered`: coalesce a burst of FCM arrivals into one call (the latest timestamp covers every earlier message).
 - "strict" routes: 10 / 60 s each -> `429 {"error":"too many requests — try again in a minute"}`. Applied to: `POST /connections/request`, `POST /connections/:id/report`, `POST /messages/:id/report`, `POST /push/subscribe`, `POST /push/token`, attachment upload.
+- Speech (§11), **per user**: narration 30 / 60 s, `POST /transcribe` 10 / 60 s -> `429 {"error":"too many requests — try again in a minute","code":"rate_limited"}`.
 
 Socket.IO (in-memory, per socket unless stated):
 - Any event except `call:signal`, `game:move`, `typing` and `presence`: more than 60 events in 10 s -> ack `{error:'slow down'}` (`game:*` acks use `{ok:false, error:'rate_limited'}`)
@@ -365,3 +366,28 @@ data: { urgent: "true", type: "alarm", ack: "true|false", cancelled: "true|false
 - Socket `message:read {connectionId}` = `POST /connections/:id/read` (REST stays).
 - `POST /connections/:id/delivered` marks delivered for a notified-but-offline device (call it from the FCM receive path).
 - Both emit `receipt:update` to the other member's sockets immediately after the single DB write; timestamps are the server's `toISOString()`, as for the existing receipt paths.
+
+## 11. Speech (2.0.6)
+Backend proxies to a private `speech` service (Kokoro-82M TTS, Parakeet TDT 0.6B v3 STT) over Railway private networking; Node does no audio work. Code: `routes/speech.ts`, `services/speechService.ts`, `speech/` (see `docs/SPEECH-SERVICE.md`). No migration. Backend env: `SPEECH_SERVICE_URL` (e.g. `http://speech.railway.internal:8000`) and `SPEECH_SERVICE_TOKEN`; if either is unset or the service is unreachable/failing → `503 {error, code:"speech_unavailable"}`. All error bodies are `{error, code}`.
+
+### Letter narration
+`GET /api/connections/:connectionId/messages/:messageId/narration?part=<n>` (`n` default `0`, decimal integer).
+- Caller must be a member of a **live** connection, or the partner of an ended connection inside its read-only window (same rule as `GET /connections/:id/messages`). The message must belong to that connection, be `type === "letter"` and not deleted.
+- The text comes **only from the DB** (decrypted): paragraphs `Dear <payload.to>.`, each non-empty body line (whitespace collapsed), `With love, <payload.from>.` — exactly what the letter shows, never summarised or rewritten.
+- Split deterministically into parts of ≤ 400 characters: whole sentences packed greedily; a sentence over 400 is cut between words; only a single word over 400 characters is cut mid-word. Paragraph breaks are kept as `\n\n` and spoken as a ~0.45 s pause. The same letter always yields the same parts, so part `n` is stable. A 4000-character letter is about 11 parts.
+- `200` body `audio/ogg` (Opus, mono, 24 kHz input rate, ~32 kbps) for that part, streamed. Headers: `X-Narration-Part: <n>`, `X-Narration-Parts: <total>`, `Cache-Control: private, no-store`. Play parts `0 .. total-1` in order (prefetching `n+1` while `n` plays hides synthesis time).
+- `404 {code:"not_found"}`: not a member, other connection's message, not a letter, deleted, malformed ids, malformed or out-of-range `part` — one answer for all, so existence never leaks.
+- `429 {code:"rate_limited"}`: more than 30 part-requests / 60 s **per user**.
+- `503 {code:"speech_unavailable"}`, `504 {code:"speech_timeout"}` (60 s per part).
+- Nothing is cached to disk or storage (no in-memory cache either).
+
+### Transcription
+`POST /api/transcribe`, authenticated, caller must have a live connection (else `409 {error:"connection is not active"}`). Raw body, up to 3 MB, `Content-Type` one of `audio/mp4`, `audio/m4a`, `audio/aac`, `audio/ogg`, `audio/webm`, `audio/wav` (parameters such as `; codecs=` are ignored). Android sends AAC in MP4/.m4a, 16–44.1 kHz mono, ≤ 120 s. The speech service decodes with ffmpeg and checks it is real audio regardless of the declared type.
+- `200 {text, language, durationMs}`. The client inserts `text` into the composer; nothing is sent automatically. `language` is `""` today: Parakeet detects the language internally but the runtime does not report it.
+- `413 {code:"too_large"}`: body over 3 MB, or audio longer than 120 s.
+- `415 {code:"unsupported_audio"}`: other content type, empty body, or not decodable audio.
+- `422 {code:"no_speech"}`: silence / no speech detected (a VAD guard returns empty text instead of guessing words).
+- `429 {code:"rate_limited"}`: more than 10 / 60 s **per user**.
+- `503 {code:"speech_unavailable"}`, `504 {code:"speech_timeout"}` (90 s).
+- Audio and text are never logged or stored.
+- Languages: Parakeet TDT 0.6B v3 covers 25 European languages only (bg, hr, cs, da, nl, en, et, fi, fr, de, el, hu, it, lv, lt, mt, pl, pt, ro, sk, sl, es, sv, ru, uk). **Hindi, Urdu, Telugu and other non-European languages are not supported**; show a limitation note. Narration voice `af_heart` is American English; letters in other languages/scripts will not be read correctly.

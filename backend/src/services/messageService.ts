@@ -592,6 +592,26 @@ async function loadConnectionMessage(connectionId: string, messageId: unknown): 
   )
 }
 
+// Narration source: a live (not deleted) letter of this connection, decrypted
+// from the DB. null for anything else so the route can answer a uniform 404.
+// The caller has already authorized the connection.
+export async function getLetterForNarration(
+  connectionId: string,
+  messageId: string,
+): Promise<{ from: string; to: string; body: string } | null> {
+  if (!UUID_RE.test(messageId)) return null
+  const { data, error } = await supabaseAdmin
+    .from('messages')
+    .select('type, content, payload, deleted_at')
+    .eq('id', messageId)
+    .eq('connection_id', connectionId)
+    .maybeSingle()
+  if (error) throw error
+  if (!data || data.type !== 'letter' || data.deleted_at) return null
+  const payload = (decryptPayload(data.payload) ?? {}) as { from?: unknown; to?: unknown }
+  return { from: String(payload.from ?? ''), to: String(payload.to ?? ''), body: decryptContent(data.content) }
+}
+
 export async function editMessage(connection: { id: string }, userId: string, messageId: unknown, content: unknown): Promise<Message> {
   const trimmed = typeof content === 'string' ? content.trim() : ''
   if (trimmed.length < 1 || trimmed.length > 4000) throw new ConnectionError(400, 'message must be 1-4000 characters')
