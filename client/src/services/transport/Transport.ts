@@ -29,6 +29,12 @@ export interface TypingUpdate {
   typing: boolean
 }
 
+export interface PresenceUpdate {
+  userId: string
+  online: boolean
+  lastSeenAt: string | null
+}
+
 export interface LinkPreview {
   url: string
   title: string | null
@@ -74,6 +80,8 @@ export interface Transport {
   onPin(callback: (pin: PinState) => void): () => void
   sendTyping(typing: boolean): void
   onTyping(callback: (update: TypingUpdate) => void): () => void
+  sendPresence(active: boolean): void
+  onPresence(callback: (update: PresenceUpdate) => void): () => void
   getLinkPreview(url: string): Promise<LinkPreview | null>
   sendReaction(messageId: string, emoji: string, op: 'add' | 'remove'): Promise<void>
   onReaction(callback: (update: ReactionUpdate) => void): () => void

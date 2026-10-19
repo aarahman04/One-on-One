@@ -1,5 +1,12 @@
 # Releasing One on One
 
+Presence follow-up (2026-10-19): deploy the reviewed `feat/live-presence` backend
+on the existing single Railway replica and deploy the web client. No Supabase
+migration or new settings. The matching Kotlin app is in `../One-on-One-Android`,
+with version kept at 12 / 2.0.5 by owner request. Use `app-release.aab` from its
+fresh `android-release` artifact for Play; `app-release.apk` is for phone checks.
+This repo's older Capacitor workflow does not build the native Kotlin client.
+
 This is the runbook for shipping updates to the app after the initial
 Capacitor migration (Stages 1–7). It assumes you can already run the app
 locally but haven't done an Android release before. For low-level build

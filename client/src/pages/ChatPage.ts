@@ -55,6 +55,7 @@ import {
   type Transport,
   type TransportState,
   type PinState,
+  type PresenceUpdate,
 } from '../services/messageService'
 import { mountCallBar, type CallBarHandle } from '../features/call/controller'
 import {
@@ -219,6 +220,7 @@ export const ChatPage: Page = (root, go) => {
     unsubscribeReactions = null
     unsubscribeEnded?.()
     unsubscribeEnded = null
+    transport?.sendPresence(false)
     transport?.disconnect()
     transport = null
     if (pollTimer) clearTimeout(pollTimer)
@@ -534,13 +536,13 @@ export const ChatPage: Page = (root, go) => {
       },
     )
 
-    // --- Presence: the other side marks read every ~4s while the chat is on
-    // screen, so a fresh last_read_at means they're actually here right now.
+    // Live presence wins; read receipts remain the fallback on older servers.
     const navStatus = root.querySelector<HTMLDivElement>('#nav-status')!
     const PRESENCE_WINDOW_MS = 15000
     // The one header status element shows connection trouble ("connecting…" /
     // "waiting for network") while the socket is down, else the other side's presence.
     let presenceActive = false
+    let livePresence: PresenceUpdate | null = null
     let otherTyping = false
     let connLabel: string | null = null
     const renderStatus = (): void => {
@@ -551,12 +553,13 @@ export const ChatPage: Page = (root, go) => {
         navStatus.classList.remove('chat__nav-status--away')
         return
       }
-      navStatus.textContent = otherTyping ? 'typing…' : presenceActive ? 'in chat' : otherLastRead ? `Last seen ${formatMessageTime(new Date(otherLastRead))}` : 'away'
+      const lastSeen = livePresence?.lastSeenAt ?? otherLastRead
+      navStatus.textContent = otherTyping ? 'typing…' : presenceActive ? 'in chat' : lastSeen ? `Last seen ${formatMessageTime(new Date(lastSeen))}` : 'away'
       navStatus.classList.remove('chat__nav-status--connecting')
       navStatus.classList.toggle('chat__nav-status--away', !presenceActive && !otherTyping)
     }
     const updatePresence = (otherLastReadAt: string | null): void => {
-      presenceActive = !!otherLastReadAt && Date.now() - new Date(otherLastReadAt).getTime() < PRESENCE_WINDOW_MS
+      presenceActive = livePresence?.online ?? (!!otherLastReadAt && Date.now() - new Date(otherLastReadAt).getTime() < PRESENCE_WINDOW_MS)
       renderStatus()
     }
     const setConnState = (state: TransportState): void => {
@@ -3467,6 +3470,12 @@ export const ChatPage: Page = (root, go) => {
       overlays.add(t.onMessageUpdate(onMessageUpdate))
       overlays.add(t.onPin(applyPin))
       overlays.add(t.onTyping((update) => { if (!disposed && update.userId !== myUserId) setOtherTyping(update.typing) }))
+      overlays.add(t.onPresence((update) => {
+        if (disposed || update.userId === myUserId) return
+        livePresence = update
+        if (!update.online) setOtherTyping(false)
+        updatePresence(otherLastRead)
+      }))
       unsubscribeEnded = t.onConnectionEnded(() => {
         if (!disposed) go('connection-id')
       })
@@ -3474,8 +3483,8 @@ export const ChatPage: Page = (root, go) => {
       t.onStateChange((state, reconnected) => {
         if (disposed) return
         setConnState(state)
-        if (state !== 'connected') { setOtherTyping(false); typingSent = false; lastTypingSent = 0 }
-        else sendDraftTyping()
+        if (state !== 'connected') { livePresence = null; setOtherTyping(false); typingSent = false; lastTypingSent = 0 }
+        else { sendDraftTyping(); syncPresence() }
         if (state === 'connected' && reconnected) void resyncAfterReconnect()
       })
       // Receipts pushed over the socket flip ticks/presence instantly; the 4s
@@ -3492,6 +3501,7 @@ export const ChatPage: Page = (root, go) => {
         refreshReceipts()
       })
       void flushPending()
+      syncPresence()
       markReadNow()
       // Mount once — ensureConnected can call attachTransport again on a
       // later successful reconnect after an earlier attempt failed.
@@ -3520,7 +3530,18 @@ export const ChatPage: Page = (root, go) => {
     // taps Acknowledge (or the 2min no-ack auto-clear) — opening or focusing
     // the chat no longer silences it, so a raise can't be missed by glancing
     // at the tab.
+    const syncPresence = (): void => {
+      transport?.sendPresence(!disposed && document.visibilityState === 'visible' && document.hasFocus())
+    }
+    const blurHandler = (): void => transport?.sendPresence(false)
+    document.addEventListener('visibilitychange', syncPresence)
+    window.addEventListener('blur', blurHandler)
+    overlays.add(() => {
+      document.removeEventListener('visibilitychange', syncPresence)
+      window.removeEventListener('blur', blurHandler)
+    })
     focusHandler = () => {
+      syncPresence()
       markReadNow()
       // Back in the app while native is ringing: never let this layer ring too.
       void getNativeAlarmState().then((native) => {

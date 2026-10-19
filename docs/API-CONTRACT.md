@@ -1,4 +1,4 @@
-# API Contract (backend as of main @ 57e9a30)
+# API Contract (presence addition: 2026-10-19)
 
 Source of truth for the native Android app (and any other client). **Derived only from the backend code** (`backend/src/index.ts`, `routes/*.ts`, `services/*.ts`, `websocket/socketServer.ts`, `middleware/*.ts`); where behaviour is not visible in code it is not described. File references are given so a disagreement can be settled by reading the code.
 
@@ -180,6 +180,7 @@ Every handler re-resolves the live connection from the DB; the client never name
 ### Client -> server
 | Event | Payload | Ack |
 |---|---|---|
+| `presence` | `{active: boolean}` | no ack. Separate 20 events/socket/10s limit; see Presence below. |
 | `message:send` | `{content?: string, type?: MessageType, payload?, replyTo?: string, tempId?: string}`; `tempId` must match `^[A-Za-z0-9-]{1,64}$` (else treated as absent) | `{ok:true, message}` ; repeat of the same `(user, tempId)` within 5 min -> `{ok:true, duplicate:true, message:<original>}` and nothing is saved/broadcast again; concurrent duplicate -> `{error:'send already in progress'}`. Errors listed in section 4. The server also `message:new`-broadcasts to the room (sender included) and bumps the sender's last_read. |
 | `reaction:add` | `{messageId, emoji}` | `{ok:true}`. Emoji must be ONE emoji (any; clients offer ❤️ 👍 😂 😮 😢 🙏 as the quick bar and a full picker), max 32 UTF-16 units, else `invalid emoji`. One reaction per user per message (a new emoji replaces the old). `system` messages can't be reacted to. Errors: `invalid emoji`, 403/404/409 messages. |
 | `reaction:remove` | `{messageId, emoji}` | `{ok:true}` |
@@ -204,6 +205,7 @@ Call state is in memory (one call per connection). Outcomes: `end` by caller bef
 | `message:update` | Message (with `editedAt` / `deletedAt`) | to the room after `message:edit` / `message:delete` |
 | `pin:update` | `PinState = {messageId\|null, pinnedBy\|null, pinnedAt\|null}` | to the room after `message:pin` |
 | `typing` | `{userId, typing}` | to the other member's sockets |
+| `presence` | `{userId, online: boolean, lastSeenAt: string\|null}` | to the other member on an online-state change; partner snapshot to a connecting socket or presence sender |
 | `connection:ended` | none | to the room when the connection is terminated (leave final step, confirm-end, block) |
 | `call:incoming` | `{callId, kind, fromUserId}` | to the callee's sockets; also replayed on (re)connect while ringing |
 | `call:accepted` | `{callId}` | to the whole room (so the callee's other devices drop their prompt) |
@@ -211,6 +213,29 @@ Call state is in memory (one call per connection). Outcomes: `end` by caller bef
 | `call:ended` | `{callId, reason}`; reason in `missed\|declined\|cancelled\|completed\|failed\|unreachable` | to the room |
 
 Receipt semantics: a message is "delivered" when the other member's `lastDeliveredAt >= createdAt`, "seen" when `lastReadAt >= createdAt` (clients compute this from `CurrentConnection.otherLast*At` and `receipt:update`).
+
+### Presence
+
+Client -> server: `presence` with `{active: boolean}`, no acknowledgement. Invalid
+payloads are ignored; a separate per-socket bucket accepts 20 events per 10 seconds.
+The authenticated user's live connection is resolved on every event. No live
+connection means no update or snapshot; client-supplied identities are ignored.
+
+`websocket/presence.ts` starts each socket inactive. A user is online when any of
+their sockets is active in their current connection room. Connect, foreground/
+background signals and disconnect recompute the state. Only the other member's
+sockets receive state changes; the requesting socket also receives its partner's
+current snapshot. Events on each socket are processed in arrival order.
+
+`lastSeenAt` is the server's ISO timestamp of the last observed online -> offline
+transition, null while online or if no transition has been observed. State is
+process-local and scoped to connection/user; a restart forgets it. This matches
+the existing single-instance socket deployment; replicas need shared state first.
+No database/Supabase change is required. Existing `last_read_at` heartbeats and
+`receipt:update` are unchanged: clients use them when no presence event has arrived
+or as a last-seen timestamp when the snapshot has none. An explicit offline event
+overrides a recent read receipt. Foreground/background changes are immediate once
+received; abrupt power/network loss waits for Socket.IO to detect disconnection.
 
 ---
 
