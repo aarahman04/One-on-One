@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { generateConnectionCode } from '../utils/connectionCode.js'
 import { UNIQUE_VIOLATION } from '../utils/pgErrors.js'
-import { getLiveConnectionForUser } from './connectionAccess.js'
+import { memberOrFilter } from './connectionAccess.js'
 import { deleteConnectionAttachments } from './attachmentService.js'
 import { deleteAvatarFiles } from './avatarService.js'
 
@@ -72,17 +72,54 @@ export async function regenerateConnectionCode(userId: string): Promise<string> 
   })
 }
 
+export interface Gates {
+  ageVerifiedAt: string | null
+  termsAcceptedAt: string | null
+}
+
+// Read fresh (not from the 15s auth cache) so a just-set gate shows at once.
+export async function getGates(userId: string): Promise<Gates> {
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('age_verified_at, terms_accepted_at')
+    .eq('id', userId)
+    .single()
+  if (error) throw error
+  return { ageVerifiedAt: data.age_verified_at ?? null, termsAcceptedAt: data.terms_accepted_at ?? null }
+}
+
+// Stamp each requested gate only while it is still null: idempotent, and a
+// repeat never moves or clears the original time.
+export async function setGates(userId: string, set: { ageVerified: boolean; termsAccepted: boolean }): Promise<Gates> {
+  const now = new Date().toISOString()
+  const columns = [
+    ...(set.ageVerified ? ['age_verified_at'] : []),
+    ...(set.termsAccepted ? ['terms_accepted_at'] : []),
+  ]
+  for (const column of columns) {
+    const { error } = await supabaseAdmin.from('users').update({ [column]: now }).eq('id', userId).is(column, null)
+    if (error) throw error
+  }
+  return getGates(userId)
+}
+
 // Account deletion (Google Play "delete account" policy — in-app + web).
 // Deleting the Supabase auth user cascades: auth.users → users (migration 001)
 // → connections / messages / connection_members / reactions / push_subscriptions
 // / blocks (all reference users(id) on delete cascade). message_reports about
 // this user survive with reported_user_id nulled (migration 031) — deliberate
 // moderation evidence. Storage isn't covered by any FK cascade, so clean the
-// current connection's attachments first, best-effort.
+// attachments of every connection the cascade will delete (live, plus any
+// ended one still inside its 7-day window) first, best-effort.
 export async function deleteAccount(user: AppUser): Promise<void> {
   try {
-    const live = await getLiveConnectionForUser(user.id)
-    if (live) await deleteConnectionAttachments(live.id)
+    const { data, error } = await supabaseAdmin
+      .from('connections')
+      .select('id')
+      .in('status', ['active', 'leave_pending', 'ended'])
+      .or(memberOrFilter(user.id))
+    if (error) throw error
+    for (const row of data ?? []) await deleteConnectionAttachments(row.id)
   } catch (err) {
     console.error('deleteAccount: attachment cleanup failed (continuing)', err)
   }

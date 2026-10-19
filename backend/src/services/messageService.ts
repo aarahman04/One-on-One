@@ -409,7 +409,7 @@ export async function getHistory(
   before?: string,
   after?: string,
 ): Promise<Message[]> {
-  await getConnectionForMember(connectionId, userId, { requireLive: true })
+  await getConnectionForMember(connectionId, userId, { requireLive: true, allowEndedPartner: true })
 
   let query = supabaseAdmin
     .from('messages')

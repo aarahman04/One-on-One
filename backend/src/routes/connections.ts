@@ -2,15 +2,17 @@ import { Router } from 'express'
 import { requireAuth } from '../middleware/requireAuth.js'
 import { strictLimiter } from '../middleware/rateLimit.js'
 import { emitConnectionEnded } from '../websocket/socketServer.js'
+import { ConnectionError } from '../utils/connectionError.js'
+import { getConnectionForMember } from '../services/connectionAccess.js'
 import {
   acceptConnection,
-  advanceLeave,
+  acknowledgeEnd,
   blockAndTerminate,
-  cancelLeave,
   cancelRequest,
-  confirmEndLeave,
   declineConnection,
   getCurrentConnection,
+  leaveConnection,
+  markDelivered,
   markRead,
   requestConnection,
   setMessageStyle,
@@ -68,24 +70,26 @@ connectionsRouter.patch('/connections/:id/nickname', async (req, res) => {
   res.status(204).end()
 })
 
+// Instant leave. Android 2.0.5 still calls this as "step 1 of 5" and now
+// gets terminated:true straight away, which it already handles.
 connectionsRouter.post('/connections/:id/leave', async (req, res) => {
   const user = req.appUser!
-  const result = await advanceLeave(req.params.id, user.id)
-  if (result.terminated) emitConnectionEnded(req.params.id)
+  const result = await leaveConnection(req.params.id, user.id)
+  emitConnectionEnded(req.params.id)
   res.json({ leave: result })
 })
 
-connectionsRouter.post('/connections/:id/leave/cancel', async (req, res) => {
-  const user = req.appUser!
-  const result = await cancelLeave(req.params.id, user.id)
-  res.json({ leave: result })
-})
+// The countdown is gone; old clients get a clear, stable code.
+const leaveStepsRemoved = (): never => {
+  throw new ConnectionError(410, 'the leave countdown was removed; leaving is now instant', 'leave_steps_removed')
+}
+connectionsRouter.post('/connections/:id/leave/cancel', leaveStepsRemoved)
+connectionsRouter.post('/connections/:id/leave/confirm-end', leaveStepsRemoved)
 
-connectionsRouter.post('/connections/:id/leave/confirm-end', async (req, res) => {
-  const user = req.appUser!
-  const result = await confirmEndLeave(req.params.id, user.id)
-  if (result.terminated) emitConnectionEnded(req.params.id)
-  res.json({ leave: result })
+// Partner only: done with the read-only history, purge it now.
+connectionsRouter.post('/connections/:id/acknowledge-end', async (req, res) => {
+  await acknowledgeEnd(req.params.id, req.appUser!.id)
+  res.status(204).end()
 })
 
 connectionsRouter.patch('/connections/:id/wallpaper', async (req, res) => {
@@ -123,5 +127,14 @@ connectionsRouter.post('/connections/:id/report', strictLimiter, async (req, res
 connectionsRouter.post('/connections/:id/read', async (req, res) => {
   const user = req.appUser!
   await markRead(req.params.id, user.id)
+  res.status(204).end()
+})
+
+// Called by the native app when an FCM message arrives, so a notified but
+// offline device flips the sender's tick to delivered.
+connectionsRouter.post('/connections/:id/delivered', async (req, res) => {
+  const user = req.appUser!
+  await getConnectionForMember(req.params.id, user.id, { requireLive: true })
+  await markDelivered(req.params.id, user.id)
   res.status(204).end()
 })

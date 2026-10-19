@@ -6,7 +6,7 @@
 
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { ConnectionError } from '../utils/connectionError.js'
-import { isLiveStatus } from '../utils/connections.js'
+import { isEndedReadable, isLiveStatus } from '../utils/connections.js'
 
 export interface MemberConnection {
   id: string
@@ -14,6 +14,8 @@ export interface MemberConnection {
   user_b_id: string
   status: string
   created_at: string
+  ended_at?: string | null
+  ended_by?: string | null
 }
 
 export interface AccessOpts {
@@ -22,18 +24,21 @@ export interface AccessOpts {
   // Tolerate a vanished connection (report-abuse-as-you-leave). Only meaningful
   // on the message-scoped lookup; also skips the live check.
   everMember?: boolean
+  // With requireLive: also pass an ended connection the caller did NOT leave,
+  // inside its 7-day window (read-only history + media for the partner).
+  allowEndedPartner?: boolean
 }
 
 function assertAccess(conn: MemberConnection, userId: string, opts: AccessOpts): void {
   if (conn.user_a_id !== userId && conn.user_b_id !== userId) {
     throw new ConnectionError(403, 'not a member of this connection')
   }
-  if (opts.requireLive && !isLiveStatus(conn.status)) {
+  if (opts.requireLive && !isLiveStatus(conn.status) && !(opts.allowEndedPartner && isEndedReadable(conn, userId))) {
     throw new ConnectionError(409, 'connection is not active')
   }
 }
 
-const SELECT = 'id, user_a_id, user_b_id, status, created_at'
+const SELECT = 'id, user_a_id, user_b_id, status, created_at, ended_at, ended_by'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -58,6 +63,19 @@ export async function getLiveConnectionForUser(userId: string): Promise<MemberCo
     .limit(1)
   if (error) throw error
   return (data?.[0] as MemberConnection) ?? null
+}
+
+// No live connection, but a pending or ended one: lets a socket ack say
+// 'connection_inactive' rather than 'not_member'. Failure paths only.
+export async function hasInactiveConnection(userId: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from('connections')
+    .select('id')
+    .in('status', ['pending', 'ended'])
+    .or(memberOrFilter(userId))
+    .limit(1)
+  if (error) throw error
+  return (data?.length ?? 0) > 0
 }
 
 // Load a connection by id and assert the caller is a member (and, with

@@ -3,14 +3,25 @@ import { requireAuth } from '../middleware/requireAuth.js'
 import { strictLimiter } from '../middleware/rateLimit.js'
 import { ConnectionError } from '../utils/connectionError.js'
 import { avatarUrls, removeAvatar, setAvatar } from '../services/avatarService.js'
-import { deleteAccount, regenerateConnectionCode } from '../services/userService.js'
+import { deleteAccount, getGates, regenerateConnectionCode, setGates } from '../services/userService.js'
 import { listBlocks, removeBlock } from '../services/blockService.js'
 
 export const meRouter = Router()
 
 meRouter.get('/me', requireAuth, async (req, res) => {
   const user = req.appUser!
-  res.json({ userId: user.id, connectionCode: user.connectionCode })
+  res.json({ userId: user.id, connectionCode: user.connectionCode, ...(await getGates(user.id)) })
+})
+
+// Sign-in gates: {ageVerified?: true, termsAccepted?: true}, at least one,
+// nothing else. Each is stamped once and never cleared.
+meRouter.post('/me/gates', requireAuth, async (req, res) => {
+  const body = req.body as Record<string, unknown> | undefined
+  const keys = body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body) : []
+  if (!keys.length || keys.some((k) => (k !== 'ageVerified' && k !== 'termsAccepted') || body![k] !== true)) {
+    throw new ConnectionError(400, 'body must be {ageVerified?: true, termsAccepted?: true} with at least one key')
+  }
+  res.json(await setGates(req.appUser!.id, { ageVerified: body!.ageVerified === true, termsAccepted: body!.termsAccepted === true }))
 })
 
 meRouter.post('/me/connection-code/regenerate', requireAuth, async (req, res) => {

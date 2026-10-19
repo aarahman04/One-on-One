@@ -1,4 +1,4 @@
-# API Contract (presence addition: 2026-10-19)
+# API Contract (instant leave, gates, games, instant receipts: 2026-10-19)
 
 Source of truth for the native Android app (and any other client). **Derived only from the backend code** (`backend/src/index.ts`, `routes/*.ts`, `services/*.ts`, `websocket/socketServer.ts`, `middleware/*.ts`); where behaviour is not visible in code it is not described. File references are given so a disagreement can be settled by reading the code.
 
@@ -34,9 +34,10 @@ All routes below require auth unless stated. "Live" = connection status `active`
 ### Me (`routes/me.ts`)
 | Route | Request | Success | Errors |
 |---|---|---|---|
-| `GET /api/me` | – | `200 {userId, connectionCode}` | 401 |
+| `GET /api/me` | – | `200 {userId, connectionCode, ageVerifiedAt\|null, termsAcceptedAt\|null}` (see §10) | 401 |
+| `POST /api/me/gates` | `{ageVerified?: true, termsAccepted?: true}` | `200 {ageVerifiedAt\|null, termsAcceptedAt\|null}` (see §10) | 400; 401 |
 | `POST /api/me/connection-code/regenerate` | – | `200 {connectionCode}` (new 8-char code; existing connection unaffected) | 401 |
-| `DELETE /api/me` | – | `204`. Deletes the Supabase auth user; cascades all app data. Best-effort deletes current connection's attachments first. | 401, 500 |
+| `DELETE /api/me` | – | `204`. Deletes the Supabase auth user; cascades all app data. Best-effort deletes the attachments of the caller's live connection and of any ended connection still held, first. | 401, 500 |
 | `GET /api/me/blocks` | – | `200 {blocks: [{blockedUserId, createdAt}]}` newest first | 401 |
 | `DELETE /api/me/blocks/:blockedUserId` | – | `204` (only removes the caller's own outbound block) | 401 |
 
@@ -44,7 +45,7 @@ Connection code alphabet: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, length 8.
 
 ### Connections (`routes/connections.ts`)
 
-`Connection row` (returned by request/cancel/accept/decline) is the raw `connections` table row, snake_case: `id, user_a_id, user_b_id, status, created_at, updated_at, wallpaper, message_style` (legacy leave columns were dropped in migration 020) (`status` in `pending|active|leave_pending|terminated|declined`). `user_a_id` is the requester, `user_b_id` the recipient.
+`Connection row` (returned by request/cancel/accept/decline) is the raw `connections` table row, snake_case: `id, user_a_id, user_b_id, status, created_at, updated_at, wallpaper, message_style` (legacy leave columns were dropped in migration 020) (`status` in `pending|active|leave_pending|terminated|declined|ended`; rows also carry `ended_at`, `ended_by`, see §10). `user_a_id` is the requester, `user_b_id` the recipient.
 
 `CurrentConnection` (camelCase):
 ```
@@ -52,9 +53,10 @@ Connection code alphabet: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, length 8.
   otherConnectionCode ("" unless status=pending),
   myLeaveStep, otherLeaveStep, daysRemaining|null, bothLeaving, canAdvanceLeave,
   otherLastReadAt|null, otherLastDeliveredAt|null,
-  wallpaper ("off"|"love"|"samurai"), messageStyle ("line"|"bubbles") }
+  wallpaper ("off"|"love"|"samurai"), messageStyle ("line"|"bubbles"),
+  endedBy|null, endedAt|null, purgeAt|null }   // non-null only when status = "ended"
 ```
-Statuses `pending`, `active`, `leave_pending` are returned. `otherNickname` is what **I** call the other person.
+Statuses `pending`, `active`, `leave_pending` are returned, and `ended` to the partner (never the leaver) of a connection the other member left, until acknowledged or purged (§10). The leave-step fields are legacy: always `0`/`0`/`null`/`false`/`true`. `otherNickname` is what **I** call the other person.
 
 | Route | Body | Success | Errors |
 |---|---|---|---|
@@ -64,23 +66,25 @@ Statuses `pending`, `active`, `leave_pending` are returned. `otherNickname` is w
 | `POST /api/connections/:id/accept` | – | `200 {connection: Row}` (-> `active`; recipient only) | 403 `only the recipient can accept`; 404; 409 |
 | `POST /api/connections/:id/decline` | – | `200 {connection: Row}` (-> `declined`; recipient only) | 403; 404; 409 |
 | `PATCH /api/connections/:id/nickname` | `{nickname}` 1-40 chars after trim | `204`. Sets what the caller calls the OTHER member (stored on the other member's row). Needs live. | 400 `nickname must be 1-40 characters`; 403; 404; 409 `connection is not active` |
-| `POST /api/connections/:id/leave` | – | `200 {leave: LeaveResult}`. Advances MY leave countdown one step; allowed once per 24 h; step 5 terminates solo. Emits socket `connection:ended` if terminated. Needs live. | 403; 409; 429 `you can advance the countdown once every 24 hours` / `the countdown was already advanced` |
-| `POST /api/connections/:id/leave/cancel` | – | `200 {leave}` (my step -> 0; connection -> `active` if the other isn't leaving either) | 409 `no leave in progress` |
-| `POST /api/connections/:id/leave/confirm-end` | – | `200 {leave}`; terminates immediately; emits `connection:ended` | 409 `no leave in progress` / `both members must be leaving to end immediately` |
+| `POST /api/connections/:id/leave` | – | `200 {leave: LeaveResult}`. **Ends the connection immediately** (status `ended`, see §10). Emits socket `connection:ended` and pushes `connection_left` to the partner. Needs live. | 403; 404; 409 `connection is not active` |
+| `POST /api/connections/:id/leave/cancel` | – | Removed. | `410 {error, code:"leave_steps_removed"}` |
+| `POST /api/connections/:id/leave/confirm-end` | – | Removed. | `410 {error, code:"leave_steps_removed"}` |
+| `POST /api/connections/:id/acknowledge-end` | – | `204`. Partner only: hard-deletes the ended connection now (rows + all attachments). | 403 `only the other member can acknowledge` / not a member; 404 (already purged: treat as done); 409 `connection has not ended` |
 | `PATCH /api/connections/:id/wallpaper` | `{wallpaper: "off"\|"love"\|"samurai"}` | `204` (shared by both). If it changed, a debounced (1.5 s) `system` message is broadcast. Needs live. | 400 `invalid wallpaper` |
 | `PATCH /api/connections/:id/style` | `{style: "line"\|"bubbles"}` | `204`, same notice behaviour | 400 `invalid message style` |
 | `POST /api/connections/:id/block` | – | `204`. Records a permanent block, terminates the connection, emits `connection:ended`. Needs live. | 403; 409 |
 | `POST /api/connections/:id/report` (strict) | `{category?, reason?}` | `204` (person-level report; duplicate = success). Works even after the connection ended for former members. | 403 |
-| `POST /api/connections/:id/read` | – | `204`. Sets my `last_read_at = now`; pushes socket `receipt:update` to the other member. Needs live. | 403; 409 |
+| `POST /api/connections/:id/read` | – | `204`. Sets my `last_read_at = now`; pushes socket `receipt:update` to the other member. Needs live. Socket equivalent: `message:read`. | 403; 409 |
+| `POST /api/connections/:id/delivered` | – | `204`. Sets my `last_delivered_at = now`; pushes socket `receipt:update` (`lastDeliveredAt`) to the other member. Call it when an FCM message arrives. Needs live. | 403; 404; 409 |
 
-`LeaveResult = { status, myLeaveStep, daysRemaining|null, bothLeaving, terminated }`. There are 5 leave steps (`LEAVE_STEPS_TOTAL`), `daysRemaining = 5 - myLeaveStep`. Terminating **deletes the connection, its messages and its attachments**.
+`LeaveResult = { status:"ended", myLeaveStep:5, daysRemaining:0, bothLeaving:false, terminated:true, endedAt, purgeAt }` (the first five fields only keep Android 2.0.5 parsing). Block-and-end still **deletes the connection, its messages and its attachments immediately**.
 
 Report `category` is one of `harassment|hate|sexual|child_safety|spam|other` (any other string is stored as `other`; non-string = null). `reason` is trimmed, max 1000 chars.
 
 ### Messages (`routes/messages.ts`)
 | Route | Notes |
 |---|---|
-| `GET /api/connections/:id/messages?before=<createdAt>&after=<createdAt>` | Needs live membership. Page size 50. No cursor: newest 50, returned oldest-first. `before`: the 50 newest older than that created_at (paging back). `after`: the 50 OLDEST newer than that created_at, oldest-first (reconnect resync; page forward until fewer than 50). `200 {messages: Message[]}`. Media payloads here carry `path` but **no `url`**: sign via the attachments endpoint. Errors 403/404/409. |
+| `GET /api/connections/:id/messages?before=<createdAt>&after=<createdAt>` | Needs live membership, or the partner of an `ended` connection inside its 7 days (§10). Page size 50. No cursor: newest 50, returned oldest-first. `before`: the 50 newest older than that created_at (paging back). `after`: the 50 OLDEST newer than that created_at, oldest-first (reconnect resync; page forward until fewer than 50). `200 {messages: Message[]}`. Media payloads here carry `path` but **no `url`**: sign via the attachments endpoint. Errors 403/404/409. |
 | `GET /api/link-preview?url=` | Server-side unfurl (30/min per IP). `200 {preview: LinkPreview\|null}`; `LinkPreview = {url, title\|null, description\|null, siteName, image\|null (base64), imageMime\|null, imageKind: "cover"\|"icon"\|null}`. null when unreachable/blocked/no metadata. http(s) on 80/443 to public addresses only (checked at connect, every redirect), 10 s, page ≤ 768 KB, image ≤ 600 KB (jpeg/png/webp/gif/ico, never SVG); cached 1 h. Errors 400 `invalid url`. |
 | `POST /api/messages/:id/report` (strict) | Body `{category?, reason?}` (same rules as above). `204`; duplicate = success. Works for a former member of a now-ended connection. Errors 403, 404 `message not found`. |
 
@@ -88,7 +92,7 @@ Report `category` is one of `harassment|hate|sexual|child_safety|spam|other` (an
 | Route | Notes |
 |---|---|
 | `POST /api/connections/:id/attachments?kind=image\|voice\|file` (strict) | Body: **raw bytes**, `Content-Type` = the file's MIME (not JSON; limit 26 MB at the parser). Needs live. `201 {path, mime, size}` where `path = "<connectionId>/<uuid>.<ext>"`. Errors: 400 `invalid attachment kind` / `missing upload body` / `unsupported <kind> type` / `empty upload` / `<kind> exceeds size limit`. |
-| `POST /api/connections/:id/attachments/signed` | Body `{paths: string[]}`; every path must start with `<connectionId>/` else `403 attachment does not belong to this connection`. Needs live. `200 {urls: {<path>: <signedUrl>}}`. Signed URLs are valid **3600 s**; paths that fail to sign are simply absent. |
+| `POST /api/connections/:id/attachments/signed` | Body `{paths: string[]}`; every path must start with `<connectionId>/` else `403 attachment does not belong to this connection`. Needs live, or the partner of an `ended` connection inside its 7 days (§10). `200 {urls: {<path>: <signedUrl>}}`. Signed URLs are valid **3600 s**; paths that fail to sign are simply absent. |
 
 Limits (kind -> max bytes, MIME -> stored extension):
 - `image` 10 MiB: `image/jpeg`, `image/png`, `image/webp`, `image/gif`
@@ -113,11 +117,12 @@ Flow: upload -> take `{path, mime, size}` -> send a `message:send` of type image
 ## 3. Rate limits
 
 REST (express-rate-limit, per client IP, `trust proxy` = 1; `RateLimit-*` draft-7 headers):
-- All `/api`: 240 requests / 60 s -> `429 {"error":"too many requests — slow down"}`
+- All `/api`: 240 requests / 60 s -> `429 {"error":"too many requests — slow down"}`. This includes `POST /connections/:id/delivered`: coalesce a burst of FCM arrivals into one call (the latest timestamp covers every earlier message).
 - "strict" routes: 10 / 60 s each -> `429 {"error":"too many requests — try again in a minute"}`. Applied to: `POST /connections/request`, `POST /connections/:id/report`, `POST /messages/:id/report`, `POST /push/subscribe`, `POST /push/token`, attachment upload.
 
 Socket.IO (in-memory, per socket unless stated):
-- Any event except `call:signal`: more than 60 events in 10 s -> ack `{error:'slow down'}`
+- Any event except `call:signal`, `game:move`, `typing` and `presence`: more than 60 events in 10 s -> ack `{error:'slow down'}` (`game:*` acks use `{ok:false, error:'rate_limited'}`)
+- `game:move`: 40 events / 1 s per socket
 - `call:signal`: 250 events / 10 s
 - Alarm **raise** (type `alarm` without `payload.ack`): one per user per 3 min -> `{error:'wait a bit before sending another alarm'}` (acks/cancels exempt)
 - `call:invite`: one per user per 5 s -> `{error:'wait a moment before calling again'}`
@@ -182,6 +187,8 @@ Every handler re-resolves the live connection from the DB; the client never name
 |---|---|---|
 | `presence` | `{active: boolean}` | no ack. Separate 20 events/socket/10s limit; see Presence below. |
 | `message:send` | `{content?: string, type?: MessageType, payload?, replyTo?: string, tempId?: string}`; `tempId` must match `^[A-Za-z0-9-]{1,64}$` (else treated as absent) | `{ok:true, message}` ; repeat of the same `(user, tempId)` within 5 min -> `{ok:true, duplicate:true, message:<original>}` and nothing is saved/broadcast again; concurrent duplicate -> `{error:'send already in progress'}`. Errors listed in section 4. The server also `message:new`-broadcasts to the room (sender included) and bumps the sender's last_read. |
+| `message:read` | `{connectionId}` | `{ok:true}` or `{ok:false, error}`. Same effect and checks as `POST /connections/:id/read` (member + live); `receipt:update` goes to the other member right after the write. |
+| `game:invite` / `game:accept` / `game:decline` / `game:move` / `game:end` | see §10 | `{ok:true}` or `{ok:false, error}` |
 | `reaction:add` | `{messageId, emoji}` | `{ok:true}`. Emoji must be ONE emoji (any; clients offer ❤️ 👍 😂 😮 😢 🙏 as the quick bar and a full picker), max 32 UTF-16 units, else `invalid emoji`. One reaction per user per message (a new emoji replaces the old). `system` messages can't be reacted to. Errors: `invalid emoji`, 403/404/409 messages. |
 | `reaction:remove` | `{messageId, emoji}` | `{ok:true}` |
 | `message:edit` | `{messageId, content}` | `{ok:true, message}`. Sender only, `type=text`, not deleted, within 30 min of `createdAt` (server clock); content 1-4000 after trim. Broadcasts `message:update`. Errors: `only your own messages can be edited`, `only text messages can be edited`, `messages can only be edited within 30 minutes`, `this message was deleted`, `message not found`. |
@@ -206,7 +213,8 @@ Call state is in memory (one call per connection). Outcomes: `end` by caller bef
 | `pin:update` | `PinState = {messageId\|null, pinnedBy\|null, pinnedAt\|null}` | to the room after `message:pin` |
 | `typing` | `{userId, typing}` | to the other member's sockets |
 | `presence` | `{userId, online: boolean, lastSeenAt: string\|null}` | to the other member on an online-state change; partner snapshot to a connecting socket or presence sender |
-| `connection:ended` | none | to the room when the connection is terminated (leave final step, confirm-end, block) |
+| `connection:ended` | none | to the room when the connection ends (leave, block) |
+| `game:invite` / `game:accept` / `game:decline` / `game:move` / `game:end` | the sender's payload + `from` (sender userId) | to the partner's sockets only (§10) |
 | `call:incoming` | `{callId, kind, fromUserId}` | to the callee's sockets; also replayed on (re)connect while ringing |
 | `call:accepted` | `{callId}` | to the whole room (so the callee's other devices drop their prompt) |
 | `call:signal` | `{callId, data}` | to the other participant |
@@ -244,6 +252,7 @@ received; abrupt power/network loss waits for Socket.IO to detect disconnection.
 Server sends to every web-push subscription and every FCM token the recipient registered (`push_tokens`). Triggers:
 - New message from the other member. If the recipient has **no live socket in the room**: web-push + FCM. If they do have one: the message is marked delivered and **FCM only** (a backgrounded Capacitor WebView keeps its socket alive). Web-push is never sent in the online case.
 - Missed/cancelled call (text push, both transports, see section 5).
+- The other member left (§10): title `<what the partner calls the leaver, or "Your connection"> left the connection`, body `Open One on One to save your conversation.`; `android-native` data `{type:"connection_left", connectionId, title, body}`.
 - Never pushed for: `call` / `system` rows written by the server, nor `declined`/`completed` calls.
 
 Title = what the recipient calls the sender (nickname) or `New message`. Body (`mediaNoticeFor`): text types -> the first 120 chars of `content`; `letter` -> `sent you a letter`; `image` -> `sent you a photo`; `voice` -> `sent you a voice message`; `file` -> `sent you a file`; `location` -> `shared their location` (never coordinates); alarm raise -> `🚨 sent an emergency alarm`; alarm cancel -> `cancelled their alarm (all clear)`; alarm ack -> `acknowledged your alarm`.
@@ -295,10 +304,10 @@ data: { urgent: "true", type: "alarm", ack: "true|false", cancelled: "true|false
 ---
 
 ## 7. Misc facts clients rely on
-- One account, one live connection; enforced by DB trigger/index and checked on every request.
+- One account, one live connection; enforced by DB trigger/index and checked on every request. `ended` is not live, so it never blocks a new connection.
 - Nicknames are local: `PATCH nickname` sets what *I* call the other member.
 - `GET /connections/current` is polled every ~4 s by the web client as a fallback to sockets.
-- Terminating a connection deletes all messages and attachments for both sides.
+- Block-and-end deletes all messages and attachments for both sides at once. Leave keeps them read-only for the partner for up to 7 days, then deletes them (§10).
 - `ALLOWED` emoji, wallpapers, styles, moods and report categories are the closed lists given above.
 
 ## 8. Edit / delete / pin / typing / link preview (migration 036, 2026-10-14)
@@ -321,3 +330,38 @@ data: { urgent: "true", type: "alarm", ack: "true|false", cancelled: "true|false
 
 - Avatar files live in the private `attachments` bucket under `avatars/<userId>/`; message payload paths must still start with `<connectionId>/`, so an avatar can never be referenced by a message. Account deletion removes them.
 - GIPHY attribution: clients show "Powered by GIPHY" in the GIF picker. Server env: `GIPHY_API_KEY`.
+
+## 10. Instant leave, sign-in gates, games, instant receipts (migrations 038 + 039, 2026-10-19)
+- **Run `038_user_gates.sql` and `039_instant_leave.sql` before deploying this backend**: `/me` reads the gate columns and every connection lookup selects `ended_at, ended_by`.
+
+### Sign-in gates
+- `GET /api/me` adds `ageVerifiedAt` and `termsAcceptedAt` (ISO string or null).
+- `POST /api/me/gates`: body is an object with at least one of `ageVerified`, `termsAccepted`, each exactly `true`; any other key or value is `400`. Each named gate is set to now **only if it is still null**; a repeat never moves or clears it. Returns `{ageVerifiedAt, termsAcceptedAt}`.
+
+### Instant leave
+- `POST /connections/:id/leave` sets `status = "ended"`, `ended_at = now`, `ended_by = <leaver>` (conditional on the connection still being live, so two simultaneous leaves end it once; the second gets 409), ends any call, emits `connection:ended`, pushes `connection_left` to the partner.
+- **Leaver**: loses all access at once (history, media, every write → 409 `connection is not active`); `GET /connections/current` returns `null`. They can request/accept a new connection immediately.
+- **Partner**: `GET /connections/current` returns the ended connection (`status:"ended"`, `endedBy`, `endedAt`, `purgeAt = endedAt + 7 days`, plus `otherNickname` etc.; avatar ids are null) while nothing live exists. Read-only: `GET /connections/:id/messages` and `POST /connections/:id/attachments/signed` work; everything else (send, edit, delete, reactions, pins, typing, presence, calls, games, uploads, GIFs, read/delivered receipts, nickname, wallpaper, style, block) is rejected because each REST route and socket handler re-reads the connection from the DB and requires a live status. A pending request to the partner takes precedence over the ended one in `/current`.
+- The ended connection is **hard-deleted** (row, members, messages, every Storage object under `<connectionId>/`, all pages, with retries) when the partner calls `POST /connections/:id/acknowledge-end`, when the partner requests or accepts a new connection (implicit acknowledge), or by the server sweep (at startup and hourly) once `ended_at + 7 days` passes. If Storage fails, the row stays and the next sweep retries.
+- `leave/cancel` and `leave/confirm-end` return `410 {error, code:"leave_steps_removed"}`. Migration 039 returns any `leave_pending` connection to `active` with steps reset.
+- Block-and-end (`POST /connections/:id/block`) is unchanged: immediate hard delete, no read-only window for either side.
+- Android 2.0.5 compatibility: its "step 1" leave call now ends the connection at once (`terminated:true`); an ended connection's status is not one it knows, so its partner sees the Connect screen and can start a new connection (no read-only view on 2.0.5).
+
+### Games relay (Socket.IO, never stored)
+| Client -> server | Payload |
+|---|---|
+| `game:invite` | `{gameId, game}`; `game` in `chess|pong|connect4|tictactoe|dots` |
+| `game:accept` | `{gameId}` |
+| `game:decline` | `{gameId}` |
+| `game:move` | `{gameId, seq, data}`; `seq` non-negative integer, `data` any JSON value |
+| `game:end` | `{gameId, reason}`; `reason` string ≤ 64 chars |
+
+- `gameId` matches `^[A-Za-z0-9-]{1,64}$`; the whole payload serialized is ≤ 4096 bytes. Unknown extra fields are dropped.
+- Only members of a live connection. The server relays the same event name with the validated fields plus `from` (sender userId) to the **partner's** sockets only (not the sender's other devices).
+- Ack: `{ok:true}` or `{ok:false, error}` with `error` in `invalid_payload` (validation), `not_member` (no live, pending or ended connection), `connection_inactive` (the caller's connection is pending or ended; also returned on an unexpected server error), `partner_offline` (partner has no connected socket), `rate_limited`.
+- `game:move`: 40 per second per socket, outside the generic flood guard; the other game events share the generic 60 / 10 s guard.
+
+### Instant receipts
+- Socket `message:read {connectionId}` = `POST /connections/:id/read` (REST stays).
+- `POST /connections/:id/delivered` marks delivered for a notified-but-offline device (call it from the FCM receive path).
+- Both emit `receipt:update` to the other member's sockets immediately after the single DB write; timestamps are the server's `toISOString()`, as for the existing receipt paths.
