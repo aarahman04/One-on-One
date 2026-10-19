@@ -89,6 +89,7 @@ const io = new Server(api, { cors: { origin: '*' } })
 io.on('connection', (socket) => {
   const update = (event, data, ack) => { io.emit(event, data); ack?.({ ok: true, ...(event === 'pin:update' ? { pin: data } : { message: data }) }) }
   socket.on('typing', (data) => events.push(['typing', data]))
+  socket.on('presence', (data) => events.push(['presence', data]))
   socket.on('message:send', (data, ack) => {
     events.push(['message:send', data])
     const message = { id: id(1000 + messages.length), senderId: ME, createdAt: new Date().toISOString(), type: data.type, content: data.content, payload: data.payload, replyTo: data.replyTo, tempId: data.tempId, reactions: [], editedAt: null, deletedAt: null }
@@ -332,6 +333,43 @@ try {
         }
         await page.goto(origin)
         await waitText(page, '#nav-status', 'in chat')
+        if (process.env.PARITY_PRESENCE_ONLY) {
+          const waitPresence = async (active, after = 0) => {
+            for (let i = 0; i < 100; i++) {
+              if (events.slice(after).some(([event, data]) => event === 'presence' && data.active === active)) return
+              await new Promise((resolve) => setTimeout(resolve, 50))
+            }
+            assert.fail(`Missing presence active=${active}`)
+          }
+          await waitPresence(true)
+          io.emit('presence', { userId: OTHER, online: false, lastSeenAt: new Date(Date.now() - 60_000).toISOString() })
+          await waitText(page, '#nav-status', 'Last seen')
+          await page.waitForTimeout(4200)
+          assert.match(await page.locator('#nav-status').textContent(), /Last seen/)
+          io.emit('presence', { userId: OTHER, online: true, lastSeenAt: null })
+          await waitText(page, '#nav-status', 'in chat')
+          let after = events.length
+          await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+          await waitPresence(false, after)
+          after = events.length
+          await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+          await waitPresence(true, after)
+          after = events.length
+          await page.evaluate(() => {
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+            document.dispatchEvent(new Event('visibilitychange'))
+          })
+          await waitPresence(false, after)
+          await page.evaluate(() => {
+            delete document.visibilityState
+            document.dispatchEvent(new Event('visibilitychange'))
+          })
+          after = events.length
+          for (const socket of io.sockets.sockets.values()) socket.conn.close()
+          await waitPresence(true, after)
+          assert.deepEqual(errors, [], 'presence has no page exceptions')
+          await context.close(); console.log(`PASS presence ${engine} ${width}px`); continue
+        }
         await visible(page, '#pin-banner')
         assert((await page.locator('#pin-snippet').textContent()).includes('Hey!'))
         await page.locator('#message-input').focus()

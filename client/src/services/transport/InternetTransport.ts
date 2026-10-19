@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client'
 import { supabase } from '../supabaseClient'
-import type { IncomingMessage, LinkPreview, MessageType, PinState, ReactionUpdate, ReceiptUpdate, Transport, TransportState, TypingUpdate } from './Transport'
+import type { IncomingMessage, LinkPreview, MessageType, PinState, PresenceUpdate, ReactionUpdate, ReceiptUpdate, Transport, TransportState, TypingUpdate } from './Transport'
 import { authedFetch } from '../apiClient'
 import type { CallTransport } from './CallTransport'
 import { InternetCallTransport } from './InternetCallTransport'
@@ -167,6 +167,17 @@ export class InternetTransport implements Transport {
   sendTyping(typing: boolean): void {
     // Never buffer ephemeral typing while offline.
     if (this.socket?.connected) this.socket.emit('typing', { typing })
+  }
+
+  sendPresence(active: boolean): void {
+    if (this.socket?.connected) this.socket.emit('presence', { active })
+  }
+
+  onPresence(callback: (update: PresenceUpdate) => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    socket.on('presence', callback)
+    return () => { socket.off('presence', callback) }
   }
 
   onTyping(callback: (update: TypingUpdate) => void): () => void {

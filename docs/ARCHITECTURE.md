@@ -1,5 +1,22 @@
 # Architecture
 
+## Live presence (2026-10-19)
+
+`websocket/presence.ts` registers on the existing authenticated socket. Every
+event re-resolves membership; per-socket queues preserve event order. A map
+scoped to connection/user holds transitions while room sockets determine active
+state. This is process-local for the single-replica deployment, without DB writes.
+Contract: `docs/API-CONTRACT.md` section 5.
+
+```mermaid
+flowchart LR
+  UI[Chat visibility / focus / reconnect] --> T[MessageService -> Transport]
+  T --> P[Socket presence: active boolean]
+  P --> A[Resolve live membership; aggregate active sockets]
+  A --> O[Partner: online / lastSeenAt]
+  O --> H[Header: presence first, receipt fallback]
+```
+
 ## Web chat parity with Android 2.0.3 (2026-10-14)
 
 Chat mutations keep the existing UI → messageService → Transport → InternetTransport boundary. Only InternetTransport emits/listens to Socket.IO or fetches `/api/link-preview`. `IncomingMessage`/history carry `editedAt`, `deletedAt` and reactions; `/connections/current` supplies the initial shared pin. Edit/delete/pin acks apply authoritative records, so failures leave the draft or message intact. The server remains the authorization boundary (sender, membership, 30-minute limit, message type and single-emoji validation).

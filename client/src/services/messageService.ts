@@ -2,7 +2,7 @@ import { InternetTransport } from './transport/InternetTransport'
 import type { LinkPreview, Transport } from './transport/Transport'
 import type { CallTransport } from './transport/CallTransport'
 
-export type { IncomingMessage, LinkPreview, MessageType, PinState, ReactionUpdate, ReceiptUpdate, Transport, TransportState, TypingUpdate } from './transport/Transport'
+export type { IncomingMessage, LinkPreview, MessageType, PinState, PresenceUpdate, ReactionUpdate, ReceiptUpdate, Transport, TransportState, TypingUpdate } from './transport/Transport'
 export type { CallTransport }
 
 // History can render before the socket connects; REST previews use the same transport.

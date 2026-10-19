@@ -32,6 +32,7 @@ import {
   type CallKind,
 } from '../services/callService.js'
 import { getIceServers } from '../services/turnService.js'
+import { registerPresence } from './presence.js'
 
 interface SocketData {
   userId: string
@@ -256,6 +257,7 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
     }
   })
 
+  registerPresence(io, getLiveConnectionForUser)
   io.on('connection', (socket: Socket) => {
     const { userId, connectionId } = socket.data as SocketData
     if (connectionId) {

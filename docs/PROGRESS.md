@@ -1,5 +1,21 @@
 # Progress Log
 
+## [Presence] Live foreground state — 2026-10-19
+
+Implemented on `feat/live-presence`: authenticated, rate-limited socket presence,
+ordered per socket, aggregated across devices, with partner-only broadcasts and
+initial snapshots. Web chat sends visibility/focus/reconnect state through the
+existing transport and prefers presence over the unchanged receipt fallback.
+State is process-local, matching the existing single Railway replica. No Supabase
+migration or new secrets. Deploy the reviewed backend and web client, then use
+the matching native Android build (sibling branch `feat/live-presence`).
+
+Verification: backend build + 39 tests, client build + 16 tests; isolated Chromium
+1280/360px checks cover fallback, explicit offline overriding fresh receipts and
+polling, visibility/focus and reconnect. Native build/lint + 128 tests also pass.
+No real-account or physical-device verification claimed. Abrupt power/network
+loss waits for socket disconnect detection; graceful background signals do not.
+
 ## [Web parity] Android 2.0.4 media and profile photos — 2026-10-14
 Status: implemented on `feat/web-android-parity-2026-10-14`; one PR to main, no merge or deployment.
 - Local 12-hour chat times; 3px photos and bare 150px stickers with sent-right/received-left pills.
