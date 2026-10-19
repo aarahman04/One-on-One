@@ -9,7 +9,7 @@ async function unwrap<T>(res: Response): Promise<T> {
   return res.status === 204 ? (undefined as T) : res.json()
 }
 
-export type ConnectionStatus = 'pending' | 'active' | 'leave_pending' | 'terminated' | 'declined'
+export type ConnectionStatus = 'pending' | 'active' | 'leave_pending' | 'ended' | 'terminated' | 'declined'
 
 export interface CurrentConnection {
   id: string
@@ -18,11 +18,9 @@ export interface CurrentConnection {
   isRequester: boolean
   otherNickname: string | null
   otherConnectionCode: string
-  myLeaveStep: number
-  otherLeaveStep: number
-  daysRemaining: number | null
-  bothLeaving: boolean
-  canAdvanceLeave: boolean
+  endedAt?: string | null
+  endedBy?: string | null
+  purgeAt?: string | null
   otherLastReadAt: string | null
   otherLastDeliveredAt: string | null
   wallpaper: string
@@ -32,14 +30,6 @@ export interface CurrentConnection {
   pinnedAt: string | null
   myAvatarId: string | null
   otherAvatarId: string | null
-}
-
-export interface LeaveResult {
-  status: ConnectionStatus
-  myLeaveStep: number
-  daysRemaining: number | null
-  bothLeaving: boolean
-  terminated: boolean
 }
 
 export interface ReactionSummary {
@@ -58,9 +48,9 @@ export async function getCurrentConnection(): Promise<CurrentConnection | null> 
 }
 
 // `after`: messages strictly newer than that createdAt, oldest first (reconnect resync).
-export async function getMessages(connectionId: string, before?: string, after?: string): Promise<HistoryMessage[]> {
+export async function getMessages(connectionId: string, before?: string, after?: string, signal?: AbortSignal): Promise<HistoryMessage[]> {
   const qs = after ? `?after=${encodeURIComponent(after)}` : before ? `?before=${encodeURIComponent(before)}` : ''
-  const res = await authedFetch(`/api/connections/${connectionId}/messages${qs}`)
+  const res = await authedFetch(`/api/connections/${connectionId}/messages${qs}`, { signal })
   const body = await unwrap<{ messages: HistoryMessage[] }>(res)
   return Array.isArray(body?.messages) ? body.messages : []
 }
@@ -146,22 +136,18 @@ export async function setMessageStyle(connectionId: string, style: string): Prom
   await unwrap(res)
 }
 
-export async function advanceLeave(connectionId: string): Promise<LeaveResult> {
+export async function leaveConnection(connectionId: string): Promise<void> {
   const res = await authedFetch(`/api/connections/${connectionId}/leave`, { method: 'POST' })
-  const body = await unwrap<{ leave: LeaveResult }>(res)
-  return body.leave
+  await unwrap(res)
 }
 
-export async function cancelLeave(connectionId: string): Promise<LeaveResult> {
-  const res = await authedFetch(`/api/connections/${connectionId}/leave/cancel`, { method: 'POST' })
-  const body = await unwrap<{ leave: LeaveResult }>(res)
-  return body.leave
+export async function acknowledgeEnd(connectionId: string): Promise<void> {
+  const res = await authedFetch(`/api/connections/${connectionId}/acknowledge-end`, { method: 'POST' })
+  if (res.status !== 404) await unwrap(res)
 }
 
-export async function confirmEndLeave(connectionId: string): Promise<LeaveResult> {
-  const res = await authedFetch(`/api/connections/${connectionId}/leave/confirm-end`, { method: 'POST' })
-  const body = await unwrap<{ leave: LeaveResult }>(res)
-  return body.leave
+export async function markDelivered(connectionId: string): Promise<void> {
+  await unwrap(await authedFetch(`/api/connections/${connectionId}/delivered`, { method: 'POST' }))
 }
 
 export async function markRead(connectionId: string): Promise<void> {

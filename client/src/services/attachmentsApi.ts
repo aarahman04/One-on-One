@@ -35,13 +35,13 @@ export async function uploadAttachment(connectionId: string, kind: AttachmentKin
 const SIGNED_URL_TTL_MS = 55 * 60 * 1000
 const signedUrlCache = new Map<string, { url: string; expiresAt: number }>()
 
-export async function getSignedUrls(connectionId: string, paths: string[]): Promise<Record<string, string>> {
+export async function getSignedUrls(connectionId: string, paths: string[], opts: { fresh?: boolean; signal?: AbortSignal } = {}): Promise<Record<string, string>> {
   const now = Date.now()
   const result: Record<string, string> = {}
   const toFetch: string[] = []
   for (const path of paths) {
     const cached = signedUrlCache.get(path)
-    if (cached && cached.expiresAt > now) result[path] = cached.url
+    if (!opts.fresh && cached && cached.expiresAt > now) result[path] = cached.url
     else toFetch.push(path)
   }
   if (!toFetch.length) return result
@@ -50,6 +50,7 @@ export async function getSignedUrls(connectionId: string, paths: string[]): Prom
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ paths: toFetch }),
+    signal: opts.signal,
   })
   const body = await unwrap<{ urls: Record<string, string> }>(res)
   for (const [path, url] of Object.entries(body.urls ?? {})) {

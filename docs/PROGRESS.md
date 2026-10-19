@@ -1,5 +1,19 @@
 # Progress Log
 
+## [Web] Android 2.0.6 parity — 2026-10-20
+
+Implemented on `feat/web-2.0.6-parity`, based on current main `89d7486`. Client-only; API contract §§5/10/11 and sibling Android used as read-only references.
+- Server-owned age/terms gates, account-keyed cache migration, instant leave with save-first/cancel, read-only partner-left recovery and acknowledge-end. Removed the five-step UI, countdown state and retired REST calls.
+- Full paginated ZIP export with conversation HTML/text, letter PDFs, images/stickers, voice and files; safe unique names, fresh signed URLs, progress/cancel. Tombstones are excluded before collecting attachments, including the shared chat prefetch. Existing text/web-page/structured-data exports remain.
+- Instant socket read receipts with REST fallback; receipt updates apply immediately. Capacitor receive/tap handles connection_left and delivered receipts using the authenticated current connection.
+- Five SVG games over the existing socket: strict Android move envelopes and ordering, inviter-authoritative Pong at 34ms intervals, invite/accept/decline/cancel/30s expiry, resign/leave confirmation, rematch, local tic-tac-toe best-of-three tally and 15s disconnect pause. chess.js and JSZip are the only new dependencies; notices ship in public/licenses/.
+- Browser /audio dictation inserts into the current draft without sending; unsupported-browser notice and cancel/late-event cleanup. Letter speechSynthesis speaker stops on close/background. No speech-server requests.
+- Letter SVG preview and PDF share measured A4 layout, unbreakable signature plus three final body lines, and near-one-page 20/18/17pt sizing. Chat: end-aligned /ask meta, two choice tiles/chips/match line, single reaction pill, directional/scroll-safe touch reply, vector headings/call icons, human labels, explicit server encryption copy and existing themed loader. Settings lists blocked accounts by date rather than ID.
+
+Validation: `client/ npm ci`, `npm test` (29 passing), `npm run build` and `npm audit --omit=dev` (zero vulnerabilities). Isolated Chromium fixtures at 1280/360px cover both themes, all five game UIs, one full two-page tic-tac-toe match with exact relay sequences, speech UI (mock browser engines), full ZIP contents/deleted filtering/cancel, leave and ended boot routing. Existing full chat/media regression suite passes both widths/all wallpapers, including local sticker cut-out inference; owner-feedback regression covers gates, share, letters/PDFs and alarms. Screenshots and reproduction: [ui-web-2.0.6](ui-web-2.0.6/README.md).
+
+Limits: ZIP assembly buffers bytes in browser memory; very large chats depend on device memory. PDF text remains rasterized to preserve Unicode. Best-of-three tally is local because Android's relay has no series metadata. Web Speech availability/voices depend on the browser. No physical phone/Capacitor push, audible speech, live-account or web-to-Android device match was claimed; protocol/rules were checked against Android fixtures. Existing development-tool audit findings and the mixed static/dynamic push-import build warning remain. No backend/schema/contract, workflow, hosting settings, secrets, prompt or Android files were changed.
+
 ## [Backend + speech] Letter narration and dictation (2.0.6) — 2026-10-19
 
 Implemented on `feat/speech-service` for review; no merge, no Railway service created, no deploy, no migration (none needed).

@@ -1,12 +1,12 @@
 // First-run gates (Google Play policy): a neutral age screen (18+ only, which
 // keeps the app out of the Families Policy entirely) and acceptance of the
-// Terms before the user can do anything. Both are stored per-account in
-// localStorage — matching how appearance prefs are stored, and enough for the
-// policy ("show an age screen"); there is deliberately no server column.
+// Terms before the user can do anything. The server owns both answers;
+// account-scoped localStorage is only a cache and migration source.
 
 import { Capacitor } from '@capacitor/core'
 import { getSession } from '../services/authService'
 import { gateStorageKeys } from './gateStorage'
+import { getGates, saveGates } from '../services/meApi'
 
 const MIN_AGE = 18
 
@@ -46,11 +46,19 @@ export async function ensureFirstRunGates(root: HTMLElement): Promise<void> {
   const session = await getSession()
   if (!session?.user.id) throw new Error('Sign in again to continue.')
   const { age: AGE_KEY, terms: TERMS_KEY } = gateStorageKeys(session.user.id)
-  if (read(AGE_KEY) === '1' && read(TERMS_KEY)) return Promise.resolve()
+  let gates = await getGates()
+  const migrate = {
+    ...(!gates.ageVerifiedAt && read(AGE_KEY) === '1' ? { ageVerified: true as const } : {}),
+    ...(!gates.termsAcceptedAt && read(TERMS_KEY) ? { termsAccepted: true as const } : {}),
+  }
+  if (Object.keys(migrate).length) gates = await saveGates(migrate)
+  if (gates.ageVerifiedAt) write(AGE_KEY, '1')
+  if (gates.termsAcceptedAt) write(TERMS_KEY, gates.termsAcceptedAt)
+  if (gates.ageVerifiedAt && gates.termsAcceptedAt) return
 
   return new Promise<void>((resolve) => {
     const showConsent = (): void => {
-      if (read(TERMS_KEY)) {
+      if (gates.termsAcceptedAt) {
         resolve()
         return
       }
@@ -78,9 +86,16 @@ export async function ensureFirstRunGates(root: HTMLElement): Promise<void> {
       check.addEventListener('change', () => {
         btn.disabled = !check.checked
       })
-      btn.addEventListener('click', () => {
-        write(TERMS_KEY, new Date().toISOString())
-        resolve()
+      btn.addEventListener('click', async () => {
+        btn.disabled = true
+        try {
+          gates = await saveGates({ termsAccepted: true })
+          write(TERMS_KEY, gates.termsAcceptedAt!)
+          resolve()
+        } catch {
+          btn.textContent = 'Could not save. Try again'
+          btn.disabled = false
+        }
       })
     }
 
@@ -95,7 +110,7 @@ export async function ensureFirstRunGates(root: HTMLElement): Promise<void> {
     }
 
     const showAge = (): void => {
-      if (read(AGE_KEY) === '1') {
+      if (gates.ageVerifiedAt) {
         showConsent()
         return
       }
@@ -121,9 +136,16 @@ export async function ensureFirstRunGates(root: HTMLElement): Promise<void> {
       const year = root.querySelector<HTMLSelectElement>('#dob-year')!
       const errorEl = root.querySelector<HTMLDivElement>('#dob-error')!
 
-      root.querySelector<HTMLButtonElement>('#dob-btn')!.addEventListener('click', () => {
+      const ageButton = root.querySelector<HTMLButtonElement>('#dob-btn')!
+      ageButton.addEventListener('click', async () => {
         if (!day.value || !month.value || !year.value) {
           errorEl.textContent = 'Please pick a full date.'
+          errorEl.style.display = 'block'
+          return
+        }
+        const date = new Date(Number(year.value), Number(month.value) - 1, Number(day.value))
+        if (date.getMonth() + 1 !== Number(month.value) || date.getDate() !== Number(day.value) || date > new Date()) {
+          errorEl.textContent = 'Please pick a valid date.'
           errorEl.style.display = 'block'
           return
         }
@@ -132,8 +154,16 @@ export async function ensureFirstRunGates(root: HTMLElement): Promise<void> {
           showDeadEnd()
           return
         }
-        write(AGE_KEY, '1')
-        showConsent()
+        ageButton.disabled = true
+        try {
+          gates = await saveGates({ ageVerified: true })
+          write(AGE_KEY, '1')
+          showConsent()
+        } catch {
+          errorEl.textContent = 'Could not save. Try again.'
+          errorEl.style.display = 'block'
+          ageButton.disabled = false
+        }
       })
     }
 

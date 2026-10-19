@@ -733,3 +733,24 @@ The native app keeps the same applicationId and upload key so it ships as an upd
 `stickerMaker.ts` decodes/orients photos to at most 1024px, runs the locally served MediaPipe/DeepLab model, applies `stickerMath.ts` crop/placement and exports 512px alpha WebP at quality 1.0→0.8 with a 100000-byte ceiling. Static runtime/model files are same-origin; CSP adds only `wasm-unsafe-eval`, and hosting rewrites exclude their directories. Model and artwork attribution ship beside the assets.
 
 `ChatPage` shows upload-only rows before media preparation, then hands documented payload fields to its existing optimistic/retry queue. Object URLs stay client-only; disposed/discarded uploads cannot send later. Exact 512×512 WebP without a reply renders bare; all other images use a thin frame with the footer inside the image wrapper. `profileGifApi.ts` uses the documented avatar endpoints; a private browser photo overrides the signed real photo in header/call UI. Browser appearance stores text size. [Verification and limitations](WEB-ANDROID-PARITY-2026-10-14.md).
+
+
+## Web 2.0.6 parity (2026-10-20)
+
+Server gate timestamps are authoritative; the account-keyed browser cache migrates once through `/api/me/gates`. `nextScreenFor` routes ended connections to a read-only save/skip page. Both leaving and acknowledging run only after a successful save when save-first is chosen. Archive assembly fetches every history page, filters tombstones before collecting attachments and obtains fresh signed URLs. PDF and SVG letter display share `letterLayout.ts` metrics. JSZip buffers the archive; failed/cancelled saves preserve access.
+
+```mermaid
+sequenceDiagram
+  participant UI as Chat / games
+  participant MS as Existing message transport
+  participant Relay as Socket.IO relay
+  participant Peer as Web or Android partner
+  UI->>MS: game invite / accept / move / end
+  MS->>Relay: Existing authenticated socket + ack
+  Relay->>Peer: Same envelope plus from
+  Note over UI,Peer: Board seq shared from zero; Pong seq per sender, inviter physics
+  UI->>MS: message:read while visible
+  Relay->>Peer: receipt:update
+```
+
+Games are ephemeral, connection-scoped sessions with 30s invitation and 15s disconnect timers; navigation disposes listeners, loops and timers. No game messages enter chat history. Browser recognition and synthesis implement /audio and letter reading without speech-server calls, and are cancelled on teardown/background. Original game/chess SVGs use existing theme tokens; chess rules use chess.js (BSD-2-Clause), ZIP export uses JSZip (MIT), with notices in client/public/licenses/.

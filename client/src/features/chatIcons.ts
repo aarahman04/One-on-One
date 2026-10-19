@@ -20,3 +20,5 @@ export const CHOICE_ICON = svg('<rect x="3" y="3" width="18" height="18" rx="3"/
 export const CHECK_ICON = svg('<path d="m5 12 4 4L19 6"/>')
 export const STICKER_ICON = svg('<path d="M21 12V6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h6zM12 21v-4a5 5 0 0 1 5-5h4M7.5 13.5s1.2 1.5 3 1.5M8.5 8.5h.01M14.5 8.5h.01"/>')
 export const CAMERA_ICON = svg('<path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h2l1.4-1.9a1.5 1.5 0 0 1 1.2-.6h3.8a1.5 1.5 0 0 1 1.2.6L16.5 6h2A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.5"/><path d="M17.5 9.5h.01"/>')
+export const SPEAKER_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H3v6h3l5 4zM15 8a6 6 0 010 8M18 5a10 10 0 010 14"/></svg>'
+export const STOP_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>'

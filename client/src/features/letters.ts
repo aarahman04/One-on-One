@@ -1,6 +1,7 @@
 import { openModal } from '../components/Modal'
 import { escapeHtml } from '../utils/download'
-import { letterDate } from './letterLayout'
+import { layoutLetter } from './letterLayout'
+import { SPEAKER_ICON, STOP_ICON } from './chatIcons'
 
 type LetterAppearance = 'dawn' | 'botanical'
 
@@ -11,7 +12,7 @@ export interface LetterPayload {
 }
 
 const LETTER_THEME_CSS = `
-.letter-sheet { padding: clamp(20px, 5vw, 48px); font: 22px/1.7 'Dancing Script', cursive; aspect-ratio: 210 / 297; max-width: 680px; width: 100%; margin: 0 auto; box-sizing: border-box; display: flex; flex-direction: column; background: #fff; color: #000; overflow-wrap: anywhere; }
+.letter-sheet { display: block; font-family: 'Dancing Script', cursive; aspect-ratio: 210 / 297; width: 100%; max-width: 680px; margin: 0 auto 16px; background: #fff; color: #000; fill: #000; }
 .letter-sheet__date { text-align: right; margin-bottom: 20px; }
 .letter-sheet__body { white-space: pre-wrap; padding-left: 28px; margin-top: 20px; }
 .letter-sheet__from { margin-top: auto; padding-top: 32px; text-align: right; white-space: pre-wrap; }
@@ -22,13 +23,38 @@ function normalize(p: Partial<LetterPayload> | null | undefined): LetterPayload 
   return { appearance, from: p?.from ?? '', to: p?.to ?? '' }
 }
 
-function letterSheetHtml(body: string, p: LetterPayload, createdAt: string): string {
-  return `<div class="letter-sheet">
-  <div class="letter-sheet__date">${escapeHtml(letterDate(createdAt))}</div>
-  <div>Dear ${escapeHtml(p.to)},</div>
-  <div class="letter-sheet__body">${escapeHtml(body)}</div>
-  <div class="letter-sheet__from">With love,\n${escapeHtml(p.from)}</div>
-</div>`
+function letterSheet(body: string, p: LetterPayload, createdAt: string): HTMLElement {
+  const holder = document.createElement('div')
+  holder.className = 'letter-pages'
+  void layoutLetter(body, p.to, p.from, createdAt).then((layout) => {
+    const ns = 'http://www.w3.org/2000/svg'
+    for (const [index, page] of layout.pages.entries()) {
+      const sheet = document.createElementNS(ns, 'svg')
+      sheet.classList.add('letter-sheet')
+      sheet.setAttribute('viewBox', `0 0 ${layout.width} ${layout.height}`)
+      sheet.setAttribute('role', 'img')
+      sheet.setAttribute('aria-label', `Letter page ${index + 1}: ${index === 0 ? `Dear ${p.to}. ` : ''}${layout.body.slice(page.from, page.to).join(' ')}${page.signature ? ` With love, ${p.from}.` : ''}`)
+      let y = layout.margin
+      const draw = (lines: string[], x: number, right = false, className = '') => {
+        const group = document.createElementNS(ns, 'g')
+        if (className) group.classList.add(className)
+        for (const text of lines) {
+          const node = document.createElementNS(ns, 'text')
+          node.setAttribute('x', String(x)); node.setAttribute('y', String(y))
+          node.setAttribute('dominant-baseline', 'text-before-edge'); node.setAttribute('text-anchor', right ? 'end' : 'start')
+          node.setAttribute('font-size', String(layout.size)); node.textContent = text
+          if (group.childNodes.length) group.append(document.createTextNode('\n'))
+          group.append(node); y += layout.line
+        }
+        sheet.append(group)
+      }
+      if (!index) { draw(layout.date, layout.width - layout.margin, true, 'letter-sheet__date'); y += 18; draw(layout.dear, layout.margin); y += 18 }
+      draw(layout.body.slice(page.from, page.to), layout.margin + 28, false, 'letter-sheet__body')
+      if (page.signature) { y = layout.height - layout.margin - layout.signature.length * layout.line; draw(layout.signature, layout.width - layout.margin, true, 'letter-sheet__from') }
+      holder.append(sheet)
+    }
+  }).catch(() => { holder.textContent = 'Could not display this letter. Close and try again.' })
+  return holder
 }
 
 function themeStyle(): HTMLStyleElement {
@@ -38,13 +64,12 @@ function themeStyle(): HTMLStyleElement {
 }
 
 // Viewer: opens a received letter, styled, with a Download button.
-export function openLetter(body: string, payload: Partial<LetterPayload> | null, createdAt = new Date().toISOString()): void {
+export function openLetter(body: string, payload: Partial<LetterPayload> | null, createdAt = new Date().toISOString()): () => void {
   const p = normalize(payload)
   const wrap = document.createElement('div')
   wrap.className = 'letter-view'
 
-  const holder = document.createElement('div')
-  holder.innerHTML = letterSheetHtml(body, p, createdAt) // all user content escaped inside
+  const holder = letterSheet(body, p, createdAt)
 
   const actions = document.createElement('div')
   actions.className = 'letter-view__actions'
@@ -66,8 +91,28 @@ export function openLetter(body: string, payload: Partial<LetterPayload> | null,
   })
   actions.append(status, dl)
 
-  wrap.append(themeStyle(), holder, actions)
-  openModal(wrap).panel.classList.add('letter-modal')
+  const heading = document.createElement('div')
+  heading.className = 'letter-view__heading'
+  const title = document.createElement('h2'); title.textContent = 'Letter'
+  const speaker = document.createElement('button'); speaker.type = 'button'
+  let reading = false
+  const updateSpeaker = () => { speaker.setAttribute('aria-label', reading ? 'Stop reading' : 'Read letter aloud'); speaker.innerHTML = reading ? STOP_ICON : SPEAKER_ICON }
+  const stop = () => { const wasReading = reading; reading = false; updateSpeaker(); if (wasReading) window.speechSynthesis?.cancel() }
+  speaker.addEventListener('click', () => {
+    if (reading) { stop(); return }
+    if (!('speechSynthesis' in window)) { status.textContent = 'Reading aloud is not supported in this browser.'; return }
+    const utterance = new SpeechSynthesisUtterance(`Dear ${p.to}. ${body}. With love, ${p.from}.`)
+    utterance.onend = stop
+    utterance.onerror = () => { stop(); status.textContent = 'Could not read the letter aloud. Try again.' }
+    reading = true; updateSpeaker(); window.speechSynthesis.speak(utterance)
+  })
+  updateSpeaker(); heading.append(title, speaker)
+  const visibility = () => { if (document.hidden) stop() }
+  document.addEventListener('visibilitychange', visibility)
+  wrap.append(themeStyle(), heading, holder, actions)
+  const modal = openModal(wrap, { onClose: () => { stop(); document.removeEventListener('visibilitychange', visibility) } })
+  modal.panel.classList.add('letter-modal')
+  return modal.close
 }
 
 // Composer: write, preview, then send using the existing wire format.
@@ -122,8 +167,7 @@ export function openLetterComposer(opts: { toName: string; onSend: (body: string
     title.className = 'letter-compose__title'
     title.textContent = 'Preview'
 
-    const holder = document.createElement('div')
-    holder.innerHTML = letterSheetHtml(body, p, new Date().toISOString())
+    const holder = letterSheet(body, p, new Date().toISOString())
 
     const actions = document.createElement('div')
     actions.className = 'letter-compose__actions'
