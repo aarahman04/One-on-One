@@ -30,6 +30,8 @@ const COMMANDS: SlashCommand[] = [
   { name: 'location', description: 'Share where you are right now', run: (ctx) => { ctx.input.value = ''; ctx.writeLocation() } },
 ]
 
+export const commandHints = COMMANDS.map((command) => `Try /${command.name}`)
+
 // Exact "/command" match. Backs `runIfCommand`, which ChatPage's form-submit
 // handler calls so a mobile soft keyboard's Send/Go key (which never fires a
 // catchable Enter keydown) still opens the command instead of sending the

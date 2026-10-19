@@ -1,5 +1,7 @@
 # Releasing One on One
 
+Web owner-feedback follow-up (2026-10-19): this client-only PR deploys through the normal Vercel web pipeline after merge. It needs no backend or Supabase migration and no Android build, version bump or Play upload. First launch after upgrading from global gate storage asks for DOB/rules once; later sign-ins by that same account skip them. Test PDF downloads and the OS share picker on the target browsers before rollout. The separate Kotlin Android release remains 12 / 2.0.5.
+
 Presence follow-up (2026-10-19): deploy the reviewed `feat/live-presence` backend
 on the existing single Railway replica and deploy the web client. No Supabase
 migration or new settings. The matching Kotlin app is in `../One-on-One-Android`,

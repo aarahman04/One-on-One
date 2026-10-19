@@ -27,6 +27,7 @@
     "@capgo/capacitor-social-login": "^8.5.7",
     "@mediapipe/tasks-vision": "1.1.0",
     "@supabase/supabase-js": "^2.112.4",
+    "jspdf": "^4.2.1",
     "socket.io-client": "^4.8.3"
   }
 }

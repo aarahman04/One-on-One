@@ -11,9 +11,9 @@ export const ConnectionIdPage: Page = (root, go) => {
   root.innerHTML = `
     <div class="screen">
       <div class="screen__eyebrow">YOUR CONNECTION ID</div>
-      <div class="connection-id" id="connection-id">...</div>
+      <button type="button" class="connection-id" id="connection-id" aria-label="Copy your connection ID" disabled>...</button>
       <div class="screen__actions">
-        <button id="copy-btn" disabled>Copy</button>
+        <button id="share-btn" disabled>Share</button>
         <button id="new-id-btn" disabled>Get a new ID</button>
       </div>
       <div class="screen__subtitle" id="subtitle">Loading…</div>
@@ -27,9 +27,9 @@ export const ConnectionIdPage: Page = (root, go) => {
     </div>
   `
 
-  const idEl = root.querySelector<HTMLDivElement>('#connection-id')!
+  const idEl = root.querySelector<HTMLButtonElement>('#connection-id')!
   const subtitleEl = root.querySelector<HTMLDivElement>('#subtitle')!
-  const copyBtn = root.querySelector<HTMLButtonElement>('#copy-btn')!
+  const shareBtn = root.querySelector<HTMLButtonElement>('#share-btn')!
   const newIdBtn = root.querySelector<HTMLButtonElement>('#new-id-btn')!
 
   let code = ''
@@ -39,7 +39,8 @@ export const ConnectionIdPage: Page = (root, go) => {
       code = connectionCode
       idEl.textContent = code
       subtitleEl.textContent = 'Give this ID to the person you want to connect with.'
-      copyBtn.disabled = false
+      shareBtn.disabled = false
+      idEl.disabled = false
       newIdBtn.disabled = false
     })
     .catch((err) => {
@@ -71,10 +72,24 @@ export const ConnectionIdPage: Page = (root, go) => {
     }
   }
 
-  copyBtn.addEventListener('click', async () => {
+  idEl.addEventListener('click', async () => {
     if (!code) return
     const ok = await copyToClipboard(code)
     subtitleEl.textContent = ok ? 'Copied to clipboard.' : `Copy manually: ${code}`
+  })
+
+  shareBtn.addEventListener('click', async () => {
+    if (!code) return
+    const text = `Let's talk on One on One.\n\nDownload the app on Google Play:\nhttps://play.google.com/store/apps/details?id=app.web.oneonone\n\nOr use it on the web:\nhttps://one-on-one-mu.vercel.app\n\nMy connection ID: ${code}`
+    if (navigator.share) {
+      try { await navigator.share({ title: 'One on One', text }) }
+      catch (err) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) subtitleEl.textContent = 'Could not share. Tap your ID to copy it.'
+      }
+    } else {
+      const copied = await copyToClipboard(text)
+      subtitleEl.textContent = copied ? 'Share message copied. Paste it into your preferred app.' : `Copy your ID manually: ${code}`
+    }
   })
 
   // Rotate the ID (e.g. it got shared too widely). The old ID stops working.

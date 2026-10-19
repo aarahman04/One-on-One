@@ -1,13 +1,13 @@
 // First-run gates (Google Play policy): a neutral age screen (18+ only, which
 // keeps the app out of the Families Policy entirely) and acceptance of the
-// Terms before the user can do anything. Both are stored per-device in
+// Terms before the user can do anything. Both are stored per-account in
 // localStorage — matching how appearance prefs are stored, and enough for the
 // policy ("show an age screen"); there is deliberately no server column.
 
 import { Capacitor } from '@capacitor/core'
+import { getSession } from '../services/authService'
+import { gateStorageKeys } from './gateStorage'
 
-const AGE_KEY = 'ageVerified'
-const TERMS_KEY = 'termsAcceptedAt'
 const MIN_AGE = 18
 
 function read(key: string): string | null {
@@ -42,7 +42,10 @@ function selectOptions(from: number, to: number, label: string): string {
 
 // Renders into `root` and resolves once BOTH gates are cleared. Never resolves
 // for an under-18 (dead-end screen) — that's the intent.
-export function ensureFirstRunGates(root: HTMLElement): Promise<void> {
+export async function ensureFirstRunGates(root: HTMLElement): Promise<void> {
+  const session = await getSession()
+  if (!session?.user.id) throw new Error('Sign in again to continue.')
+  const { age: AGE_KEY, terms: TERMS_KEY } = gateStorageKeys(session.user.id)
   if (read(AGE_KEY) === '1' && read(TERMS_KEY)) return Promise.resolve()
 
   return new Promise<void>((resolve) => {
