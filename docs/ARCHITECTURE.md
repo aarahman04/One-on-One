@@ -1,5 +1,26 @@
 # Architecture
 
+## Web owner feedback (2026-10-19)
+
+`ageGate` reads the signed-in Supabase user ID before resolving account-scoped local gates. Sign-out retains them; the shared `meApi.deleteAccount` clears only the deleted owner's keys after API success. Unowned legacy keys never bypass gates for a new account. Existing boot and post-sign-in callers still await both gates.
+
+Letter preview/viewer share the white-paper markup and self-hosted Dancing Script font. Existing letter payloads are unchanged, including historical botanical values. The viewer passes the message creation time to both display and export. Download lazily imports `letterPdf`/jsPDF, wraps measured graphemes onto A4 canvas pages and embeds the pages as images, preserving browser font fallback for Unicode/emoji. It stays local to the browser and reports failure without losing the letter. Image-based PDF text is not selectable.
+
+```mermaid
+flowchart LR
+  S[Authenticated session] --> G[Account-scoped DOB / rules keys]
+  D[Successful account deletion] --> C[Clear that owner's keys]
+  L[Existing letter message and createdAt] --> V[White paper viewer]
+  V --> P[Download: lazy PDF module]
+  P --> W[Measured wrapping and browser font fallback]
+  W --> A[A4 pages downloaded locally]
+  K[Acknowledge tap] --> Q[Silence local alarm immediately]
+  K --> M[MessageService / Transport]
+  M --> R[Server-confirmed shared acknowledgement]
+```
+
+Composer hints reuse the slash command registry and are cleared on teardown. Share uses Web Share directly during the button click, with the existing clipboard fallback for unsupported browsers. Chat media holds already use capture-phase selection; server mutation authorization and the 30-minute delete limit remain in the transport/backend.
+
 ## Live presence (2026-10-19)
 
 `websocket/presence.ts` registers on the existing authenticated socket. Every

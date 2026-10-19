@@ -503,11 +503,20 @@ input:focus {
   flex-shrink: 0;
 }
 
+@font-face {
+  font-family: 'Dancing Script';
+  src: url('/fonts/dancing-script.ttf') format('truetype');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 .connection-id {
   font-family: var(--font-mono);
   font-size: 32px;
   letter-spacing: 0.12em;
   font-weight: 700;
+  color: var(--text);
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1044,6 +1053,7 @@ input:focus {
 .chat__input-pill:focus-within { outline: calc(var(--space-half) / 2) solid var(--accent-you); }
 
 .chat__input-bar textarea {
+  align-self: center;
   min-width: 0;
   width: 100%;
   font-family: inherit;
@@ -1495,6 +1505,7 @@ input:focus {
   display: inline;
   color: var(--bubble-other-meta);
   font-size: var(--text-meta);
+  opacity: 0.72;
 }
 
 .chat--bubbles .chat__meta {
@@ -2419,25 +2430,7 @@ input:focus {
   box-sizing: border-box;
 }
 
-.letter-compose__picker {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.letter-appearance-opt {
-  background: var(--bg);
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 14px;
-  font-size: 13px;
-}
-
-.letter-appearance-opt--active {
-  border-color: var(--accent-other);
-  color: var(--text);
-}
+.modal-panel.letter-modal { width: min(728px, calc(100vw - 32px)); max-width: 728px; }
 
 .letter-compose__actions,
 .letter-view__actions,

@@ -1,5 +1,20 @@
 # Progress Log
 
+## [Web] Android 2.0.5 owner feedback — 2026-10-19
+
+Implemented on `feat/web-owner-feedback-1019` for review; no merge or production deployment.
+- DOB/rules acceptance is keyed by Supabase user ID, retained across sign-out and removed only after successful deletion of that account. Legacy browser-wide values are deliberately not migrated: existing web users confirm once because those values have no account owner.
+- Empty composer alternates Message (5s) and slash-command hints (2.5s), using the existing command list and fixed Message accessibility label. Textarea is vertically centered; only bubble timestamps are 28% dimmer, with receipt ticks unchanged.
+- Connection ID offers Share with Play/web links and the code. Tapping the ID copies only the code; browsers without Web Share copy the complete invitation. Cancelling the share sheet leaves the screen alone.
+- Letters use Android's OFL Dancing Script font on white paper with black ink, date top-right, indented body and With love/signature bottom-right. Preview has no style picker; old botanical letters remain readable and new payloads keep the existing dawn contract. Download creates real A4 PDFs with multi-page wrapping; jsPDF loads only on download. PDF pages are rasterized at 144 dpi to preserve Unicode/emoji shaping; text is not selectable.
+- Alarm acknowledgement immediately silences local audio/vibration/glow, including on a slow or failed request. Shared acknowledgement still requires server success; the card remains retryable on failure. Existing edge-aligned ack footer and capture-phase letter/photo/file selection are preserved and checked.
+- Live presence already shipped in #107. Android's duplicate call-notification ringtone has no matching browser path; no new ringtone was added.
+
+Validation: client production build and 18 unit tests; isolated Chromium browser fixtures at 360/1280px in light/dark cover hints, centering, letter viewing/composition, PDF downloads, holding letter/photo/file controls, delayed/failed alarm ack and retry, footer alignment, share/copy/cancel, account switching, sign-out and successful/failed deletion. Existing live-presence browser checks pass at both sizes. Short and long exports are A4 (one/five pages), rendered with Poppler for visual inspection including Hindi and emoji. Runtime dependency audit has zero findings; existing development-tool audit findings are outside this change.
+
+Run browser checks with `PARITY_OWNER_FEEDBACK_ONLY=1 node test/parity.browser.mjs` from `client/` (set `PLAYWRIGHT_MODULE` if needed). Screenshots: `docs/ui-web-owner-feedback/`.
+Not checked: real Supabase sign-in/deletion, an actual OS share picker, audible/background alarms or physical phone keyboards. No backend/schema migration, Android version change, release workflow or Play upload is needed for this web PR.
+
 ## [Presence] Live foreground state — 2026-10-19
 
 Implemented on `feat/live-presence`: authenticated, rate-limited socket presence,

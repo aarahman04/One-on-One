@@ -7,10 +7,11 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createServer as createViteServer } from 'vite'
+import { ownerFeedbackChecks } from './ownerFeedback.browser.mjs'
 
 const { Server } = createRequire(new URL('../../backend/package.json', import.meta.url))('socket.io')
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright')
-const screenshotDir = new URL('../../docs/ui-web-android-parity/', import.meta.url).pathname.replace(/^\/(\w:)/, '$1')
+const screenshotDir = new URL(process.env.PARITY_OWNER_FEEDBACK_ONLY ? '../../docs/ui-web-owner-feedback/' : '../../docs/ui-web-android-parity/', import.meta.url).pathname.replace(/^\/(\w:)/, '$1')
 await mkdir(screenshotDir, { recursive: true })
 const ME = 'me'
 const OTHER = 'other'
@@ -24,6 +25,7 @@ let failDelete = false
 let failUpload = false
 let uploadDelay = 0
 let avatars = { mine: null, other: null }
+const ownerState = { failDeleteAccount: false, failAlarmAck: false, alarmAckDelay: 0 }
 const reset = (fullPage = false, nickname = 'Arfah') => {
   const now = Date.now()
   const msg = (n, senderId, content, extra = {}) => ({ id: id(n), senderId, content, createdAt: new Date(now - (10 - n) * 20_000).toISOString(), type: 'text', payload: null, replyTo: null, reactions: [], editedAt: null, deletedAt: null, ...extra })
@@ -53,7 +55,12 @@ const api = createHttpServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204).end(); return }
   const url = new URL(req.url, 'http://fixture')
   res.setHeader('Content-Type', 'application/json')
-  if (url.pathname === '/api/me/avatars') res.end(JSON.stringify(avatars))
+  if (url.pathname === '/api/me') {
+    if (req.method !== 'DELETE') res.end(JSON.stringify({ connectionCode: 'ABCDEFGH' }))
+    else if (ownerState.failDeleteAccount) res.writeHead(500).end(JSON.stringify({ error: 'Delete failed (fixture)' }))
+    else res.writeHead(204).end()
+  }
+  else if (url.pathname === '/api/me/avatars') res.end(JSON.stringify(avatars))
   else if (url.pathname === '/api/me/avatar') {
     avatars.mine = req.method === 'DELETE' ? null : '/stickers/packs/Shapes/01_circle.webp'
     res.writeHead(req.method === 'DELETE' ? 204 : 200).end(req.method === 'DELETE' ? '' : JSON.stringify({ avatarId: 'fixture-avatar' }))
@@ -92,9 +99,11 @@ io.on('connection', (socket) => {
   socket.on('presence', (data) => events.push(['presence', data]))
   socket.on('message:send', (data, ack) => {
     events.push(['message:send', data])
+    if (data.type === 'alarm' && data.payload?.ack && ownerState.failAlarmAck) { setTimeout(() => ack({ error: 'Ack failed (fixture)' }), ownerState.alarmAckDelay); return }
     const message = { id: id(1000 + messages.length), senderId: ME, createdAt: new Date().toISOString(), type: data.type, content: data.content, payload: data.payload, replyTo: data.replyTo, tempId: data.tempId, reactions: [], editedAt: null, deletedAt: null }
     messages.push(message)
-    update('message:new', message, ack)
+    if (data.type === 'alarm' && data.payload?.ack && ownerState.alarmAckDelay) setTimeout(() => update('message:new', message, ack), ownerState.alarmAckDelay)
+    else update('message:new', message, ack)
   })
   socket.on('message:edit', (data, ack) => {
     events.push(['message:edit', data])
@@ -134,9 +143,9 @@ const vite = await createViteServer({
   root: new URL('../', import.meta.url).pathname.replace(/^\/(\w:)/, '$1'), configFile: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify(apiOrigin), 'import.meta.env.VITE_VAPID_PUBLIC_KEY': JSON.stringify('fixture') },
   plugins: [{ name: 'isolated-auth', enforce: 'pre', configureServer(server) {
-    server.middlewares.use('/fixture-setup.js', (_req, res) => { res.setHeader('Content-Type', 'text/javascript'); res.end("localStorage.setItem('ageVerified','1');localStorage.setItem('termsAcceptedAt','fixture');localStorage.setItem('notificationReminderAt',String(Date.now()))") })
+    server.middlewares.use('/fixture-setup.js', (_req, res) => { res.setHeader('Content-Type', 'text/javascript'); res.end("localStorage.setItem('ageVerified:fixture','1');localStorage.setItem('termsAcceptedAt:fixture','fixture');localStorage.setItem('notificationReminderAt',String(Date.now()))") })
   }, transformIndexHtml(html) { return html.replace("connect-src 'self'", `connect-src 'self' ${apiOrigin} ${apiOrigin.replace('http:', 'ws:')}`).replace('</head>', process.env.PARITY_MANUAL ? '<script src="/fixture-setup.js"></script></head>' : '</head>') }, transform(_code, moduleId) {
-    if (moduleId.replaceAll('\\', '/').endsWith('/src/services/supabaseClient.ts')) return "export const supabase = {auth:{getSession:async()=>({data:{session:{access_token:'fixture',user:{id:'fixture'}}}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}}),signOut:async()=>({})}}"
+    if (moduleId.replaceAll('\\', '/').endsWith('/src/services/supabaseClient.ts')) return "export const supabase = {auth:{getSession:async()=>({data:{session:{access_token:'fixture',user:{id:new URLSearchParams(location.search).get('owner')||'fixture'}}}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}}),signOut:async()=>({})}}"
     if (_code.includes('import.meta.env.VITE_API_URL')) return _code.replaceAll('import.meta.env.VITE_API_URL', JSON.stringify(apiOrigin))
   } }], server: { host: '127.0.0.1', port: 0, hmr: false },
 })
@@ -316,7 +325,7 @@ try {
         reset()
         const context = await browser.newContext({ viewport: { width, height: 820 }, permissions: ['microphone'], hasTouch: width === 360, ...(engine !== 'firefox' ? { isMobile: width === 360 } : {}), serviceWorkers: 'block' })
         await context.addInitScript(() => {
-          localStorage.setItem('ageVerified', '1'); localStorage.setItem('termsAcceptedAt', 'fixture')
+          localStorage.setItem('ageVerified:fixture', '1'); localStorage.setItem('termsAcceptedAt:fixture', 'fixture')
           if (!localStorage.getItem('notificationReminderAt')) localStorage.setItem('notificationReminderAt', String(Date.now()))
           window.__copied = ''
           Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text) => { window.__copied = text } } })
@@ -333,6 +342,11 @@ try {
         }
         await page.goto(origin)
         await waitText(page, '#nav-status', 'in chat')
+        if (process.env.PARITY_OWNER_FEEDBACK_ONLY) {
+          await ownerFeedbackChecks({ page, width, engine, origin, screenshotDir, io, id, row, ownerState, messages, events, disconnect: () => { connection = null } })
+          assert.deepEqual(errors, [], 'owner feedback has no page exceptions')
+          await context.close(); console.log(`PASS owner feedback ${engine} ${width}px both themes`); continue
+        }
         if (process.env.PARITY_PRESENCE_ONLY) {
           const waitPresence = async (active, after = 0) => {
             for (let i = 0; i < 100; i++) {

@@ -28,7 +28,7 @@ import {
   setNativeChatActive,
 } from '../features/alarmNative'
 import { writeLocationFlow, type LocationPayload } from '../features/location'
-import { mountSlashCommands, runIfCommand } from '../features/slashCommands'
+import { commandHints, mountSlashCommands, runIfCommand } from '../features/slashCommands'
 import { getNotificationsLabel, isPushSubscribed, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../features/pushNotifications'
 import {
   getCurrentConnection,
@@ -796,7 +796,7 @@ export const ChatPage: Page = (root, go) => {
       card.append(icon, txt)
       card.addEventListener('click', (e) => {
         e.stopPropagation() // don't also toggle the row's timestamp
-        openLetter(message.content, p)
+        openLetter(message.content, p, message.createdAt)
       })
       return card
     }
@@ -1176,7 +1176,7 @@ export const ChatPage: Page = (root, go) => {
           },
           (err) => {
             // Not recorded server-side: put the card back so it can be retried.
-            // The alert/ring was never stopped locally, so nothing else to undo.
+            // Keep this phone quiet; only a confirmed ack updates the shared state.
             card.disabled = false
             hint.textContent = idleHint
             showNotice(
@@ -2121,6 +2121,18 @@ export const ChatPage: Page = (root, go) => {
     input.addEventListener('input', syncComposer)
     syncComposer()
 
+    let hintIndex = 0
+    let showingHint = false
+    let hintTimer: ReturnType<typeof setTimeout>
+    const rotateHint = (): void => {
+      showingHint = !showingHint
+      input.placeholder = !input.value && !document.hidden && showingHint ? commandHints[hintIndex++ % commandHints.length] : 'Message'
+      hintTimer = setTimeout(rotateHint, showingHint ? 2500 : 5000)
+    }
+    hintTimer = setTimeout(rotateHint, 5000)
+    input.addEventListener('input', () => { if (input.value) input.placeholder = 'Message' })
+    overlays.add(() => clearTimeout(hintTimer))
+
     const sendMessage = (
       content: string,
       type: MessageType = 'text',
@@ -2139,8 +2151,7 @@ export const ChatPage: Page = (root, go) => {
       trySend(entry)
 
       // Your own raise lights up optimistically. Acks/cancels never go through
-      // here — see sendAlarmAck, which only stops the alert once the server
-      // confirms it recorded the ack.
+      // here — see sendAlarmAck for immediate local silence and confirmed state.
       if (type === 'alarm') {
         setAlarmGlow(true)
         alarmController?.start({ silent: true }) // you don't need alerting to your own alarm
@@ -2183,17 +2194,14 @@ export const ChatPage: Page = (root, go) => {
       overlays.add(dispose)
     })
 
-    // Acknowledge (recipient) or cancel (raiser) a live alarm. Not optimistic
-    // and not queued: the server must record it or the other side keeps
-    // ringing, so the alert only stops locally after the server confirms
-    // (the ack also carries the existing ack on an idempotent repeat).
+    // Silence this phone on tap; shared acknowledgement still requires the server.
     const sendAlarmAck = async (raiseId: string, cancelled: boolean): Promise<void> => {
+      alarmController?.stopAll(raiseId)
+      setAlarmGlow(false)
       if (!transport) throw new Error('offline')
       const payload = cancelled ? { ack: raiseId, cancelled: true } : { ack: raiseId }
       const saved = await transport.sendMessage('', 'alarm', payload, raiseId)
       markRaiseAcked(raiseId, cancelled)
-      alarmController?.stopAll(raiseId)
-      setAlarmGlow(false)
       if (saved) onIncoming(saved) // appends the ack card (deduped if the echo already did)
     }
 

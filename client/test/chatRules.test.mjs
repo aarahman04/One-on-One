@@ -9,6 +9,28 @@ const { messageLinks, safeWebUrl } = await load('../src/utils/linkify.ts')
 const { canDelete, canEdit, EDIT_WINDOW_MS, matchRanges, notificationReminderDue, NOTIFICATION_REMINDER_MS, previewImageUrl } = await load('../src/utils/chatRules.ts')
 const { default: groups } = await load('../src/features/emojiData.ts')
 const { nextScreenFor } = await load('../src/state/nextScreen.ts')
+const { gateStorageKeys, forgetFirstRunGates } = await load('../src/features/gateStorage.ts')
+const { wrapLetterLines, letterDate } = await load('../src/features/letterLayout.ts')
+
+test('gate storage separates accounts and deleting one preserves the other', () => {
+  const a = gateStorageKeys('a'), b = gateStorageKeys('b')
+  const values = new Map([[a.age, '1'], [a.terms, 'today'], [b.age, '1'], [b.terms, 'today']])
+  globalThis.localStorage = { removeItem: (key) => values.delete(key) }
+  forgetFirstRunGates('a')
+  assert.deepEqual([...values.keys()], [b.age, b.terms])
+  globalThis.localStorage = { removeItem: () => { throw new Error('blocked') } }
+  assert.doesNotThrow(() => forgetFirstRunGates('a'))
+  delete globalThis.localStorage
+})
+
+test('letter wrapping preserves paragraphs, long tokens and whole emoji', () => {
+  const measure = (text) => Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)).length
+  assert.deepEqual(wrapLetterLines('hello world\n\nabcdefgh\r\n👩🏽‍💻👩🏽‍💻', measure, 5), ['hello', 'world', '', 'abcde', 'fgh', '👩🏽‍💻👩🏽‍💻'])
+  assert.deepEqual(wrapLetterLines('a', () => 100, 5), ['a'])
+  assert.deepEqual(wrapLetterLines('', measure, 5), [''])
+  assert.equal(letterDate('invalid'), '')
+  assert(letterDate('2026-10-19T12:00:00Z').includes('2026'))
+})
 
 test('missing nicknames enter chat for the in-chat prompt; pending requests keep their routing', () => {
   assert.equal(nextScreenFor({ status: 'active', otherNickname: null }), 'chat')

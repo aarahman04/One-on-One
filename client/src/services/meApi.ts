@@ -1,4 +1,6 @@
 import { authedFetch } from './apiClient'
+import { getSession } from './authService'
+import { forgetFirstRunGates } from '../features/gateStorage'
 
 async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -11,7 +13,9 @@ async function unwrap<T>(res: Response): Promise<T> {
 // Account deletion (Google Play policy). Backend deletes the Supabase auth user
 // and everything cascading off it; the caller signs out afterwards.
 export async function deleteAccount(): Promise<void> {
+  const owner = (await getSession())?.user.id
   await unwrap(await authedFetch('/api/me', { method: 'DELETE' }))
+  if (owner) forgetFirstRunGates(owner)
 }
 
 export interface BlockRow {
