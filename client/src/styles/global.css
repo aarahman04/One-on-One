@@ -3273,9 +3273,9 @@ input:focus {
 .game-board > button[aria-disabled='true'] { cursor: default; }
 .game-board > button:focus-visible { outline: 3px solid var(--accent-other); outline-offset: -3px; z-index: 1; }
 .game-board svg { width: 100%; height: 100%; display: block; }
-.game-board--tictactoe { grid-template-columns: repeat(3,1fr); }
+.game-board--tictactoe { grid-template-columns: repeat(3,1fr); grid-template-rows: repeat(3,minmax(0,1fr)); }
 .game-board--connect4 { grid-template-columns: repeat(7,1fr); grid-template-rows: repeat(6,1fr); aspect-ratio: 7/6; }
-.game-board--chess { grid-template-columns: repeat(8,1fr); touch-action: none; }
+.game-board--chess { grid-template-columns: repeat(8,1fr); grid-template-rows: repeat(8,minmax(0,1fr)); touch-action: none; }
 .game-board--chess > button { border: 0; touch-action: none; }
 .game-board > .game-cell--mine, .game-box.game-cell--mine { color: var(--accent-you); }
 .game-board > .game-cell--other, .game-box.game-cell--other { color: var(--accent-other); }

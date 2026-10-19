@@ -39,7 +39,7 @@ const api=createServer(async(req,res)=>{
   calls.push([req.method,url.pathname,user])
   if(url.pathname==='/api/me')json({userId:user,connectionCode:'ABCDEFGH',...gates.get(user)})
   else if(url.pathname==='/api/me/gates'){const input=await body(),value=gates.get(user)||{ageVerifiedAt:null,termsAcceptedAt:null};if(input.ageVerified)value.ageVerifiedAt||=new Date().toISOString();if(input.termsAccepted)value.termsAcceptedAt||=new Date().toISOString();gates.set(user,value);json(value)}
-  else if(url.pathname==='/api/connections/current')json({connection:!connection||connection.endedBy===user?null:{...connection,myUserId:user,otherNickname:user==='me'?'Alex':'Sam'}})
+  else if(url.pathname==='/api/connections/current')json({connection:!connection||connection.endedBy===user?null:{...connection,myUserId:user,otherNickname:user==='me'?connection.otherNickname:'Sam'}})
   else if(url.pathname==='/api/me/avatars')json({mine:null,other:null})
   else if(url.pathname==='/api/me/blocks')json({blocks:[]})
   else if(url.pathname.endsWith('/messages')){const before=url.searchParams.get('before'),after=url.searchParams.get('after'),list=messages.filter((m)=>(!before||m.createdAt<before)&&(!after||m.createdAt>after));json({messages:after?list.slice(0,50):list.slice(-50)})}
@@ -89,6 +89,14 @@ try{
     assert(calls.some(([kind,name])=>kind==='socket'&&name==='message:read'))
     assert.equal(await page.locator('.chat__reaction-total').textContent(),'2')
     assert.equal(await page.locator('.thisorthat-card__option').count(),2);assert.equal(await page.locator('.thisorthat-card__pick').count(),2);await wait(page,'You matched!')
+    if(width===1280){
+      connection.otherNickname='Alex & Bea <b>friend</b>';await page.reload();await page.locator('#message-input').waitFor()
+      assert.equal(await page.locator('.thisorthat-card__pick').count(),2)
+      assert((await page.locator('.thisorthat-card__pick').allTextContents()).includes(connection.otherNickname))
+      assert.equal(await page.locator('.thisorthat-card__picks b').count(),0)
+      connection.otherNickname='Alex';await page.reload();await page.locator('#message-input').waitFor()
+    }
+    await page.waitForFunction(async()=>{try{return !!(await import('/src/services/messageService.ts')).getCallTransport()}catch{return false}})
     const sealed={id:id(70),senderId:'other',type:'thisorthat',content:'Rain vs Sun',payload:{optionA:'Rain',optionB:'Sun',pickSender:'a'},replyTo:null,createdAt:new Date().toISOString(),reactions:[]}
     messages.push(sealed);io.emit('message:new',sealed)
     await page.locator(`[data-id="${id(70)}"]`).getByRole('button',{name:'Rain',exact:true}).click()
@@ -104,14 +112,16 @@ try{
     await page.evaluate(()=>{window.__recognition.onresult({resultIndex:0,results:[{isFinal:true,0:{transcript:'spoken text'}}]});window.__recognition.onend()})
     assert.equal(await page.locator('#message-input').inputValue(),'Draft spoken text');assert.equal(messages.length,count)
     await command(page,'audio');await page.locator('.voice-typing').waitFor()
-    await page.evaluate(()=>{window.__lateRecognition=window.__recognition})
+    await page.evaluate(()=>{window.__lateResult=window.__recognition.onresult})
     await page.getByRole('button',{name:'Cancel',exact:true}).click()
-    await page.evaluate(()=>window.__lateRecognition.onresult({resultIndex:0,results:[{isFinal:true,0:{transcript:'late words'}}]}))
+    await page.evaluate(()=>window.__lateResult({resultIndex:0,results:[{isFinal:true,0:{transcript:'late words'}}]}))
     assert.equal(await page.locator('#message-input').inputValue(),'','cancel ignores late dictated text')
     await page.evaluate(()=>{delete window.SpeechRecognition;delete window.webkitSpeechRecognition});await command(page,'audio');await wait(page,"Voice typing isn't supported in this browser")
     await command(page,'thisorthat');await page.locator('#thisorthat-a').fill('Beach');await page.locator('#thisorthat-b').fill('Mountains');await page.getByRole('button',{name:'Mountains',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Mountains',exact:true}).getAttribute('aria-pressed'),'true');await page.screenshot({path:join(screenshots,`${width}-choice-composer.png`)});await page.keyboard.press('Escape')
     await other.goto(origin+'?user=other');await other.locator('#message-input').waitFor()
     await page.bringToFront();await command(page,'games');await page.getByRole('button',{name:'Tic-Tac-Toe',exact:true}).click();await other.getByRole('button',{name:'Accept',exact:true}).click();await wait(page,'Your turn')
+    const equalRows=async(p)=>{const heights=await p.locator('.game-board > button').evaluateAll((buttons)=>buttons.map((b)=>b.getBoundingClientRect().height));assert(Math.max(...heights)-Math.min(...heights)<1,'board squares keep equal row heights')}
+    await equalRows(page)
     for(const[p,key]of[[page,'0'],[other,'3'],[page,'1'],[other,'4'],[page,'2']]){await p.locator(`.game-board [data-key="${key}"][aria-disabled="false"]`).waitFor();await p.locator(`.game-board [data-key="${key}"]`).click()}
     await wait(page,'You won');await wait(other,'Sam won');assert.deepEqual(moves.filter(([e])=>e==='game:move').map(([,p])=>[p.seq,p.data]),[[0,{cell:0}],[1,{cell:3}],[2,{cell:1}],[3,{cell:4}],[4,{cell:2}]])
     await page.screenshot({path:join(screenshots,`${width}-tictactoe-result.png`)})
@@ -119,6 +129,7 @@ try{
     for(const title of ['Chess','Connect 4','Dots & Boxes','Table Tennis']){
       await page.bringToFront();await command(page,'games');await page.getByRole('button',{name:title,exact:true}).click();await other.getByRole('button',{name:'Accept',exact:true}).click();await page.locator('.game-surface:not([hidden])').waitFor()
       if(title==='Chess'){await page.getByRole('button',{name:/^e2, white pawn/}).click();await page.getByRole('button',{name:/^e4, empty, legal destination/}).click()}
+      if(title==='Chess')await equalRows(page)
       if(title==='Connect 4')await page.locator('.game-board [data-key="0"]').click()
       if(title==='Dots & Boxes')await page.getByRole('button',{name:'Horizontal line, row 1, column 1, empty',exact:true}).click()
       if(title==='Table Tennis'){await page.locator('.game-paddle').fill('0.605');await page.waitForTimeout(150);assert(moves.some(([e,p])=>e==='game:move'&&p.data?.b?.length===4))}

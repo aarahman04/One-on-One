@@ -1,7 +1,7 @@
 import { getMessages, type CurrentConnection, type HistoryMessage } from '../services/connectionsApi'
 import { getSignedUrls } from '../services/attachmentsApi'
 import { downloadBlob, escapeHtml } from '../utils/download'
-import { archiveFilename, archiveFiles, archiveMessages } from './archiveRules'
+import { archiveContent, archiveFilename, archiveFiles, archiveMessages } from './archiveRules'
 import { openModal } from '../components/Modal'
 
 export async function allMessages(id: string, signal?: AbortSignal): Promise<HistoryMessage[]> {
@@ -23,8 +23,7 @@ export function conversationText(messages: HistoryMessage[], current: CurrentCon
   return archiveMessages(messages).map((m) => {
     const name = m.senderId === current.myUserId ? 'You' : current.otherNickname || 'Partner'
     const path = files.get(m.id)
-    const p = (m.payload ?? {}) as { kind?: string; outcome?: string }
-    const content = m.type === 'call' ? `${p.kind === 'video' ? 'Video call' : 'Voice call'}${p.outcome ? ` · ${p.outcome.replaceAll('_', ' ')}` : ''}` : m.content
+    const content = archiveContent(m)
     return `[${new Date(m.createdAt).toLocaleString()}] ${name}: ${path ? `[${m.type === 'image' ? 'Photo' : m.type === 'voice' ? 'Voice message' : m.type === 'letter' ? 'Letter' : 'File'}: ${path}]\n` : ''}${content}${m.editedAt ? ' (edited)' : ''}`
   }).join('\n\n')
 }
@@ -34,7 +33,7 @@ export function conversationHtml(messages: HistoryMessage[], current: CurrentCon
   const rows = archiveMessages(messages).map((m) => {
     const path = files.get(m.id), url = path ? e(path.split('/').map(encodeURIComponent).join('/')) : ''
     const media = !path ? '' : m.type === 'image' ? `<img src="${url}" alt="Shared image">` : m.type === 'voice' ? `<audio controls src="${url}"></audio>` : `<p><a href="${url}">${m.type === 'letter' ? 'Read letter (PDF)' : 'Open file'}</a></p>`
-    return `<article class="${m.senderId === current.myUserId ? 'me' : 'them'}"><small>${e(m.senderId === current.myUserId ? 'You' : current.otherNickname || 'Partner')} · ${e(new Date(m.createdAt).toLocaleString())}</small>${media}<div>${e(m.content)}</div></article>`
+    return `<article class="${m.senderId === current.myUserId ? 'me' : 'them'}"><small>${e(m.senderId === current.myUserId ? 'You' : current.otherNickname || 'Partner')} · ${e(new Date(m.createdAt).toLocaleString())}</small>${media}<div>${e(archiveContent(m))}</div></article>`
   }).join('\n')
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conversation with ${e(current.otherNickname || 'Partner')}</title><style>body{max-width:720px;margin:auto;padding:20px;font:16px/1.5 system-ui;background:#f6f4f1;color:#161b22}article{max-width:85%;padding:12px;margin:12px 0;background:#fff;border-radius:14px;overflow-wrap:anywhere}.me{margin-left:auto;background:#d6f6d8}small{display:block;color:#485460}article div{white-space:pre-wrap}img,audio{max-width:100%}img{max-height:500px}</style><h1>Conversation with ${e(current.otherNickname || 'Partner')}</h1>${rows}</html>`
 }

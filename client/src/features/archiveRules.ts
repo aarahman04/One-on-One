@@ -1,5 +1,13 @@
 import type { HistoryMessage } from '../services/connectionsApi'
 
+export function archiveContent(message: HistoryMessage): string {
+  if (message.type !== 'call') return message.content
+  const p = (message.payload ?? {}) as { kind?: string; outcome?: string; durationSec?: number }
+  const outcomes: Record<string, string> = { missed: 'Missed', declined: 'Declined', cancelled: 'Cancelled', completed: 'Completed', failed: 'Failed', unreachable: 'Not reached' }
+  const seconds = Math.max(0, Math.round(p.durationSec || 0))
+  return `${p.kind === 'video' ? 'Video call' : 'Voice call'} · ${outcomes[p.outcome || ''] || 'Ended'}${seconds ? ` · ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : ''}`
+}
+
 export function archiveMessages(messages: HistoryMessage[]): HistoryMessage[] {
   return messages.filter((m) => m.id && !m.deletedAt && m.type !== 'system')
 }

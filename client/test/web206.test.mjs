@@ -15,9 +15,15 @@ const enginesUrl = await source('../src/features/games/engines.ts', { 'chess.js'
 const { TicTacToeGame, ConnectFourGame, DotsGame, ChessGame, PongGame } = await import(enginesUrl)
 const { GameSession } = await import(await source('../src/features/games/session.ts', { './engines': enginesUrl }))
 const { planLetterPages, chooseLetterSize } = await import(await source('../src/features/letterLayout.ts'))
-const { archiveMessages, archiveFiles, archiveFilename, safeArchiveName } = await import(await source('../src/features/archiveRules.ts'))
+const { archiveContent, archiveMessages, archiveFiles, archiveFilename, safeArchiveName } = await import(await source('../src/features/archiveRules.ts'))
 const { swipeClaim, swipeOffset } = await import(await source('../src/utils/swipeReply.ts'))
 const play = (engine, data) => engine.play(engine.turn, engine.nextSeq, data)
+
+test('both archive formats retain readable call records instead of empty call content', () => {
+  assert.equal(archiveContent({ type: 'call', content: '', payload: { kind: 'video', outcome: 'completed', durationSec: 125 } }), 'Video call · Completed · 2:05')
+  assert.equal(archiveContent({ type: 'call', content: '', payload: { kind: 'audio', outcome: 'unreachable' } }), 'Voice call · Not reached')
+  assert.equal(archiveContent({ type: 'text', content: 'Original words' }), 'Original words')
+})
 
 test('pagination keeps the signature with three final body lines and preserves every line', () => {
   for (let length = 0; length < 160; length++) {

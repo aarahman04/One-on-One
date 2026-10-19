@@ -1033,11 +1033,11 @@ export const ChatPage: Page = (root, go) => {
         const original = message.replyTo ? messagesById.get(message.replyTo) : undefined
         const senderName = original ? (original.senderId === myUserId ? 'You' : otherName) : isMine ? otherName : 'You'
         const recipientName = isMine ? 'You' : otherName
-        const picksFor = (opt: 'a' | 'b'): string => {
+        const picksFor = (opt: 'a' | 'b'): string[] => {
           const names: string[] = []
           if (p.pickSender === opt) names.push(senderName)
           if (p.pickRecipient === opt) names.push(recipientName)
-          return names.join(' & ')
+          return names
         }
 
         const card = document.createElement('div')
@@ -1058,7 +1058,7 @@ export const ChatPage: Page = (root, go) => {
           text.textContent = label
           const picks = document.createElement('div')
           picks.className = 'thisorthat-card__picks'
-          for (const name of picksFor(opt).split(' & ').filter(Boolean)) { const chip = document.createElement('span'); chip.className = 'thisorthat-card__pick'; chip.textContent = name; picks.append(chip) }
+          for (const name of picksFor(opt)) { const chip = document.createElement('span'); chip.className = 'thisorthat-card__pick'; chip.textContent = name; picks.append(chip) }
           cell.append(text, picks)
           return cell
         }

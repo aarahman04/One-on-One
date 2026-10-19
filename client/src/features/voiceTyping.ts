@@ -21,7 +21,10 @@ export function startVoiceTyping(composer: HTMLElement, input: HTMLTextAreaEleme
   bar.innerHTML = '<span role="status">Listening…</span><button type="button" data-stop>Stop</button><button type="button" data-cancel>Cancel</button>'
   composer.before(bar)
   let active = true
-  const finish = () => { active = false; clearTimeout(timer); bar.remove(); document.removeEventListener('visibilitychange', hidden) }
+  const finish = () => {
+    active = false; clearTimeout(timer); bar.remove(); document.removeEventListener('visibilitychange', hidden)
+    recognition.onresult = recognition.onerror = recognition.onend = null
+  }
   const cancel = () => { if (!active) return; finish(); recognition.abort() }
   const hidden = () => { if (document.hidden) cancel() }
   const timer = setTimeout(() => recognition.stop(), 120_000)
