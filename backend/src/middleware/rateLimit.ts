@@ -29,3 +29,17 @@ export const previewLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'too many requests — try again in a minute' },
 })
+
+// Speech runs CPU models on a small shared service, so these are per signed-in
+// user (mounted after requireAuth), not per IP.
+const perUser = (limit: number) =>
+  rateLimit({
+    windowMs: 60_000,
+    limit,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `user:${req.appUser!.id}`,
+    message: { error: 'too many requests — try again in a minute', code: 'rate_limited' },
+  })
+export const narrationLimiter = perUser(30)
+export const transcribeLimiter = perUser(10)

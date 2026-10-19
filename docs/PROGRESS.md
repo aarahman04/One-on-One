@@ -1,5 +1,12 @@
 # Progress Log
 
+## [Backend + speech] Letter narration and dictation (2.0.6) — 2026-10-19
+
+Implemented on `feat/speech-service` for review; no merge, no Railway service created, no deploy, no migration (none needed).
+- New private `speech/` service (Python 3.12, FastAPI, sherpa-onnx 1.13.8, Dockerfile): Kokoro-82M v1.0 fp32 voice `af_heart` -> Ogg Opus, Parakeet TDT 0.6B v3 int8 STT with a Silero VAD silence guard. Models baked in at build time with sha256 pins; token-guarded; bounded concurrency on a thread pool; dual-stack bind for Railway private networking.
+- Backend: `GET /api/connections/:connectionId/messages/:messageId/narration?part=n` (DB-only letter text, deterministic <=400-char parts, uniform 404, 30/min per user) and `POST /api/transcribe` (3 MB, audio allow-list, 422 `no_speech`, 10/min per user); 503 `speech_unavailable` when `SPEECH_SERVICE_URL`/`SPEECH_SERVICE_TOKEN` are unset. Contract: `docs/API-CONTRACT.md` §11; design, benchmarks, Railway steps: `docs/SPEECH-SERVICE.md`.
+- Validation: backend `npm test` (new `test/speech.test.ts` with a local HTTP stub for the speech service) and `npm run build`; speech `pytest` (5, inside the built image with real models); Docker image built and exercised over HTTP (auth, TTS, STT, 415/413/silence). Benchmarks were taken on a loaded laptop and are noisy. Not checked: Railway itself, the Android client, real phone recordings (only bundled human samples and Kokoro speech).
+
 ## [Backend] Instant leave, sign-in gates, game relay, instant receipts — 2026-10-19
 
 Implemented on `feat/leave-games-gates` for review; no merge, no migration run, no deploy.
