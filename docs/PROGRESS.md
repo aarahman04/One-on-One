@@ -2934,3 +2934,30 @@ Notes/deviations: none.
 - GIPHY proxy (`GIPHY_API_KEY`): search/trending, rating pg, 10-min cache; sending fetches the GIF server-side from
   `*.giphy.com` only (GIF magic, ≤10 MiB) and returns a ready image payload. Contract §9. Tests: `test/avatarGif.test.ts`.
 - Clients: Android implemented; web client not yet (fields are additive, nothing breaks).
+
+## Authoritative games + speech cost rework (2026-10-20, 2.0.7, branch `claude/pensive-franklin-l096wx`, not merged)
+Status: implemented and tested in this repo; **not deployed** (no Railway or secret changes were made).
+- **Games (`match:*`, contract §12)**: the backend now owns every game. In-memory match per connection
+  (single instance, like calls): random seats on the first game, swapped on rematch (chess colours
+  alternate), every move validated server-side (chess via chess.js 1.4.0; tic-tac-toe, connect 4,
+  dots & boxes ported from the Android engines), table tennis simulated at 60 Hz on the server with
+  30 Hz volatile frames, de-duplicated retries by `seq`, `match:sync` reconnection, `match:away`
+  pause, abandonment/expiry/idle cleanup, `connection_ended` from the leave/terminate path, 5 s DB
+  liveness re-check for running table tennis. FIDE draws: threefold/fifty-move claimable by the side
+  to move; fivefold/75-move automatic; insufficient material; agreement.
+- Root causes fixed: the old `game:*` relay did an async DB lookup per event, so 30 Hz pong packets
+  could arrive out of order and end the game via the strict `seq` check; nothing was validated server-side.
+- The `game:*` relay (§10) is unchanged for the web client; Android uses §12. **Web ↔ Android games do
+  not interoperate until the web client adopts §12** (owner: web left out of this round).
+- Tests: `test/gameRules.test.ts` (15: every chess rule incl. castling restrictions, en passant,
+  promotion choice, claims, fivefold/75, pong physics, match manager) and `test/matches.test.ts`
+  (3, two real Socket.IO clients: chess with reconnect + rematch, table tennis frames/score, partner
+  offline + connection end). Full suite 75/75; one earlier run had one unexplained failure that did
+  not reproduce in 11 further runs (the pong timing wait was widened).
+- **Speech (§11, `docs/SPEECH-SERVICE.md`)**: Parakeet 0.6B → Whisper base.en int8 with VAD-pause
+  chunking; lazy model load + idle unload (`SPEECH_MODEL_TTL`, 120 s) with `malloc_trim`; Kokoro
+  English-only assets; Railway Serverless + backend wake retry; daily quotas (`quota_exceeded`);
+  timeouts 90 s / 120 s; IaC named partial `speech/.railway/railway.ts`. Measured: idle 54 MB, loaded
+  ~0.8–1.1 GB, unloaded 93 MB, STT WER 5.3 % on the (mostly synthetic, labelled) set; estimate
+  ~$1–1.5/month typical, ≤ ~$4.9/month worst case under the default 200 requests/day.
+  Speaches evaluated from source and not chosen (reasons in the doc).

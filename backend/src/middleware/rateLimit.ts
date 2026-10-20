@@ -43,3 +43,23 @@ const perUser = (limit: number) =>
   })
 export const narrationLimiter = perUser(30)
 export const transcribeLimiter = perUser(10)
+
+// Daily ceilings that keep the speech service's usage (and Railway bill)
+// bounded even if every per-minute window is used: per user, and one shared
+// budget across all users. Env-tunable; in-memory like the limiters above.
+const daily = (limit: number, key: (req: import('express').Request) => string) =>
+  rateLimit({
+    windowMs: 24 * 60 * 60_000,
+    limit,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: key,
+    message: { error: 'daily speech limit reached — try again tomorrow', code: 'quota_exceeded' },
+  })
+const envInt = (name: string, fallback: number) => {
+  const n = Number(process.env[name])
+  return Number.isSafeInteger(n) && n > 0 ? n : fallback
+}
+export const narrationDailyLimiter = daily(envInt('SPEECH_NARRATION_PARTS_PER_USER_DAY', 200), (req) => `narration-day:${req.appUser!.id}`)
+export const transcribeDailyLimiter = daily(envInt('SPEECH_TRANSCRIPTIONS_PER_USER_DAY', 60), (req) => `transcribe-day:${req.appUser!.id}`)
+export const speechGlobalDailyLimiter = daily(envInt('SPEECH_REQUESTS_PER_DAY', 200), () => 'speech-day:all')

@@ -4,8 +4,9 @@
 import { ConnectionError } from '../utils/connectionError.js'
 
 export const NARRATION_PART_CHARS = 400
-const TTS_TIMEOUT_MS = 60_000
-const STT_TIMEOUT_MS = 90_000
+// Generous enough for a cold wake (boot + model load, measured in docs/SPEECH-SERVICE.md) plus the work.
+const TTS_TIMEOUT_MS = 90_000
+const STT_TIMEOUT_MS = 120_000
 
 export const TRANSCRIBE_TYPES = ['audio/mp4', 'audio/m4a', 'audio/aac', 'audio/ogg', 'audio/webm', 'audio/wav']
 export const TRANSCRIBE_MAX_BYTES = 3 * 1024 * 1024
@@ -67,6 +68,10 @@ export function splitNarration(paragraphs: string[], max = NARRATION_PART_CHARS)
 
 // fetch to the speech service with its shared token and a hard timeout.
 // The timer stays armed until `done()` so a streamed body is covered too.
+// The service sleeps when idle (Railway Serverless): the first request may be
+// refused (connection error / 502) or answered 503 not_ready while it boots and
+// loads its model, so those are retried within the same timeout.
+const WAKE_ATTEMPTS = 6
 async function speechFetch(path: string, init: RequestInit, timeoutMs: number): Promise<{ upstream: Response; ctrl: AbortController; done: () => void }> {
   const base = process.env.SPEECH_SERVICE_URL
   const token = process.env.SPEECH_SERVICE_TOKEN
@@ -74,16 +79,33 @@ async function speechFetch(path: string, init: RequestInit, timeoutMs: number): 
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(new Error('timeout')), timeoutMs)
   const done = () => clearTimeout(timer)
-  let upstream: Response
-  try {
-    upstream = await fetch(new URL(path, base), {
-      ...init,
-      headers: { ...(init.headers as Record<string, string>), 'X-Speech-Token': token },
-      signal: ctrl.signal,
-    })
-  } catch {
+  let upstream: Response | null = null
+  for (let attempt = 1; ; attempt++) {
+    try {
+      upstream = await fetch(new URL(path, base), {
+        ...init,
+        headers: { ...(init.headers as Record<string, string>), 'X-Speech-Token': token },
+        signal: ctrl.signal,
+      })
+    } catch {
+      if (ctrl.signal.aborted) {
+        done()
+        throw timedOut()
+      }
+      upstream = null
+    }
+    const waking = !upstream || upstream.status === 502 || (upstream.status === 503 && upstream.headers.get('x-speech-state') === 'loading')
+    if (!waking || attempt >= WAKE_ATTEMPTS) break
+    await upstream?.body?.cancel().catch(() => {})
+    await new Promise((resolve) => setTimeout(resolve, Number(process.env.SPEECH_WAKE_RETRY_MS) || 3000))
+    if (ctrl.signal.aborted) {
+      done()
+      throw timedOut()
+    }
+  }
+  if (!upstream) {
     done()
-    throw ctrl.signal.aborted ? timedOut() : unavailable()
+    throw unavailable()
   }
   if (!upstream.ok) {
     done()

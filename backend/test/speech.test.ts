@@ -56,7 +56,7 @@ function seed() {
 interface StubCall { path: string; headers: IncomingMessage['headers']; body: Buffer }
 
 // Local stand-in for the Python speech service.
-async function stub(t: TestContext, reply: (call: StubCall) => { status: number; type: string; body: string | Buffer }) {
+async function stub(t: TestContext, reply: (call: StubCall) => { status: number; type: string; body: string | Buffer; headers?: Record<string, string> }) {
   const calls: StubCall[] = []
   const http = createServer((req, res) => {
     const chunks: Buffer[] = []
@@ -65,7 +65,7 @@ async function stub(t: TestContext, reply: (call: StubCall) => { status: number;
       const call = { path: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks) }
       calls.push(call)
       const r = reply(call)
-      res.writeHead(r.status, { 'Content-Type': r.type }).end(r.body)
+      res.writeHead(r.status, { 'Content-Type': r.type, ...r.headers }).end(r.body)
     })
   })
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve))
@@ -247,4 +247,25 @@ test('transcribe and narration are rate limited per user', async (t) => {
   let last = 0
   for (let i = 0; i < 31; i++) last = (await api.narrate(C, OTHER, OTHER_LETTER, '999')).status
   assert.equal(last, 429)
+})
+
+test('a sleeping speech service is woken: 502 and 503 loading are retried, other 503s are not', async (t) => {
+  seed()
+  process.env.SPEECH_WAKE_RETRY_MS = '10'
+  t.after(() => { delete process.env.SPEECH_WAKE_RETRY_MS })
+  const replies = [
+    { status: 502, type: 'text/plain', body: 'waking' },
+    { status: 503, type: 'application/json', body: '{"code":"not_ready"}', headers: { 'X-Speech-State': 'loading' } },
+    { status: 200, type: 'application/json', body: JSON.stringify({ text: 'awake', language: '', durationMs: 900 }) },
+  ]
+  const calls = await stub(t, () => replies.shift() ?? { status: 503, type: 'application/json', body: '{"code":"busy"}' })
+  const api = await server(t)
+  const woke = await api.transcribe(B, 'audio/ogg', Buffer.from('o'))
+  assert.equal(woke.status, 200)
+  assert.equal((await woke.json()).text, 'awake')
+  assert.equal(calls.length, 3)
+  assert.ok(calls.every((c) => c.body.toString() === 'o')) // the same body is resent
+  // A busy service is not a sleeping one: answered at once.
+  assert.equal((await api.transcribe(B, 'audio/ogg', Buffer.from('o'))).status, 503)
+  assert.equal(calls.length, 4)
 })

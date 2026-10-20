@@ -754,3 +754,48 @@ sequenceDiagram
 ```
 
 Games are ephemeral, connection-scoped sessions with 30s invitation and 15s disconnect timers; navigation disposes listeners, loops and timers. No game messages enter chat history. Browser recognition and synthesis implement /audio and letter reading without speech-server calls, and are cancelled on teardown/background. Original game/chess SVGs use existing theme tokens; chess rules use chess.js (BSD-2-Clause), ZIP export uses JSZip (MIT), with notices in client/public/licenses/.
+
+## Authoritative matches (2.0.7, 2026-10-20)
+
+Games moved from a client-to-client relay to server-owned state (contract §12). The `game:*` relay
+remains for the web client only.
+
+```mermaid
+sequenceDiagram
+  participant A as Android A
+  participant S as Backend (MatchManager, in memory)
+  participant B as Android B
+  A->>S: match:invite {game}
+  Note over S: DB: live connection, partner socket online<br/>random seats (chess seat 1 = white)
+  S-->>A: match:state (invited)
+  S-->>B: match:state (invited)
+  B->>S: match:accept
+  S-->>A: match:state (playing)
+  S-->>B: match:state (playing)
+  A->>S: match:move {seq, move}
+  Note over S: DB re-check, seq check / retry de-dup,<br/>rules (chess.js) validate, apply or reject
+  S-->>A: ack {ok, match} + match:state
+  S-->>B: match:state
+  loop table tennis
+    A--)S: match:paddle {x} (≤30/s, no ack)
+    B--)S: match:paddle {x}
+    Note over S: 60 Hz simulation, scoring
+    S--)A: match:pong frame (30/s, volatile)
+    S--)B: match:pong frame
+  end
+  B->>S: (reconnect) match:sync
+  S-->>B: current match (board, seats, score)
+```
+
+## Speech service, cost-bounded (2.0.7, 2026-10-20)
+
+```mermaid
+flowchart LR
+  P[Android] -->|HTTPS, Supabase JWT| BE[Backend<br/>auth, DB letter text,<br/>per-minute + daily quotas]
+  BE -->|private network, X-Speech-Token<br/>retry 502/conn error while waking| SP[speech service<br/>Serverless: sleeps 5-10 min after last traffic]
+  SP --> L{model loaded?}
+  L -->|no| LOAD[load Kokoro fp32 / Whisper base.en int8<br/>~1-3 s]
+  L -->|yes| RUN[infer, 1 slot, 2 threads]
+  LOAD --> RUN
+  RUN --> IDLE[idle 120 s -> unload + malloc_trim<br/>~90 MB]
+```
