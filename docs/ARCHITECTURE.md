@@ -1,5 +1,44 @@
 # Architecture
 
+## Web Android 2.0.7 parity (2026-10-20)
+
+The web uses the same authoritative match protocol as Android. Client engines and
+`game:*` relay listeners are removed; the backend retains legacy handlers for old
+installed apps. `GameSession` applies version/seq ordering, syncs independently of
+message history on reconnect, and retries a lost move acknowledgement once with
+the identical envelope. Chess.js supplies display hints and a temporary predicted
+position; every server snapshot replaces that prediction. PongClient only smooths
+server frames and rotates seat 2; it never decides collisions or points.
+
+```mermaid
+flowchart LR
+    Chat[ChatPage / slash games] --> Factory[MessageService creates Transport]
+    Chat --> UI[Game UI / keyboard / pointer]
+    UI --> Session[GameSession]
+    Session --> Interface[Transport match methods]
+    Interface --> Internet[InternetTransport: Socket.IO only here]
+    Internet -->|match actions / seq| Server[Backend MatchManager and rules]
+    Server -->|match:state version / seq| Internet
+    Internet --> Session
+    Session -->|authoritative board + temporary chess prediction| UI
+    Server -->|match:pong ~30 Hz| Internet
+    Internet --> Pong[PongClient render smoothing]
+    Pong --> Canvas[Canvas + requestAnimationFrame]
+    UI -->|latest paddle ~30/s| Session
+    Reconnect[Socket reconnect] -->|match:sync| Session
+    Visibility[Page visibility] -->|match:away for table tennis| Session
+```
+
+Letter playback uses authenticated, IDs-only narration GETs, one part prefetched
+while the current part plays, and in-memory Blob URLs released on stop/dismiss/
+background. Dictation uploads raw recorded audio through the authenticated API and
+appends text to the current draft without sending. Abort signals include 95s/125s
+deadlines. Only network failures, 503/504, or 429 `quota_exceeded` select device
+speech. Ordinary rate limits, missing letters, auth and no-speech stay in the UI.
+The backend exposes its two existing narration part headers through CORS so the
+browser can read them; authorization and Android responses are unchanged. No
+database migration or client speech-service secret is involved.
+
 ## Web owner feedback (2026-10-19)
 
 `ageGate` reads the signed-in Supabase user ID before resolving account-scoped local gates. Sign-out retains them; the shared `meApi.deleteAccount` clears only the deleted owner's keys after API success. Unowned legacy keys never bypass gates for a new account. Existing boot and post-sign-in callers still await both gates.
