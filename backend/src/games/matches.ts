@@ -60,6 +60,7 @@ interface Match {
   away: Map<string, number>
   version: number
   createdAt: number
+  startedAt: number
   updatedAt: number
   loop: ReturnType<typeof setInterval> | null
 }
@@ -67,8 +68,18 @@ interface Match {
 export interface MatchHost {
   emitState(connectionId: string, snapshot: MatchSnapshot): void
   emitFrame(connectionId: string, frame: PongFrame & { id: string; t: number }): void
+  // A game that was actually played ended (not an unanswered invite or a torn-down connection): the chat log row.
+  finished?(connectionId: string, log: MatchLog): void
   now?: () => number
   random?: () => number
+}
+
+export interface MatchLog {
+  game: MatchGame
+  inviter: string
+  winner: string | null
+  reason: string
+  durationSec: number
 }
 
 const ok = (match: MatchSnapshot | null): MatchResult => ({ ok: true, match })
@@ -147,7 +158,7 @@ export class MatchManager {
     const m: Match = {
       id: randomUUID(), connectionId, game, status: 'invited', inviter, players, rules: null, pong: null,
       seq: 0, log: [], outcome: null, drawOffer: 0, rematch: new Set(), series, away: new Map(),
-      version: 0, createdAt: now, updatedAt: now, loop: null,
+      version: 0, createdAt: now, startedAt: now, updatedAt: now, loop: null,
     }
     this.matches.set(connectionId, m)
     return m
@@ -155,6 +166,7 @@ export class MatchManager {
 
   private start(m: Match): void {
     m.status = 'playing'
+    m.startedAt = this.now()
     m.seq = 0
     m.log = []
     m.outcome = null
@@ -350,7 +362,14 @@ export class MatchManager {
       const winner = m.players[outcome.winner - 1]
       m.series = { ...m.series, [winner]: (m.series[winner] ?? 0) + 1 }
     }
-    return this.emit(m)
+    const snap = this.emit(m)
+    if (wasPlaying && outcome.reason !== 'connection_ended') {
+      this.host.finished?.(m.connectionId, {
+        game: m.game, inviter: m.inviter, winner: snap.outcome?.winner ?? null, reason: outcome.reason,
+        durationSec: Math.max(0, Math.round((this.now() - m.startedAt) / 1000)),
+      })
+    }
+    return snap
   }
 
   private drop(m: Match): void {

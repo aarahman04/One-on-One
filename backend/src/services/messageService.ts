@@ -7,9 +7,9 @@ import { isAllowedMime, maxBytesFor, removeAttachment, type AttachmentKind } fro
 import { encrypt, decrypt, isEncrypted } from './crypto.js'
 import { room } from '../utils/connections.js'
 
-export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm' | 'call' | 'location' | 'system'
+export type MessageType = 'text' | 'letter' | 'voice' | 'image' | 'file' | 'ask' | 'countdown' | 'checkin' | 'thisorthat' | 'alarm' | 'call' | 'location' | 'system' | 'game'
 
-const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat', 'alarm', 'call', 'location', 'system']
+const MESSAGE_TYPES: MessageType[] = ['text', 'letter', 'voice', 'image', 'file', 'ask', 'countdown', 'checkin', 'thisorthat', 'alarm', 'call', 'location', 'system', 'game']
 export function isMessageType(x: unknown): x is MessageType {
   return MESSAGE_TYPES.includes(x as MessageType)
 }
@@ -323,6 +323,22 @@ function validateCallPayload(payload: unknown): { kind: string; outcome: string;
   return { kind, outcome, durationSec: Math.round(durationSec) }
 }
 
+// Finished-game rows are server-authored only (games/matchSocket.ts writeGameLog);
+// still validated here like 'call' rather than trusted blind.
+const GAME_KINDS = ['chess', 'pong', 'connect4', 'tictactoe', 'dots']
+function validateGamePayload(payload: unknown): { game: string; inviter: string; winner: string | null; reason: string; durationSec: number } {
+  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
+  const game = String(p.game ?? '')
+  const inviter = String(p.inviter ?? '')
+  const winner = typeof p.winner === 'string' ? p.winner : null
+  const reason = String(p.reason ?? '')
+  const durationSec = Number(p.durationSec ?? 0)
+  if (!GAME_KINDS.includes(game)) throw new ConnectionError(400, 'invalid game')
+  if (!inviter || !/^[a-z0-9_]{1,32}$/.test(reason)) throw new ConnectionError(400, 'invalid game outcome')
+  if (!Number.isFinite(durationSec) || durationSec < 0) throw new ConnectionError(400, 'invalid game duration')
+  return { game, inviter, winner, reason, durationSec: Math.round(durationSec) }
+}
+
 // A location is a one-shot snapshot (the /location command), not live
 // sharing — no update path exists, so this only ever runs once per message.
 function validateLocationPayload(payload: unknown): { lat: number; lng: number; accuracy?: number } {
@@ -471,7 +487,7 @@ export async function saveMessage(
   // requires actual content — each one's primary display string
   // (body / question / label / note / "optionA vs optionB" / "lat, lng").
   const trimmed = content.trim()
-  if (isMedia || type === 'alarm' || type === 'call' || type === 'system') {
+  if (isMedia || type === 'alarm' || type === 'call' || type === 'system' || type === 'game') {
     if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
   } else if (trimmed.length < 1 || trimmed.length > 4000) {
     throw new ConnectionError(400, 'message must be 1-4000 characters')
@@ -497,7 +513,9 @@ export async function saveMessage(
                     ? validateLocationPayload(payload)
                     : type === 'system'
                       ? validateSystemPayload(payload)
-                      : null
+                      : type === 'game'
+                        ? validateGamePayload(payload)
+                        : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 
@@ -553,7 +571,7 @@ export async function bumpSenderLastRead(connectionId: string, senderId: string,
 // Only the sender, only within this window (WhatsApp-style). Server time is
 // the authority; a client's clock never extends it.
 export const EDIT_WINDOW_MS = 30 * 60_000
-const NOT_EDITABLE: MessageType[] = ['call', 'system', 'alarm']
+const NOT_EDITABLE: MessageType[] = ['call', 'system', 'alarm', 'game']
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // Pure rule for edit and delete (unit-tested): throws the user-facing reason.

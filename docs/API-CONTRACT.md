@@ -141,9 +141,9 @@ Socket.IO (in-memory, per socket unless stated):
 `message:new` and the `message:send` ack additionally carry `tempId?` (echo of the sender's tempId). Content and payload are encrypted at rest and always plaintext on the wire.
 
 ### Types and validators (`messageService.ts`)
-`MessageType = text | letter | voice | image | file | ask | countdown | checkin | thisorthat | alarm | call | location | system`
+`MessageType = text | letter | voice | image | file | ask | countdown | checkin | thisorthat | alarm | call | location | system | game`
 
-`content` rules: for `voice|image|file` (caption), `alarm`, `call`, `system`: may be empty, max 4000 after trim. All other types: 1-4000 after trim. Content is trimmed.
+`content` rules: for `voice|image|file` (caption), `alarm`, `call`, `system`, `game`: may be empty, max 4000 after trim. All other types: 1-4000 after trim. Content is trimmed.
 
 `replyTo` (optional, any type): must be a message in the same connection (`400 reply target not found in this connection`) and not a `system` message (`400 cannot reply to a system message`).
 
@@ -162,6 +162,7 @@ Socket.IO (in-memory, per socket unless stated):
 | `location` | `{lat -90..90, lng -180..180, accuracy? >=0}` | non-empty display string, e.g. "lat, lng" | |
 | `call` | **server-authored only**: `{kind:"audio"\|"video", outcome:"missed"\|"declined"\|"cancelled"\|"completed"\|"failed"\|"unreachable", durationSec>=0}` | empty | `senderId` = the caller. Client send rejected: `call messages are server-authored` |
 | `system` | **server-authored only**: `{event:"wallpaper"\|"style", value}` (wallpaper: off/love/samurai; style: line/bubbles) | empty | Client send rejected: `system messages are server-authored` |
+| `game` | **server-authored only** (migration 040, §12): `{game, inviter, winner: userId\|null, reason, durationSec>=0}` | readable fallback, e.g. `Played Chess · 12 min` | `senderId` = the inviter. Not editable. Client send rejected: `game messages are server-authored` |
 
 Failure message for a bad payload is `400 <specific text above>` (socket ack `{error}`); an unknown `type` sent by a client is silently treated as `text`.
 
@@ -282,6 +283,11 @@ Call over (sent to the callee's native tokens on every resolution: caller cancel
 ```
 data: { type: "call_end", callId }
 ```
+Game invite (2026-10-20, sent at every successful `match:invite` to the invitee's native tokens, even when they have a socket, since an app in the background keeps its socket; `ttl 30s` = invite expiry). The app shows it only when the chat isn't on screen:
+```
+data: { type: "game_invite", matchId, connectionId, game, inviterName }   // inviterName "" if no nickname
+```
+
 Reconnecting after a `call` push: the server holds the ringing call (45 s); a socket that connects while it rings receives `call:incoming` again, then use `call:accept` / `call:decline`. If the app was woken after the ring ended, `call:accept` fails with `call is no longer active`.
 
 The missed/cancelled-call text push is still a normal `notification` message (title/body) and arrives in addition to `call_end`.
@@ -443,5 +449,6 @@ Errors: `invalid_payload`, `rate_limited`, `not_member`, `connection_inactive`, 
 ### Lifecycle
 - Invites expire after 30 s (`expired`). A finished match stays 120 s for a rematch, then is dropped.
 - A member with no socket left is listed in `away`: turn games keep their state for 120 s, table tennis pauses for 30 s; past that the match ends `abandoned` (the present member wins). An invited match ends at once if a member disconnects. Turn games with no move for 30 min end `inactive`.
+- Chat history (2026-10-20, migration 040): when a match that was `playing` ends (any reason except `connection_ended`), the server writes a `game` message (§4) and broadcasts it as `message:new`. `durationSec` runs from accept (or rematch start) to the end. Unanswered invites (`declined`/`cancelled`/`expired`) write nothing.
 - Leave/terminate (`emitConnectionEnded`) ends the match with `connection_ended`; running table tennis is re-checked against the DB every 5 s.
 - Outcome reasons: `checkmate`, `stalemate`, `insufficient_material`, `fivefold_repetition`, `seventy_five_moves`, `threefold_repetition`, `fifty_moves`, `agreement`, `three_in_a_row`, `four_connected`, `most_boxes`, `board_full`, `first_to_7`, `resigned`, `left`, `abandoned`, `inactive`, `declined`, `cancelled`, `expired`, `connection_ended`.
