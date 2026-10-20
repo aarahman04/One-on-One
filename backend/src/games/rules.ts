@@ -4,7 +4,7 @@ import { Chess } from 'chess.js'
 // authority: a move is applied here or rejected, and clients render the view.
 
 export type Seat = 1 | 2
-export type TurnGameKind = 'chess' | 'connect4' | 'tictactoe' | 'dots'
+export type TurnGameKind = 'chess' | 'connect4' | 'tictactoe' | 'dots' | 'reversi'
 export interface Outcome {
   winner: Seat | 0
   reason: string
@@ -213,6 +213,78 @@ export class DotsRules implements TurnRules {
   }
 }
 
+// Reversi (Othello rules), 8x8, cells row-major from the top-left. Seat 1 is
+// black and moves first. A move must flip at least one line of opponent
+// discs; a player with no move passes automatically; the game ends when
+// neither can move, and the most discs wins (equal = draw).
+const DIRS = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]
+
+export class ReversiRules implements TurnRules {
+  cells = Array<number>(64).fill(0)
+  last = -1
+  flipped: number[] = []
+  passed = false
+  turn: Seat = 1
+  outcome: Outcome | null = null
+  constructor() {
+    this.cells[27] = 2
+    this.cells[28] = 1
+    this.cells[35] = 1
+    this.cells[36] = 2
+  }
+  flips(seat: Seat, cell: number): number[] {
+    if (this.cells[cell] !== 0) return []
+    const other = seat === 1 ? 2 : 1
+    const out: number[] = []
+    const row = Math.floor(cell / 8)
+    const col = cell % 8
+    for (const [dr, dc] of DIRS) {
+      const line: number[] = []
+      let r = row + dr
+      let c = col + dc
+      while (r >= 0 && r < 8 && c >= 0 && c < 8 && this.cells[r * 8 + c] === other) {
+        line.push(r * 8 + c)
+        r += dr
+        c += dc
+      }
+      if (line.length && r >= 0 && r < 8 && c >= 0 && c < 8 && this.cells[r * 8 + c] === seat) out.push(...line)
+    }
+    return out
+  }
+  legal(seat: Seat): number[] {
+    return this.cells.flatMap((_, i) => (this.flips(seat, i).length ? [i] : []))
+  }
+  count(seat: Seat): number {
+    return this.cells.filter((c) => c === seat).length
+  }
+  apply(seat: Seat, move: unknown): string | null {
+    if (this.outcome) return 'game_over'
+    if (seat !== this.turn) return 'not_your_turn'
+    if (!isRecord(move) || !exactKeys(move, ['cell'])) return 'invalid_move'
+    const cell = int(move.cell)
+    if (cell === null || cell < 0 || cell > 63) return 'invalid_move'
+    const flips = this.flips(seat, cell)
+    if (!flips.length) return 'illegal_move'
+    this.cells[cell] = seat
+    for (const i of flips) this.cells[i] = seat
+    this.last = cell
+    this.flipped = flips.sort((a, b) => a - b)
+    const other: Seat = seat === 1 ? 2 : 1
+    this.passed = false
+    if (this.legal(other).length) this.turn = other
+    else if (this.legal(seat).length) this.passed = true // the opponent must pass: same player again
+    else {
+      const a = this.count(1)
+      const b = this.count(2)
+      this.outcome = { winner: a === b ? 0 : a > b ? 1 : 2, reason: a === b ? 'equal_discs' : 'most_discs' }
+    }
+    return null
+  }
+  view(): Record<string, unknown> {
+    return { cells: this.cells, last: this.last, flipped: this.flipped, passed: this.passed, legal: this.outcome ? [] : this.legal(this.turn) }
+  }
+}
+
 export function createRules(game: TurnGameKind): TurnRules {
   switch (game) {
     case 'chess':
@@ -223,5 +295,7 @@ export function createRules(game: TurnGameKind): TurnRules {
       return new TicTacToeRules()
     case 'dots':
       return new DotsRules()
+    case 'reversi':
+      return new ReversiRules()
   }
 }

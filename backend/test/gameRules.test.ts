@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ChessRules, ConnectFourRules, DotsRules, TicTacToeRules } from '../src/games/rules.js'
-import { BALL_R, COURT_H, HEAD_R, MAX_ANGLE, MAX_SPEED, PongSim, RACKET_MAX, RACKET_MIN, START_SPEED, WIN_SCORE } from '../src/games/pong.js'
+import { ChessRules, ConnectFourRules, DotsRules, ReversiRules, TicTacToeRules } from '../src/games/rules.js'
+import { BALL_R, COURT_H, HEAD_R, MAX_ANGLE, MAX_SPEED, MAX_SPIN, PongSim, RACKET_MAX, RACKET_MIN, START_SPEED, WIN_SCORE } from '../src/games/pong.js'
 import { INVITE_TTL_MS, MatchManager, OVER_TTL_MS, PONG_AWAY_GRACE_MS, TURN_AWAY_GRACE_MS, type MatchSnapshot } from '../src/games/matches.js'
 
 const play = (game: ChessRules, ...ucis: string[]) => {
@@ -213,6 +213,66 @@ test('pong: a swinging racket adds spin', () => {
   assert.ok(contact(-1.2) < -0.1, 'moving left pushes the ball left')
 })
 
+test('pong: sidespin bends the flight, is sent in frames and decays', () => {
+  for (const spin of [0.6, -0.6]) {
+    const p = served()
+    p.spin = spin
+    for (let i = 0; i < 20; i++) p.step(16)
+    assert.ok(Math.sign(p.vx) === Math.sign(spin) && Math.sign(p.x - 0.5) === Math.sign(spin), `curves with spin ${spin}`)
+    assert.ok(Math.abs(p.spin) < 0.6, 'decays')
+    assert.equal(p.frame().w, Math.round(p.spin * 10_000) / 10_000)
+  }
+})
+
+test('pong: a sideways swing at contact spins the ball, capped', () => {
+  const contact = (speed: number) => {
+    const p = served()
+    const meet = HEAD_R + BALL_R + 0.025
+    for (let i = 0; i < 2000 && p.hits === 0; i++) {
+      if (i % 8 === 0) p.paddle(2, 0.5 - (speed * (p.y - meet)) / Math.abs(p.vy))
+      p.step(4)
+    }
+    assert.equal(p.hits, 1)
+    return p.spin
+  }
+  assert.ok(Math.abs(contact(0)) < 0.05)
+  assert.ok(contact(1.2) > 0.2)
+  assert.ok(contact(-1.2) < -0.2)
+  assert.equal(contact(5), MAX_SPIN)
+})
+
+test('pong: incoming spin kicks off the racket; a side bounce kills spin; curve stays within the max angle', () => {
+  const kick = (spin: number) => {
+    const p = served()
+    p.paddle(2, 0.5)
+    p.x = 0.5
+    p.y = HEAD_R + BALL_R + 0.01
+    p.vx = 0
+    p.vy = -1
+    p.spin = spin
+    p.step(4)
+    assert.equal(p.hits, 1)
+    return p.vx
+  }
+  assert.ok(Math.abs(kick(0)) < 1e-6)
+  assert.ok(kick(0.6) > 0.1 && kick(-0.6) < -0.1)
+
+  const w = served()
+  w.vx = 0.8
+  w.spin = 0.5
+  for (let i = 0; i < 200 && w.vx > 0; i++) w.step(8)
+  assert.ok(w.vx < 0)
+  assert.equal(w.spin, 0)
+
+  const steep = served()
+  steep.vy = -0.5
+  steep.spin = MAX_SPIN
+  for (let i = 0; i < 400 && !steep.score[0] && !steep.hits; i++) {
+    steep.step(16)
+    assert.ok(Math.abs(steep.vx) <= Math.abs(steep.vy) * Math.tan(MAX_ANGLE) + 1e-9)
+  }
+})
+
 test('pong: side edges reflect, misses score for the opponent, ball resets and serves to the loser', () => {
   const p = served()
   p.paddle(2, RACKET_MAX) // far from the ball: a miss
@@ -274,6 +334,42 @@ test('pong: two tracking players keep a long rally; first to 7 ends the game', (
   for (let i = 0; i < 20_000 && !g.outcome; i++) g.step(16)
   assert.equal(Math.max(...g.score), WIN_SCORE)
   assert.equal(g.outcome?.reason, 'first_to_7')
+})
+
+test('reversi: opening, flips, illegal and malformed moves', () => {
+  const g = new ReversiRules()
+  assert.deepEqual(g.view().legal, [19, 26, 37, 44])
+  assert.equal(g.apply(2, { cell: 19 }), 'not_your_turn')
+  assert.equal(g.apply(1, { cell: 0 }), 'illegal_move')
+  assert.equal(g.apply(1, { cell: 27 }), 'illegal_move')
+  assert.equal(g.apply(1, { cell: 64 }), 'invalid_move')
+  assert.equal(g.apply(1, { cell: '19' }), 'invalid_move')
+  assert.equal(g.apply(1, { cell: 19, x: 1 }), 'invalid_move')
+  assert.equal(g.apply(1, { cell: 19 }), null)
+  assert.deepEqual(g.view().flipped, [27])
+  assert.equal(g.cells[27], 1)
+  assert.equal(g.turn, 2)
+  assert.deepEqual(g.view().legal, [18, 20, 34])
+})
+
+test('reversi: a player without a move passes; the game ends when nobody can move', () => {
+  const pass = new ReversiRules()
+  pass.cells.fill(0)
+  Object.assign(pass.cells, { 0: 1, 1: 2, 56: 1, 57: 2, 58: 2 })
+  assert.equal(pass.apply(1, { cell: 2 }), null)
+  assert.equal(pass.turn, 1, 'white has no move: black again')
+  assert.equal(pass.view().passed, true)
+  assert.equal(pass.outcome, null)
+  assert.equal(pass.apply(1, { cell: 59 }), null)
+  assert.deepEqual(pass.outcome, { winner: 1, reason: 'most_discs' })
+  assert.equal(pass.apply(1, { cell: 3 }), 'game_over')
+
+  const draw = new ReversiRules()
+  draw.cells.fill(0)
+  Object.assign(draw.cells, { 0: 1, 1: 2, 61: 2, 62: 2, 63: 2 })
+  assert.equal(draw.apply(1, { cell: 2 }), null)
+  assert.deepEqual(draw.outcome, { winner: 0, reason: 'equal_discs' })
+  assert.deepEqual(draw.view().legal, [])
 })
 
 function manager(random = 0.1) {

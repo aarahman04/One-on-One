@@ -325,7 +325,7 @@ function validateCallPayload(payload: unknown): { kind: string; outcome: string;
 
 // Finished-game rows are server-authored only (games/matchSocket.ts writeGameLog);
 // still validated here like 'call' rather than trusted blind.
-const GAME_KINDS = ['chess', 'pong', 'connect4', 'tictactoe', 'dots']
+const GAME_KINDS = ['chess', 'pong', 'connect4', 'tictactoe', 'dots', 'reversi']
 function validateGamePayload(payload: unknown): { game: string; inviter: string; winner: string | null; reason: string; durationSec: number } {
   const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
   const game = String(p.game ?? '')

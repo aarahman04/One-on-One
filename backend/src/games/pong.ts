@@ -15,6 +15,11 @@ import type { Outcome, Seat } from './rules.js'
 // ball meets the round head (centre: straight back, edge: angled) plus a
 // share of the racket's sideways swing. Every return is a little faster.
 // First to 7; the player who lost the point receives the next serve.
+//
+// Sidespin (2026-10-21): swinging the racket sideways while hitting also
+// spins the ball. Spin is a sideways acceleration that bends the flight
+// (decaying over the shot), a spinning ball kicks off the next racket in its
+// spin direction, and a side-edge bounce kills it.
 
 export const COURT_H = 1.8
 export const HEAD_R = 0.13
@@ -30,6 +35,12 @@ export const SPEEDUP = 1.06
 export const MAX_ANGLE = (62 * Math.PI) / 180
 // Share of the racket's sideways speed passed to the ball.
 export const SWING = 0.3
+// Spin = sideways acceleration (units/s^2) given per unit of racket swing speed,
+// capped; it decays with a time constant; incoming spin turns the return angle.
+export const SPIN_GAIN = 0.3
+export const MAX_SPIN = 0.75
+export const SPIN_TAU_S = 0.6
+export const SPIN_KICK = 0.25
 export const WIN_SCORE = 7
 export const FIRST_SERVE_MS = 3000
 export const NEXT_SERVE_MS = 1200
@@ -46,6 +57,7 @@ export interface PongFrame {
   s: [number, number]
   c: number
   h: number
+  w: number
 }
 
 export class PongSim {
@@ -53,6 +65,7 @@ export class PongSim {
   y = COURT_H / 2
   vx = 0
   vy = 0
+  spin = 0
   paddles: [number, number] = [0.5, 0.5]
   score: [number, number] = [0, 0]
   countdownMs = FIRST_SERVE_MS
@@ -88,6 +101,7 @@ export class PongSim {
       this.y = COURT_H / 2
       this.vx = 0
       this.vy = 0
+      this.spin = 0
     }
     this.countdownMs = Math.max(this.countdownMs, ms)
   }
@@ -110,15 +124,24 @@ export class PongSim {
     // Each substep moves the ball less than its radius, and a hit is an
     // overlap test, so no speed or frame time lets it pass through a racket.
     const n = Math.min(32, Math.max(1, Math.ceil((speed * dt) / (BALL_R * 0.8))))
+    const decay = Math.exp(-dt / n / SPIN_TAU_S)
+    const maxVx = (v: number) => Math.abs(v) * Math.tan(MAX_ANGLE)
     for (let i = 0; i < n && !this.outcome && this.countdownMs === 0; i++) {
+      if (this.spin !== 0) {
+        // The curve never turns the ball flatter than the steepest return.
+        this.vx = clamp(this.vx + (this.spin * dt) / n, -maxVx(this.vy), maxVx(this.vy))
+        this.spin *= decay
+      }
       this.x += (this.vx * dt) / n
       this.y += (this.vy * dt) / n
       if (this.x < BALL_R) {
         this.x = 2 * BALL_R - this.x
         this.vx = Math.abs(this.vx)
+        this.spin = 0
       } else if (this.x > 1 - BALL_R) {
         this.x = 2 * (1 - BALL_R) - this.x
         this.vx = -Math.abs(this.vx)
+        this.spin = 0
       }
       if (this.vy > 0 && this.y <= COURT_H && this.touches(1)) this.hit(1)
       else if (this.vy < 0 && this.y >= 0 && this.touches(2)) this.hit(2)
@@ -157,7 +180,10 @@ export class PongSim {
     // Angles and swing are both in table x for either side: a racket moving
     // towards +x pushes the ball towards +x.
     angle += Math.atan2(SWING * this.swing[seat - 1], speed)
+    // Incoming sidespin kicks off the racket towards its spin direction.
+    angle += SPIN_KICK * this.spin
     angle = clamp(angle, -MAX_ANGLE, MAX_ANGLE)
+    this.spin = clamp(SPIN_GAIN * this.swing[seat - 1], -MAX_SPIN, MAX_SPIN)
     this.vx = speed * Math.sin(angle)
     this.vy = speed * Math.cos(angle) * away
     // Sit the ball on the head's surface along the outgoing direction's side.
@@ -173,6 +199,7 @@ export class PongSim {
     this.y = COURT_H / 2
     this.vx = 0
     this.vy = 0
+    this.spin = 0
     if (this.score[scorer - 1] >= WIN_SCORE) {
       this.outcome = { winner: scorer, reason: 'first_to_7' }
       return
@@ -188,6 +215,7 @@ export class PongSim {
       s: [this.score[0], this.score[1]],
       c: Math.ceil(this.countdownMs),
       h: this.hits,
+      w: r4(this.spin),
     }
   }
 }
