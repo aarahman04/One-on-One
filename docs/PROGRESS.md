@@ -2961,3 +2961,9 @@ Status: implemented and tested in this repo; **not deployed** (no Railway or sec
   ~0.8–1.1 GB, unloaded 93 MB, STT WER 5.3 % on the (mostly synthetic, labelled) set; estimate
   ~$1–1.5/month typical, ≤ ~$4.9/month worst case under the default 200 requests/day.
   Speaches evaluated from source and not chosen (reasons in the doc).
+
+## Table tennis physics rebuild + chess move history (2026-10-20, same branch)
+- `games/pong.ts`: table 1 x 1.8, round racket heads on the end lines, contact-point return angles
+  (≤ 62°) plus racket swing, overlap-tested substeps (no tunnelling), side bounces, serve to the loser,
+  first to 7. Contract §12 documents the geometry and the arcade rules chosen without a reference video.
+- Chess board view adds `history` (SAN). Tests 82/82, including real-socket bots playing a rally and a full game.
