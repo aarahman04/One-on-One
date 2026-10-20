@@ -338,18 +338,18 @@ test('pong: two tracking players keep a long rally; first to 7 ends the game', (
 
 test('reversi: opening, flips, illegal and malformed moves', () => {
   const g = new ReversiRules()
-  assert.deepEqual(g.view().legal, [19, 26, 37, 44])
-  assert.equal(g.apply(2, { cell: 19 }), 'not_your_turn')
+  assert.deepEqual(g.view().legal, [20, 29, 34, 43])
+  assert.equal(g.apply(2, { cell: 20 }), 'not_your_turn')
   assert.equal(g.apply(1, { cell: 0 }), 'illegal_move')
-  assert.equal(g.apply(1, { cell: 27 }), 'illegal_move')
+  assert.equal(g.apply(1, { cell: 28 }), 'illegal_move')
   assert.equal(g.apply(1, { cell: 64 }), 'invalid_move')
-  assert.equal(g.apply(1, { cell: '19' }), 'invalid_move')
-  assert.equal(g.apply(1, { cell: 19, x: 1 }), 'invalid_move')
-  assert.equal(g.apply(1, { cell: 19 }), null)
-  assert.deepEqual(g.view().flipped, [27])
-  assert.equal(g.cells[27], 1)
+  assert.equal(g.apply(1, { cell: '20' }), 'invalid_move')
+  assert.equal(g.apply(1, { cell: 20, x: 1 }), 'invalid_move')
+  assert.equal(g.apply(1, { cell: 20 }), null)
+  assert.deepEqual(g.view().flipped, [28])
+  assert.equal(g.cells[28], 1)
   assert.equal(g.turn, 2)
-  assert.deepEqual(g.view().legal, [18, 20, 34])
+  assert.deepEqual(g.view().legal, [19, 21, 37])
 })
 
 test('reversi: a player without a move passes; the game ends when nobody can move', () => {

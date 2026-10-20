@@ -227,10 +227,11 @@ export class ReversiRules implements TurnRules {
   turn: Seat = 1
   outcome: Outcome | null = null
   constructor() {
-    this.cells[27] = 2
-    this.cells[28] = 1
-    this.cells[35] = 1
-    this.cells[36] = 2
+    // Standard start: White d4 and e5, Black d5 and e4 (row 0 is rank 8).
+    this.cells[27] = 1
+    this.cells[28] = 2
+    this.cells[35] = 2
+    this.cells[36] = 1
   }
   flips(seat: Seat, cell: number): number[] {
     if (this.cells[cell] !== 0) return []
