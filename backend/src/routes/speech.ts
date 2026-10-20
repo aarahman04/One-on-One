@@ -58,6 +58,7 @@ speechRouter.get(
       'Content-Type': 'audio/ogg',
       'X-Narration-Part': String(part),
       'X-Narration-Parts': String(parts.length),
+      'Access-Control-Expose-Headers': 'X-Narration-Part, X-Narration-Parts',
       'Cache-Control': 'private, no-store',
     })
     const len = upstream.headers.get('content-length')
