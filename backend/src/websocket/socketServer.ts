@@ -330,8 +330,8 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
         // (messageService.emitAppearanceNotice, from the wallpaper/style
         // routes) — same reject as 'call' above, so a forged client-sent
         // 'system' type never passes as a real notice.
-        if (msg?.type === 'system') {
-          ack?.({ error: 'system messages are server-authored' })
+        if (msg?.type === 'system' || msg?.type === 'game') {
+          ack?.({ error: `${msg.type} messages are server-authored` })
           return
         }
         const content = typeof msg?.content === 'string' ? msg.content : ''

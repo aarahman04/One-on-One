@@ -228,3 +228,31 @@ test('invites need the partner online; leaving the connection ends the match', a
   await waitFor(() => b.last()?.outcome?.reason === 'connection_ended')
   assert.equal((await b.emit('match:sync')).error, 'connection_inactive')
 })
+
+test('a played game is logged to chat history; an unanswered invite is not', async (t) => {
+  const db = seed()
+  const { socket } = await server(t)
+  const a = await socket(A)
+  const b = await socket(B)
+  const logs: any[] = []
+  b.client.on('message:new', (m: any) => { if (m.type === 'game') logs.push(m) })
+
+  const declined = await a.emit('match:invite', { game: 'tictactoe' })
+  assert.equal((await b.emit('match:decline', { matchId: declined.match.id })).ok, true)
+
+  const invited = await a.emit('match:invite', { game: 'tictactoe' })
+  const started = await b.emit('match:accept', { matchId: invited.match.id })
+  const [first, second] = started.match.players as [string, string]
+  const by = (id: string) => (id === A ? a : b)
+  // Seat 1 takes the top row while seat 2 plays the middle row.
+  const moves = [[first, 0], [second, 3], [first, 1], [second, 4], [first, 2]] as const
+  for (const [seq, [player, cell]] of moves.entries()) {
+    const res = await by(player).emit('match:move', { matchId: invited.match.id, seq, move: { cell } })
+    assert.equal(res.ok, true, JSON.stringify(res))
+  }
+  await waitFor(() => logs.length === 1)
+  assert.equal(logs[0].senderId, A)
+  assert.equal(logs[0].content, 'Played Tic-Tac-Toe · 0 sec')
+  assert.deepEqual({ ...logs[0].payload, durationSec: 0 }, { game: 'tictactoe', inviter: A, winner: first, reason: 'three_in_a_row', durationSec: 0 })
+  assert.equal(db.tables.messages.filter((m: any) => m.type === 'game').length, 1)
+})

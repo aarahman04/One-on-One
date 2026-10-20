@@ -1,7 +1,10 @@
 import type { Server, Socket } from 'socket.io'
 import type { MemberConnection } from '../services/connectionAccess.js'
 import { otherMemberId, room } from '../utils/connections.js'
-import { MATCH_GAMES, MatchManager, type MatchGame, type MatchResult } from './matches.js'
+import { supabaseAdmin } from '../database/supabaseAdmin.js'
+import { saveMessage } from '../services/messageService.js'
+import { sendNativeCallPush } from '../services/pushService.js'
+import { MATCH_GAMES, MatchManager, type MatchGame, type MatchLog, type MatchResult } from './matches.js'
 
 // Socket.IO surface of the authoritative matches (API-CONTRACT §12).
 // Every event except match:paddle re-reads the caller's live connection from
@@ -14,6 +17,49 @@ type MatchEvent = (typeof MATCH_EVENTS)[number]
 
 const MAX_PAYLOAD_BYTES = 2048
 const LIVENESS_CHECK_MS = 5000
+const INVITE_PUSH_TTL = '30s' // matches INVITE_TTL_MS: a later delivery is an expired invite
+
+export const GAME_TITLES: Record<MatchGame, string> = {
+  chess: 'Chess', pong: 'Table Tennis', connect4: 'Connect 4', tictactoe: 'Tic-Tac-Toe', dots: 'Dots & Boxes',
+}
+
+// Readable fallback `content` for clients that don't render the 'game' type yet.
+export function gameLogText(log: MatchLog): string {
+  const s = log.durationSec
+  const hr = Math.floor(s / 3600)
+  const min = Math.floor(s / 60) % 60
+  const time = s < 60 ? `${s} sec` : s < 3600 ? (s % 60 ? `${min} min ${s % 60} sec` : `${min} min`) : min ? `${hr} hr ${min} min` : `${hr} hr`
+  return `Played ${GAME_TITLES[log.game]} · ${time}`
+}
+
+// Server-authored chat row for a finished game, like callService.writeCallLog:
+// sender is the inviter; fire-and-forget so a failed write never touches the match.
+function writeGameLog(io: Server, connectionId: string, log: MatchLog): void {
+  void saveMessage({ id: connectionId }, log.inviter, gameLogText(log), 'game', log)
+    .then((message) => io.to(room(connectionId)).emit('message:new', message))
+    .catch((err) => console.error('matches: failed to write game to chat history', err))
+}
+
+// Data-only push so a member whose app is backgrounded (socket still open) or
+// not on the chat screen still learns about the invite. The app decides
+// whether to show it; best-effort like every push.
+async function pushInvite(connectionId: string, inviterId: string, partnerId: string, matchId: string, game: MatchGame): Promise<void> {
+  try {
+    const { data } = await supabaseAdmin
+      .from('connection_members')
+      .select('nickname')
+      .eq('connection_id', connectionId)
+      .eq('user_id', inviterId)
+      .maybeSingle()
+    await sendNativeCallPush(
+      partnerId,
+      { type: 'game_invite', matchId, connectionId, game, inviterName: (data?.nickname as string | undefined) ?? '' },
+      INVITE_PUSH_TTL,
+    )
+  } catch (err) {
+    console.error('matches: invite push failed', err)
+  }
+}
 
 let manager: MatchManager | null = null
 
@@ -33,6 +79,7 @@ export function initMatches(io: Server, deps: MatchDeps): MatchManager {
     emitState: (connectionId, snapshot) => io.to(room(connectionId)).emit('match:state', snapshot),
     // Frames are superseded 30 times a second: volatile drops them for a congested socket instead of queueing.
     emitFrame: (connectionId, frame) => io.to(room(connectionId)).volatile.emit('match:pong', frame),
+    finished: (connectionId, log) => writeGameLog(io, connectionId, log),
   })
   manager = m
   const sweeper = setInterval(() => {
@@ -138,7 +185,9 @@ async function handle(
       if (typeof p.game !== 'string' || !(MATCH_GAMES as readonly string[]).includes(p.game)) return { ok: false, error: 'invalid_payload' }
       const partner = otherMemberId(connection, me)
       if (!(await userOnline(io, id, partner))) return { ok: false, error: 'partner_offline' }
-      return m.invite(id, me, partner, p.game as MatchGame)
+      const result = m.invite(id, me, partner, p.game as MatchGame)
+      if (result.ok && result.match) void pushInvite(id, me, partner, result.match.id, p.game as MatchGame)
+      return result
     }
     case 'match:accept':
       return m.accept(id, me, p.matchId)
