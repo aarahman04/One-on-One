@@ -164,7 +164,7 @@ budget. What this design uses instead: Serverless sleep, a replica memory/CPU li
 
 1. Same project + environment as the backend: **New → GitHub Repo →
    `aarahman04/One-on-One`**, service name **`speech`** (private host `speech.railway.internal`).
-   It must be a service **inside the backend's project** (`fabulous-connection`), not a project of
+   It must be a service **inside the backend's project** (`One on One`, renamed from `fabulous-connection` on 2026-10-20), not a project of
    its own: `*.railway.internal` only resolves within one project. (2026-10-20: a separate `speech`
    project plus an empty backend `SPEECH_SERVICE_TOKEN` made every speech call 503 until moved.)
 2. Settings → Source: **Root Directory `speech`** (uses `speech/Dockerfile`); watch path `speech/**`.
