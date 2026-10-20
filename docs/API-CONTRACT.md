@@ -1,4 +1,4 @@
-# API Contract (instant leave, gates, games, instant receipts, speech 2.0.6: 2026-10-19)
+# API Contract (instant leave, gates, games, instant receipts, speech 2.0.6: 2026-10-19; authoritative matches 2.0.7: 2026-10-20)
 
 Source of truth for the native Android app (and any other client). **Derived only from the backend code** (`backend/src/index.ts`, `routes/*.ts`, `services/*.ts`, `websocket/socketServer.ts`, `middleware/*.ts`); where behaviour is not visible in code it is not described. File references are given so a disagreement can be settled by reading the code.
 
@@ -119,7 +119,7 @@ Flow: upload -> take `{path, mime, size}` -> send a `message:send` of type image
 REST (express-rate-limit, per client IP, `trust proxy` = 1; `RateLimit-*` draft-7 headers):
 - All `/api`: 240 requests / 60 s -> `429 {"error":"too many requests — slow down"}`. This includes `POST /connections/:id/delivered`: coalesce a burst of FCM arrivals into one call (the latest timestamp covers every earlier message).
 - "strict" routes: 10 / 60 s each -> `429 {"error":"too many requests — try again in a minute"}`. Applied to: `POST /connections/request`, `POST /connections/:id/report`, `POST /messages/:id/report`, `POST /push/subscribe`, `POST /push/token`, attachment upload.
-- Speech (§11), **per user**: narration 30 / 60 s, `POST /transcribe` 10 / 60 s -> `429 {"error":"too many requests — try again in a minute","code":"rate_limited"}`.
+- Speech (§11), **per user**: narration 30 / 60 s, `POST /transcribe` 10 / 60 s -> `429 {"error":"too many requests — try again in a minute","code":"rate_limited"}`; daily quotas -> `429 {code:"quota_exceeded"}` (§11).
 
 Socket.IO (in-memory, per socket unless stated):
 - Any event except `call:signal`, `game:move`, `typing` and `presence`: more than 60 events in 10 s -> ack `{error:'slow down'}` (`game:*` acks use `{ok:false, error:'rate_limited'}`)
@@ -190,6 +190,7 @@ Every handler re-resolves the live connection from the DB; the client never name
 | `message:send` | `{content?: string, type?: MessageType, payload?, replyTo?: string, tempId?: string}`; `tempId` must match `^[A-Za-z0-9-]{1,64}$` (else treated as absent) | `{ok:true, message}` ; repeat of the same `(user, tempId)` within 5 min -> `{ok:true, duplicate:true, message:<original>}` and nothing is saved/broadcast again; concurrent duplicate -> `{error:'send already in progress'}`. Errors listed in section 4. The server also `message:new`-broadcasts to the room (sender included) and bumps the sender's last_read. |
 | `message:read` | `{connectionId}` | `{ok:true}` or `{ok:false, error}`. Same effect and checks as `POST /connections/:id/read` (member + live); `receipt:update` goes to the other member right after the write. |
 | `game:invite` / `game:accept` / `game:decline` / `game:move` / `game:end` | see §10 | `{ok:true}` or `{ok:false, error}` |
+| `match:*` (authoritative games) | see §12 | `{ok:true, match}` or `{ok:false, error, match?}` |
 | `reaction:add` | `{messageId, emoji}` | `{ok:true}`. Emoji must be ONE emoji (any; clients offer ❤️ 👍 😂 😮 😢 🙏 as the quick bar and a full picker), max 32 UTF-16 units, else `invalid emoji`. One reaction per user per message (a new emoji replaces the old). `system` messages can't be reacted to. Errors: `invalid emoji`, 403/404/409 messages. |
 | `reaction:remove` | `{messageId, emoji}` | `{ok:true}` |
 | `message:edit` | `{messageId, content}` | `{ok:true, message}`. Sender only, `type=text`, not deleted, within 30 min of `createdAt` (server clock); content 1-4000 after trim. Broadcasts `message:update`. Errors: `only your own messages can be edited`, `only text messages can be edited`, `messages can only be edited within 30 minutes`, `this message was deleted`, `message not found`. |
@@ -216,6 +217,7 @@ Call state is in memory (one call per connection). Outcomes: `end` by caller bef
 | `presence` | `{userId, online: boolean, lastSeenAt: string\|null}` | to the other member on an online-state change; partner snapshot to a connecting socket or presence sender |
 | `connection:ended` | none | to the room when the connection ends (leave, block) |
 | `game:invite` / `game:accept` / `game:decline` / `game:move` / `game:end` | the sender's payload + `from` (sender userId) | to the partner's sockets only (§10) |
+| `match:state` / `match:pong` | see §12 | to the connection room |
 | `call:incoming` | `{callId, kind, fromUserId}` | to the callee's sockets; also replayed on (re)connect while ringing |
 | `call:accepted` | `{callId}` | to the whole room (so the callee's other devices drop their prompt) |
 | `call:signal` | `{callId, data}` | to the other participant |
@@ -367,8 +369,9 @@ data: { urgent: "true", type: "alarm", ack: "true|false", cancelled: "true|false
 - `POST /connections/:id/delivered` marks delivered for a notified-but-offline device (call it from the FCM receive path).
 - Both emit `receipt:update` to the other member's sockets immediately after the single DB write; timestamps are the server's `toISOString()`, as for the existing receipt paths.
 
-## 11. Speech (2.0.6)
-Backend proxies to a private `speech` service (Kokoro-82M TTS, Parakeet TDT 0.6B v3 STT) over Railway private networking; Node does no audio work. Code: `routes/speech.ts`, `services/speechService.ts`, `speech/` (see `docs/SPEECH-SERVICE.md`). No migration. Backend env: `SPEECH_SERVICE_URL` (e.g. `http://speech.railway.internal:8000`) and `SPEECH_SERVICE_TOKEN`; if either is unset or the service is unreachable/failing → `503 {error, code:"speech_unavailable"}`. All error bodies are `{error, code}`.
+## 11. Speech (2.0.6; models and limits 2.0.7)
+Backend proxies to a private `speech` service (Kokoro-82M TTS, Whisper base.en STT since 2.0.7) over Railway private networking; Node does no audio work. Code: `routes/speech.ts`, `services/speechService.ts`, `speech/` (see `docs/SPEECH-SERVICE.md`). No migration. Backend env: `SPEECH_SERVICE_URL` (e.g. `http://speech.railway.internal:8000`) and `SPEECH_SERVICE_TOKEN`; if either is unset or the service is unreachable/failing → `503 {error, code:"speech_unavailable"}`. All error bodies are `{error, code}`. The service sleeps when idle; the backend retries its wake-up (connection error / 502, every 3 s, ≤ 6 tries) inside the timeouts below, so a first request after a quiet period can take tens of seconds.
+- Daily quotas (2.0.7, env-tunable): per user 200 narration parts and 60 transcriptions; all users together 200 speech requests. Over any of them → `429 {code:"quota_exceeded"}` ("daily speech limit reached"), distinct from the per-minute `rate_limited`.
 
 ### Letter narration
 `GET /api/connections/:connectionId/messages/:messageId/narration?part=<n>` (`n` default `0`, decimal integer).
@@ -378,16 +381,67 @@ Backend proxies to a private `speech` service (Kokoro-82M TTS, Parakeet TDT 0.6B
 - `200` body `audio/ogg` (Opus, mono, 24 kHz input rate, ~32 kbps) for that part, streamed. Headers: `X-Narration-Part: <n>`, `X-Narration-Parts: <total>`, `Cache-Control: private, no-store`. Play parts `0 .. total-1` in order (prefetching `n+1` while `n` plays hides synthesis time).
 - `404 {code:"not_found"}`: not a member, other connection's message, not a letter, deleted, malformed ids, malformed or out-of-range `part` — one answer for all, so existence never leaks.
 - `429 {code:"rate_limited"}`: more than 30 part-requests / 60 s **per user**.
-- `503 {code:"speech_unavailable"}`, `504 {code:"speech_timeout"}` (60 s per part).
+- `503 {code:"speech_unavailable"}`, `504 {code:"speech_timeout"}` (90 s per part since 2.0.7, was 60 s).
 - Nothing is cached to disk or storage (no in-memory cache either).
 
 ### Transcription
 `POST /api/transcribe`, authenticated, caller must have a live connection (else `409 {error:"connection is not active"}`). Raw body, up to 3 MB, `Content-Type` one of `audio/mp4`, `audio/m4a`, `audio/aac`, `audio/ogg`, `audio/webm`, `audio/wav` (parameters such as `; codecs=` are ignored). Android sends AAC in MP4/.m4a, 16–44.1 kHz mono, ≤ 120 s. The speech service decodes with ffmpeg and checks it is real audio regardless of the declared type.
-- `200 {text, language, durationMs}`. The client inserts `text` into the composer; nothing is sent automatically. `language` is `""` today: Parakeet detects the language internally but the runtime does not report it.
+- `200 {text, language, durationMs}`. The client inserts `text` into the composer; nothing is sent automatically. `language` is `"en"` since 2.0.7 (was `""`).
 - `413 {code:"too_large"}`: body over 3 MB, or audio longer than 120 s.
 - `415 {code:"unsupported_audio"}`: other content type, empty body, or not decodable audio.
 - `422 {code:"no_speech"}`: silence / no speech detected (a VAD guard returns empty text instead of guessing words).
 - `429 {code:"rate_limited"}`: more than 10 / 60 s **per user**.
-- `503 {code:"speech_unavailable"}`, `504 {code:"speech_timeout"}` (90 s).
+- `503 {code:"speech_unavailable"}`, `504 {code:"speech_timeout"}` (120 s since 2.0.7, was 90 s).
 - Audio and text are never logged or stored.
-- Languages: Parakeet TDT 0.6B v3 covers 25 European languages only (bg, hr, cs, da, nl, en, et, fi, fr, de, el, hu, it, lv, lt, mt, pl, pt, ro, sk, sl, es, sv, ru, uk). **Hindi, Urdu, Telugu and other non-European languages are not supported**; show a limitation note. Narration voice `af_heart` is American English; letters in other languages/scripts will not be read correctly.
+- Languages (2.0.7): **English only** (Whisper base.en). 2.0.6's Parakeet covered 25 European languages; neither supports Hindi, Urdu, Telugu or other Indian languages. Show a limitation note. Narration voice `af_heart` is American English; letters in other languages/scripts will not be read correctly.
+
+## 12. Authoritative matches (2.0.7)
+Server-owned game sessions: the backend assigns seats, validates every move with its own rules (chess via chess.js 1.4.0), runs the table-tennis simulation and is the only source of state. Code: `backend/src/games/{rules,pong,matches,matchSocket}.ts`, tests `backend/test/gameRules.test.ts`, `backend/test/matches.test.ts`. In memory (single instance, like calls); a backend restart ends every match (`match:sync` then returns `match:null`). No migration. The §10 `game:*` relay is unchanged and still used by the web client; the two protocols do not interoperate (an Android player and a web player cannot play each other until the web client adopts §12).
+
+One match per connection. `game` in `chess|pong|connect4|tictactoe|dots`.
+
+### MatchSnapshot
+```
+{ id, game, status: "invited"|"playing"|"over", inviter: userId,
+  players: [seat1UserId, seat2UserId],   // chess: seat 1 = white; in every turn game seat 1 moves first
+  turn: userId|null,                     // whose move (turn games, while playing)
+  seq: int,                              // moves applied so far
+  version: int,                          // increases on every emitted change of this match; ignore older
+  board: object|null,                    // per game, below
+  outcome: {winner: userId|null, reason}|null,
+  drawOffer: userId|null, rematch: [userId], series: {userId: wins},
+  away: [userId],                        // members with no socket right now
+  paused: bool,                          // table tennis waiting for an away player
+  expiresAt: epochMs|null }              // invite expiry
+```
+`board`: chess `{fen, last: {from, to, promotion?, captured?}|null, check, claim: "threefold_repetition"|"fifty_moves"|null, history: [SAN]}` (`history` since 2026-10-20: every move in SAN, e.g. `["e4","e5","Nf3"]`); tictactoe `{cells[9], line[], last}`; connect4 `{cells[42] (row-major, row 0 top), line[], last}`; dots `{h[30] (6 rows x 5), v[30] (5 rows x 6), boxes[25], last: {h, r, c}|null}`; pong `{score: [seat1, seat2]}`. Cells/lines/boxes hold the owning seat (1|2) or 0.
+
+Seats: the first match's seats are random; a rematch swaps them (colours and first move alternate). `series` carries across rematches of the same game.
+
+### Client -> server (all acked; every one re-reads the caller's live connection from the DB and joins its room)
+| Event | Payload | Notes |
+|---|---|---|
+| `match:invite` | `{game}` | partner must have a socket (`partner_offline`); `busy` (+`match`) if a match is invited/playing |
+| `match:accept` | `{matchId}` | invitee only → `playing` |
+| `match:decline` | `{matchId}` | invitee → over `declined`; inviter → over `cancelled` |
+| `match:leave` | `{matchId}` | invited → as decline; playing → opponent wins `left`; over → withdraws a rematch request |
+| `match:resign` | `{matchId}` | playing → opponent wins `resigned` (any game) |
+| `match:move` | `{matchId, seq, move}` | turn games. `seq` must equal snapshot `seq`. Same `seq` + identical move from the same player again → `{ok:true}` without re-applying (retry after a lost ack); a different move at an old `seq` → `stale`; a future `seq` → `out_of_order`. `move`: chess `{uci:"e7e8q"}` (promotion letter required when promoting), tictactoe `{cell 0..8}`, connect4 `{col 0..6}`, dots `{h: bool, r, c}`. Exact keys only. |
+| `match:draw` | `{matchId, action: "offer"\|"accept"\|"decline"\|"claim"}` | chess only. Making a move declines a pending offer; offering back to an offer agrees. `claim`: player to move, when `board.claim` is set (threefold repetition / fifty-move rule) |
+| `match:rematch` | `{matchId}` | over (not declined/cancelled/expired). When both members asked: a new `playing` match, seats swapped |
+| `match:sync` | none | returns the current match (or `null`); marks the caller present again (resumes a paused table-tennis match after a 3 s serve countdown) |
+| `match:away` | `{matchId, away: bool}` | playing only: `true` lists the caller in `away` like a disconnect (pauses table tennis; starts the abandonment grace), `false` is `match:sync`. Clients send it when the app is backgrounded during table tennis |
+| `match:paddle` | `{matchId, x}` | **no ack**, fire-and-forget; `x` 0..1 (clamped). 40/s per socket; checked against the in-memory match only (see below) |
+
+Errors: `invalid_payload`, `rate_limited`, `not_member`, `connection_inactive`, `partner_offline`, `busy`, `not_found`, `bad_state`, `game_over`, `not_your_turn`, `invalid_move`, `illegal_move`, `stale`, `out_of_order`, `no_offer`, `no_claim`, `internal`. Illegal moves never change state. Rate limits: `match:paddle` 40/s/socket; all other `match:*` share the generic 60/10 s guard.
+
+### Server -> client
+- `match:state` MatchSnapshot, to the connection room on every change.
+- `match:pong` `{id, t (server epoch ms), b: [x, y, vx, vy], p: [seat1X, seat2X], s: [seat1, seat2], c: serveCountdownMs, h: hits}` at ~30/s while table tennis is playing, **volatile** (dropped, not queued, for a congested socket).
+- Table tennis geometry (2026-10-20, `games/pong.ts`): top-down table, x 0..1, y 0..1.8. Seat 1's racket head is a circle of radius 0.13 centred on the bottom end line (y = 1.8), seat 2's on the top end line (y = 0); `p` is each head's x, clamped to 0.078..0.922. Ball radius 0.03; it moves in straight lines (velocities in table units/s), reflects off x = 0.03 / 0.97, is returned when it overlaps a head (server allows +0.025 for latency) while its centre is on the table side of that end line, and scores for the other seat once it is fully past an end line. Return direction: from the head centre to the ball (centre hit = straight back, edge = up to 62°) plus 30 % of the racket's sideways speed; each return ×1.06, 0.95 → max 2.6 units/s. Serve after a 3 s countdown (1.2 s between points) towards the player who lost the point. First to 7. Clients draw their own racket at the bottom by rotating the table 180° for seat 2. There is no ball height in the simulation; clients may draw one for looks.
+
+### Lifecycle
+- Invites expire after 30 s (`expired`). A finished match stays 120 s for a rematch, then is dropped.
+- A member with no socket left is listed in `away`: turn games keep their state for 120 s, table tennis pauses for 30 s; past that the match ends `abandoned` (the present member wins). An invited match ends at once if a member disconnects. Turn games with no move for 30 min end `inactive`.
+- Leave/terminate (`emitConnectionEnded`) ends the match with `connection_ended`; running table tennis is re-checked against the DB every 5 s.
+- Outcome reasons: `checkmate`, `stalemate`, `insufficient_material`, `fivefold_repetition`, `seventy_five_moves`, `threefold_repetition`, `fifty_moves`, `agreement`, `three_in_a_row`, `four_connected`, `most_boxes`, `board_full`, `first_to_7`, `resigned`, `left`, `abandoned`, `inactive`, `declined`, `cancelled`, `expired`, `connection_ended`.

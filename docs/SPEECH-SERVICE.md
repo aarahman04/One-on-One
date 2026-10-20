@@ -1,186 +1,205 @@
-# Speech service (2.0.6)
+# Speech service (2.0.6, cost rework 2.0.7)
 
 Open-source letter narration (TTS) and composer dictation (STT). No paid API and
 no third-party hosted inference.
 
 ```
-Android ──HTTPS──> backend (Node, Railway)  ──private network──>  speech (Python, Railway, no public domain)
-          auth, membership, letter text          X-Speech-Token         Kokoro-82M  (af_heart)  /tts
-          from DB, part split, rate limits                              Parakeet TDT 0.6B v3    /stt
+Android ──HTTPS──> backend (Node, Railway)  ──private network──>  speech (Python, Railway, no public domain, Serverless)
+          auth, membership, letter text          X-Speech-Token         Kokoro-82M fp32 (af_heart)   /tts
+          from DB, part split, rate limits,                             Whisper base.en int8         /stt
+          daily quotas, wake retry                                      Silero VAD (silence guard, chunking)
 ```
 
-- Contract for clients: `docs/API-CONTRACT.md` §11 "Speech (2.0.6)".
+- Contract for clients: `docs/API-CONTRACT.md` §11 "Speech".
 - Backend: `backend/src/routes/speech.ts`, `backend/src/services/speechService.ts`, tests `backend/test/speech.test.ts`.
-- Service: `speech/` (FastAPI + uvicorn, Dockerfile), tests `speech/tests/`. Licences: `speech/THIRD_PARTY.md`.
+- Service: `speech/` (FastAPI + uvicorn, Dockerfile, `.railway/railway.ts`), tests `speech/tests/`. Licences: `speech/THIRD_PARTY.md`.
 
-## Runtime choice: sherpa-onnx (one runtime for everything)
+## 2.0.7 decision (2026-10-20): why not Kokoro + Parakeet always-on, and why not Speaches
 
-`sherpa-onnx` 1.13.8 (Apache-2.0) runs Kokoro v1.0, Parakeet TDT 0.6B v3 and
-Silero VAD from one CPU wheel with ONNX Runtime bundled: no PyTorch, no NeMo, no
-second inference stack. `kokoro-onnx` + `onnx-asr` would work too but means two
-runtimes, two phonemiser setups and no built-in VAD.
+The 2.0.6 service kept Kokoro fp32 **and** Parakeet TDT 0.6B loaded all the time:
+~1.4 GB idle, ~2.2 GB peak, estimated **$15–25/month** on Railway. Target: **≤ $5/month**.
 
-Model variants, decided by measurement on this machine:
-- **Kokoro: fp32** `kokoro-multi-lang-v1_0` (310 MB). The int8 export was 2.5x
-  *slower* on x86 CPU (0.24–0.28x realtime vs 0.62–0.69x for fp32, same run, 2
-  threads), so int8 buys nothing here. Voice `af_heart` = speaker id 3 (read from the
-  model metadata `speaker2id`). Lexicon `en-us`.
-- **Parakeet: int8** `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` (640 MB). Fast
-  (RTF ≈ 0.2) and accurate on the samples below.
-- **Silero VAD** for the silence guard.
+What changed, each by measurement (numbers below):
 
-All three are downloaded during `docker build` from the sherpa-onnx GitHub
-releases and checked against sha256 pins in the Dockerfile; nothing downloads at
-runtime. Models load once, in a background thread at startup; `/health` returns
-`503 {"status":"loading"}` until both are loaded, then `200 {"status":"ready"}`
-(`503 {"status":"failed"}` if loading failed; no details are exposed).
+1. **STT: Parakeet 0.6B → Whisper base.en int8** (same sherpa-onnx runtime). Loaded RSS
+   235 MB vs 820 MB, peak 750 MB vs 1.47 GB, accuracy close (see table). Speech is cut
+   at VAD pauses into ≤ 25 s pieces (Whisper's window is 30 s): a fixed 28 s cut had
+   produced 71 errors in one 60 s clip; VAD cuts brought it to 9.
+2. **TTS stays Kokoro-82M fp32, voice `af_heart`.** The int8 export is 2.5–3x slower on
+   x86 (0.9–1.1x realtime at 2 threads, too slow to stream gap-free); a lighter TTS
+   (Piper/espeak) would be audibly more robotic, which the brief rules out.
+3. **Models load on first use and unload after `SPEECH_MODEL_TTL` idle seconds
+   (default 120)**, with `malloc_trim` so the memory really returns to the OS
+   (measured: 666 MB → 49 MB; without the trim it stayed at 550 MB).
+4. **Railway Serverless**: the container sleeps 5–10 min after its last outbound
+   packet and is woken by private-network traffic from the backend. Asleep = no
+   CPU/RAM billing. The backend retries the wake-up (below).
+5. **Quotas** in the backend bound the worst case (see Cost).
+
+Alternatives considered (kept short on purpose):
+
+| Option | Verdict |
+|---|---|
+| **Speaches** (speaches-ai/speaches, checked at commit `993994f`, 2026-04-17) | Real Bearer auth when `API_KEY` is set (`HTTPBearer`, 403; compared with `!=`, not constant time). Real idle unload (`stt_model_ttl`/`tts_model_ttl`, default 300 s). But: forces `onnxruntime-gpu` on x86, pulls faster-whisper/CTranslate2 + kokoro-onnx + piper + gradio (a second and third runtime), downloads models from Hugging Face **at runtime** (needs a volume and outbound access; HF is unreachable from this build environment, so it could not even be benchmarked here). `USE_GPU` is not read anywhere in its code. Same models, more moving parts → not chosen. |
+| Whisper tiny.en int8 | 170 MB, fastest, but worse on noise (7.6 % vs 5.8 % WER) and real speech (4.3 % vs 3.2 %). |
+| Whisper small.en int8 | Best on real/noisy speech (1.1 %/2.9 %) but 490 MB loaded, 1.36 GB peak, ~3x slower. Not worth it. |
+| Moonshine base (MIT) | Accurate and fast, but 380 MB loaded (vs 235 MB) for no clear accuracy gain over base.en. |
+| On-device (Android SpeechRecognizer / TextToSpeech) | $0 and already the 2.0.6 fallback (`SERVER_SPEECH=false`). Device voices are the "robotic" option and recognition quality varies by phone/OEM; kept as the fallback, not the primary. |
+
+## Measurements (2026-10-20, this build machine)
+
+Machine: Intel Xeon @ 2.10 GHz, 4 vCPU container, Python 3.13, sherpa-onnx 1.13.8,
+`SPEECH_NUM_THREADS=2`, `SPEECH_MAX_CONCURRENCY=1`. **Not Railway hardware** — re-check
+after deploy. Uploads were re-encoded to AAC/MP4 48 kbps, as Android sends.
+
+**Test audio is mostly synthetic and labelled as such**: Kokoro voices (US `af_bella`,
+UK `bm_george`, and the Hindi voices `hf_alpha`/`hm_omega` speaking English as an
+**Indian-English accent proxy**), white noise at 10 dB SNR, digital silence, noise
+only, informal phrasing ("um, so, like…"), plus 4 real human recordings (3 LibriSpeech,
+1 JFK). No real Indian-English human recordings were available here; test those on a
+phone before relying on accent accuracy.
+
+Model choice (isolated runs, int8, 2 threads; WER over all clips incl. the fixed-cut bug for Whisper):
+
+| STT model | Loaded RSS | Peak RSS | RTF 60 s | Real human WER | Noisy WER | Indian-proxy WER |
+|---|---|---|---|---|---|---|
+| Parakeet TDT 0.6B v3 (2.0.6) | 821 MB | 1467 MB | 0.10 | — | — | — (3.1 % overall) |
+| Whisper tiny.en | 169 MB | 503 MB | 0.08 | 4.3 % | 7.6 % | 4.7 % |
+| **Whisper base.en** | **239 MB** | **752 MB** | 0.16 | **3.2 %** | **5.8 %** | **4.1 %** |
+| Moonshine base | 380 MB | 778 MB | 0.09 | 4.3 % | 6.4 % | 4.6 % |
+| Whisper small.en | 496 MB | 1361 MB | 0.41 | 1.1 % | 2.9 % | 3.7 % |
+
+| TTS (Kokoro v1.0, 3 texts) | Loaded RSS | Peak RSS | x realtime, 1 thread | x realtime, 2 threads |
+|---|---|---|---|---|
+| **fp32** | 464 MB | 856 MB | 1.3–1.6x | **2.4–3.0x** |
+| int8 | 268 MB | 692 MB | 0.7–0.9x | 0.9–1.1x |
+
+The shipped service end to end over HTTP (`speech/app`, uvicorn, real models):
+
+| Metric | Result |
+|---|---|
+| Process start → `/health` ready | 0.5 s (page cache dropped; models are lazy) |
+| RSS idle, nothing loaded | 54–57 MB |
+| First TTS after start (cold load + 82 chars, 5.4 s audio) | 4.4 s |
+| Warm TTS: 270 chars (15.4 s audio) / 400-char part (21.5 s audio) | 6.6 s / 10.0 s (≈ 2.2x realtime) |
+| STT 10 s / 30 s / 60 s (first call includes the Whisper load) | 3.2 s / 4.8–5.0 s / 8.7–9.7 s |
+| STT WER: clean US/UK proxy · Indian-English proxy · noisy · real human | 4.3 % · 5.6 % · 7.6 % · 3.2 % (overall 5.3 %, 1,334 words) |
+| Silence and noise-only uploads | empty text (backend → 422 `no_speech`) |
+| RSS TTS loaded / both loaded / transient peak | ~780 MB plateau / ~820 MB–1.1 GB / 1.5 GB |
+| RSS after idle unload | 93 MB |
+| Two narrations at once, one slot | both 200; 8.1 s and 14.9 s (serialized, no error) |
+| Missing or wrong token | 401 |
+| Ogg Opus size | ~4 KB per second of speech |
+| Image models on disk | 517 MB (Kokoro English-only 362 MB, Whisper int8 154 MB, VAD 0.6 MB) |
 
 ## Service API (private; every route but `/health` needs `X-Speech-Token`)
 
 | Route | In | Out |
 |---|---|---|
-| `GET /health` | — | `200 {"status":"ready"}` / `503 loading|failed` |
-| `POST /tts` | JSON `{text ≤1200 chars, voice:"af_heart", speed 0.5–2.0 (1.0)}` | `200 audio/ogg` (Opus, mono, 24 kHz input, 32 kbps). `\n\n` in `text` = 0.45 s pause between paragraphs |
-| `POST /stt` | raw audio body ≤ 3 MB (+64 KB slack) | `200 {text, language, durationMs}`; 413 `too_large`/`too_long` (>120 s), 415 `unsupported_audio` |
+| `GET /health` | — | `200 {"status":"ready"}` as soon as the process serves (models are lazy) |
+| `POST /tts` | JSON `{text ≤1200 chars, voice:"af_heart", speed 0.5–2.0 (1.0)}` | `200 audio/ogg` (Opus, mono, 24 kHz, 32 kbps). `\n\n` in `text` = 0.45 s pause |
+| `POST /stt` | raw audio body ≤ 3 MB (+64 KB slack) | `200 {text, language:"en", durationMs}`; 413 `too_large`/`too_long` (>120 s), 415 `unsupported_audio` |
 
-Common errors: 401 `unauthorized` (token compared with `hmac.compare_digest`),
-503 `not_ready` / `busy` (no slot within 20 s), 504 `timeout`. FastAPI docs/OpenAPI
-routes are disabled.
+Errors: 401 `unauthorized` (`hmac.compare_digest`), 503 `busy` (no slot within 20 s),
+504 `timeout`. No docs/OpenAPI routes. Audio and text are never logged (uvicorn access
+log off); uploads go to a temp file deleted in `finally`; ffmpeg runs with
+`-protocol_whitelist file` and a demuxer whitelist; anything it can't decode is 415.
+Clients cannot choose or load models: the only inputs are text/audio, a fixed voice and a speed.
 
-STT path: body → temp file (deleted in `finally`) → `ffmpeg` with
-`-protocol_whitelist file` and a demuxer whitelist (mov/mp4/m4a, aac, ogg,
-matroska/webm, wav) → 16 kHz mono PCM. Anything ffmpeg can't decode is 415
-whatever the declared type. More than 120 s → 413. Silero VAD then measures
-speech; under 0.25 s of speech returns empty text (the backend turns that into
-422 `no_speech`), so silence and noise never produce invented words (verified
-with 5 s of digital silence and of white noise, and with 4 s of silent AAC).
-Neither audio nor text is ever logged (uvicorn access log is off too).
-
-Concurrency: an `asyncio.Semaphore(SPEECH_MAX_CONCURRENCY)` (default 2) gates a
-thread pool of the same size, so `/health` and request parsing stay on a free
-event loop (measured: `/health` answered in 6–25 ms while a TTS call ran). A slot
-is released when the work really finishes, even after a timeout, so timeouts can't
-oversubscribe the CPU.
-
-Env (service): `SPEECH_SERVICE_TOKEN` (required, startup fails without it),
-`PORT` (default 8000), `SPEECH_MAX_CONCURRENCY` (2), `SPEECH_NUM_THREADS` (2;
-ONNX threads per model call), `SPEECH_TTS_TIMEOUT` (55 s), `SPEECH_STT_TIMEOUT`
-(85 s), `SPEECH_QUEUE_TIMEOUT` (20 s), `SPEECH_MODEL_DIR` (`/models`). The
-backend's own timeouts are 60 s (TTS part) and 90 s (STT), just above these.
-
-The server binds one dual-stack socket on `[::]:$PORT` (`app/serve.py`):
-Railway private networking is IPv6, newer environments also resolve IPv4, and
-plain `uvicorn --host ::` is IPv6-only under asyncio.
+Env (service): `SPEECH_SERVICE_TOKEN` (required), `PORT` (8000), `SPEECH_NUM_THREADS`
+(2, ONNX threads per model call), `SPEECH_MAX_CONCURRENCY` (1, inference slots),
+`SPEECH_MODEL_TTL` (120 s idle before unload; 0 = never), `SPEECH_TTS_TIMEOUT` (55),
+`SPEECH_STT_TIMEOUT` (85), `SPEECH_QUEUE_TIMEOUT` (20), `SPEECH_MODEL_DIR` (`/models`).
+The Dockerfile sets `OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`, `MALLOC_ARENA_MAX=2`.
+Of the brief's target variables: `WEB_CONCURRENCY=1` is what `app/serve.py` hard-codes
+(one uvicorn worker, so models are never duplicated); `USE_GPU`, `WHISPER__INFERENCE_DEVICE`
+and `WHISPER__COMPUTE_TYPE` are Speaches settings and mean nothing here (this service
+is CPU-only and uses the int8 Whisper files by construction).
 
 ## Backend behaviour
 
-- Narration text is built only from the DB row (decrypted like history): `Dear
-  <to>.`, each non-empty body line, `With love, <from>.`, then split into parts of
-  at most 400 characters (sentences, then words; only a single word longer than
-  400 is cut). Deterministic, so part N is stable. Authorization uses
-  `getConnectionForMember(..., {requireLive, allowEndedPartner})` like history;
-  every failure is the same `404 not_found`.
-- Narration audio is streamed through (`Readable.fromWeb(...).pipe(res)`); the
-  upstream request is aborted if the client goes away. No disk or memory cache:
-  the optional LRU was not built, because a 400-char part is ~75 KB and a cache
-  would only help a repeat play while making delete-invalidation another thing to
-  get right. Clients may keep a played part in memory for the session.
-- Transcription: per-user 10/min, content-type allow-list checked before the
-  body is read, 3 MB raw-body cap (413 `too_large`), live connection required.
-- Per-user limiters (keyed by app user id, mounted after `requireAuth`): 30
-  narration parts/min, 10 transcriptions/min. The global 240/min per IP still applies.
+- Narration text comes only from the DB row; parts ≤ 400 chars; authorization as for
+  history; every failure is the same 404. Audio is streamed through, never stored.
+- **Wake-up**: a connection error or 502 from the speech service is retried every 3 s,
+  up to 6 attempts, inside the request timeout (90 s narration part, 120 s
+  transcription). Other errors are not retried.
+- Limits per user: 30 narration parts/min and **200/day**; 10 transcriptions/min and
+  **60/day**. Global: **200 speech requests/day** for all users together
+  (`SPEECH_REQUESTS_PER_DAY`, `SPEECH_NARRATION_PARTS_PER_USER_DAY`,
+  `SPEECH_TRANSCRIPTIONS_PER_USER_DAY`). Over a daily limit: 429 `quota_exceeded`. In
+  memory, so a backend restart resets them.
 
-## Benchmarks (2026-10-19, this machine)
+## Storage
 
-Machine: laptop Intel i7-1255U (2 P + 8 E cores), Docker Desktop (WSL2), image
-built from `speech/Dockerfile`. **The laptop was shared with a running Gradle/Java
-build (≈93 % CPU load when checked), so these are pessimistic and noisy.** The
-earlier int8 runs vary up to 3x between repeats for the same reason. Railway vCPUs
-are usually server cores; expect equal or better numbers, but measure after
-deploy.
+Models are downloaded **at image build time** from the sherpa-onnx GitHub releases and
+checked against sha256 pins; nothing downloads at runtime. **No Railway volume is
+needed** (cost $0, nothing to keep in sync, and a sleeping service wakes without any
+download). A 1 GB volume would fit the 517 MB of models, but it would only matter for a
+framework that fetches models at runtime (e.g. Speaches); it is not attached.
 
-| Metric | `--cpus=2`, 2 threads | `--cpus=4`, 4 threads (over HTTP) |
-|---|---|---|
-| Model load (both, cold container) | 24.3 s | 7 s to `/health` ready (warm disk cache) |
-| RSS idle after load | 1.36 GB | 1.31 GB (`docker stats`) |
-| RSS after work / peak | 2.19 GB peak (incl. 2 concurrent TTS) | 1.64 GB after one TTS + STT calls |
-| TTS 398-char part (18.6 s audio) | 14.9 s → **1.26x realtime** | 12.0 s → **1.54x realtime** |
-| TTS ~3000-char letter, 8 parts in sequence (144 s audio) | 122 s total, first part 13.3 s → 1.18x | not measured |
-| TTS 2 parts concurrently | 31.3 s for both (no gain on 2 cores; thread-safe, no errors) | — |
-| STT 10 s clip (Kokoro speech, AAC/M4A) | 2.2 s, RTF 0.22 | — |
-| STT 60 s clip (Kokoro speech, AAC/M4A) | 11.3 s, RTF 0.19 | — |
-| STT 18.5 s clip (Kokoro, AAC) | — | 3.5 s, RTF 0.19 |
-| CPU while inferring | ~1.9–2.0 cores (saturates its threads) | — |
-| CPU idle | 0.26 % | 0.26 % |
-| Ogg Opus size | ~4 KB per second of speech (75 KB per 400-char part, 31.8 kbps) | same |
+## Cost (Railway pricing from docs.railway.com, read 2026-10-20: RAM $10/GB-month, CPU $20/vCPU-month, egress $0.05/GB, volume $0.15/GB-month)
 
-Real speech (sherpa-onnx's bundled human recordings): en 3.8 s → "Ask not what
-your country can do for you, ask what you can do for your country." (exact); de,
-es, fr also transcribed exactly (≈1.3–1.5 s each).
+**Estimates, not measurements on Railway.** Inputs: the RSS and timings above.
 
-WER **sanity check only** (Kokoro-generated speech round-tripped through
-Parakeet, not a real WER benchmark): 10 sentences / 68 words, **4.4 %**, all from
-one sentence ("Please remember to water the plants on the balcony." → "Please
-plants on the balcony."). The same sentence round-tripped exactly in a later run
-at 4 threads.
+- Asleep: $0. Awake with nothing loaded: ~0.09 GB → ≈ $0.03/day if it never slept.
+- Loaded: ~1.1 GB → ≈ $0.00025 per loaded minute. Each request keeps models loaded for
+  its duration + `SPEECH_MODEL_TTL` (2 min).
+- CPU: a 400-char part ≈ 10 s × 2 vCPU ≈ $0.00015; a 30 s dictation ≈ 5 s × 2 vCPU ≈ $0.00008.
+- Egress: speech traffic is on the private network (free); the backend → phone audio is
+  ~80 KB per part ($0.000004).
+- **Typical** (a couple: ~10 letters read + ~30 dictations a day, in ~20 bursts): ≈ 20 ×
+  6 min loaded ≈ $0.9/month RAM + $0.2 CPU ≈ **$1–1.5/month**.
+- **Worst case under the global quota** (200 requests/day spaced so the models never
+  unload between them, service never sleeps): 400 loaded min/day ≈ $3.0 + CPU ≈ $0.9 +
+  idle ≈ $0.9 ≈ **$4.9/month**. Raising `SPEECH_REQUESTS_PER_DAY` raises this
+  ceiling by about $0.02 per extra daily request.
 
-Verdict: CPU inference is fast enough. STT is ~5x faster than realtime. TTS is
-only ~1.2–1.5x faster than realtime, so the first part takes ~12–15 s before
-audio starts and the client must prefetch part n+1 while part n plays (each part
-plays longer than it takes to make, so playback is gap-free after the first).
-Two people asking at once on a 2-vCPU limit halves throughput; give the service
-more vCPUs (8) rather than more concurrency.
+**Railway cannot cap one service at $5.** The workspace **hard usage limit** (minimum
+$10) takes **every** service offline, backend included, so it is not a per-service
+budget. What this design uses instead: Serverless sleep, a replica memory/CPU limit on
+`speech` only, lazy load + idle unload, and the backend quotas above. Set a workspace
+**custom email alert** (soft limit) so a surprise is visible early.
 
-## Railway viability and cost
+## Railway setup (owner; nothing here was deployed by Claude)
 
-Railway Hobby allows up to 8 vCPU / 8 GB per service, billed on usage. Using
-Railway's published usage rates when this was written (about $10 per GB-month of
-RAM and $20 per vCPU-month; **check current pricing**):
-- Always-on RAM at ~1.4–2.2 GB → **~$14–22/month**, the dominant cost.
-- Idle CPU ~0.003 vCPU → cents per month.
-- Work: a 400-char part ≈ 4 vCPU × 12 s ≈ 50 vCPU-s ≈ $0.0004; a transcription
-  of 30 s ≈ 2 vCPU × 6 s ≈ $0.00005. 1000 narrated parts/month ≈ $0.40.
-- Expected total: **~$15–25/month** on top of the existing backend. The Hobby
-  plan's included $5 usage does not cover it.
-- Image is ~2.9 GB unpacked; each build downloads ~1 GB of models from GitHub.
-
-## Railway setup (owner)
-
-1. In the backend's project and environment: **New → GitHub Repo →
-   `aarahman04/One-on-One`**. Name the service **`speech`** (its private host is
-   then `speech.railway.internal`).
-2. Service settings → Source: **Root Directory `speech`**. Railway then uses
-   `speech/Dockerfile` (Dockerfile path `Dockerfile` relative to the root). Add a
-   watch path `speech/**` so backend/client pushes don't rebuild it.
-3. **Do not generate a public domain** for `speech`. Networking → Private
-   Networking stays enabled.
-4. Variables on `speech`: `SPEECH_SERVICE_TOKEN` = a long random secret (e.g.
-   `openssl rand -base64 48`), `PORT=8000`, `SPEECH_MAX_CONCURRENCY=2`,
-   `SPEECH_NUM_THREADS=4`.
-5. Settings → Deploy: **Healthcheck path `/health`**, healthcheck timeout 300 s
-   (cold model load measured at ~25 s on 2 vCPU; first boot pulls a large image).
-   Replicas 1. Restart policy on failure.
-6. Resources: **memory limit 3 GB** (peak seen 2.2 GB), **vCPU 8** (4 also works,
-   slower). 
-7. Variables on the **backend** service: `SPEECH_SERVICE_URL=http://speech.railway.internal:8000`,
-   `SPEECH_SERVICE_TOKEN=${{speech.SPEECH_SERVICE_TOKEN}}` (reference variable,
-   so the two can't drift). Redeploy the backend. Without these two the speech
+1. Same project + environment as the backend: **New → GitHub Repo →
+   `aarahman04/One-on-One`**, service name **`speech`** (private host `speech.railway.internal`).
+2. Settings → Source: **Root Directory `speech`** (uses `speech/Dockerfile`); watch path `speech/**`.
+3. **No public domain.** Private networking stays on.
+4. Variables on `speech`: `SPEECH_SERVICE_TOKEN` = long random secret (`openssl rand -base64 48`),
+   `PORT=8000`, `SPEECH_NUM_THREADS=2`, `SPEECH_MAX_CONCURRENCY=1`, `SPEECH_MODEL_TTL=120`.
+5. Settings → Deploy: healthcheck path `/health` (timeout 120 s), 1 replica,
+   restart on failure. **Serverless: on.** **Replica limits: 2 vCPU, 2 GB memory**
+   (peak measured 1.5 GB; a limit only caps, billing is on actual use).
+6. Variables on the **backend**: `SPEECH_SERVICE_URL=http://speech.railway.internal:8000`,
+   `SPEECH_SERVICE_TOKEN=${{speech.SPEECH_SERVICE_TOKEN}}`; optionally the three quota
+   variables. Redeploy the backend. Without the two URL/token variables the speech
    routes answer 503 `speech_unavailable` and nothing else changes.
-8. Smoke test after deploy: `/health` is green in the Railway UI; in the app, play
-   a letter and dictate a short phrase.
+7. Workspace → Usage: set a **custom email alert** (e.g. at your current monthly
+   usage + $5). Consider a hard limit only knowing it stops everything.
+8. Android: build with `SERVER_SPEECH=true` (until then the app uses the device voice
+   and device recognition).
+9. Smoke test: play a letter (first one after a while includes the wake-up), dictate a
+   short phrase, check the speech service's memory graph drops after ~2 minutes idle
+   and the service shows as sleeping after ~10.
+
+Infrastructure as Code: `speech/.railway/railway.ts` is a **named partial** (`speech`)
+that declares only this service (source/root dir, healthcheck, 1 replica, non-secret
+variables, token as `preserve()`). From `speech/`: `npm install railway`,
+`railway link`, `railway config plan` — the plan must show only the `speech` service —
+then `railway config apply`. A named partial never deletes or changes resources it
+does not own, so the backend is untouched. Serverless, replica limits and "no public
+domain" are dashboard settings (not expressible in the IaC reference as of 2026-10-17).
+Railway's older `railway.json` (Config as Code) is deprecated and **cannot be enabled
+for new services**, so none is provided.
 
 ## Languages and limitations
 
-- STT: Parakeet TDT 0.6B v3 supports 25 European languages (bg, hr, cs, da, nl,
-  en, et, fi, fr, de, el, hu, it, lv, lt, mt, pl, pt, ro, sk, sl, es, sv, ru, uk;
-  from the NVIDIA model card). **Hindi, Urdu, Telugu and other non-European
-  languages are not supported** (speech in them gives wrong or empty text). The
-  client should show a limitation note.
-- `language` in the STT result is always `""`: the model detects the language
-  internally but sherpa-onnx does not expose it for this model.
-- TTS voice `af_heart` is American English. Letters in other languages or
-  scripts will be pronounced through English rules, or skipped.
-- Single replica, in-process limits: a restart drops in-flight requests; the
-  per-user limiters live in the backend's memory (same as the existing ones).
-- sha256 pins were recorded from the assets as downloaded on 2026-10-19
-  (sherpa-onnx publishes no checksums); a re-upload upstream fails the build.
+- STT is **English only** (Whisper base.en): Hindi, Urdu, Telugu etc. give wrong or empty
+  text. 2.0.6's Parakeet covered 25 European languages but no Indian languages either.
+- TTS voice `af_heart` is American English.
+- First request after sleep waits for the wake-up: Railway documents a possible 502 on
+  that first request (retried by the backend); total wake time on Railway is not measured yet.
+- Single replica, in-process limits: a restart drops in-flight requests and resets quotas.
+- sha256 pins were recorded from the assets as downloaded (Kokoro, VAD: 2026-10-19;
+  Whisper base.en: 2026-10-20). sherpa-onnx publishes no checksums; a re-upload fails the build.

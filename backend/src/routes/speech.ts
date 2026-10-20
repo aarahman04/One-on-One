@@ -2,7 +2,13 @@ import { Readable } from 'node:stream'
 import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { Router, raw, type RequestHandler } from 'express'
 import { requireAuth } from '../middleware/requireAuth.js'
-import { narrationLimiter, transcribeLimiter } from '../middleware/rateLimit.js'
+import {
+  narrationDailyLimiter,
+  narrationLimiter,
+  speechGlobalDailyLimiter,
+  transcribeDailyLimiter,
+  transcribeLimiter,
+} from '../middleware/rateLimit.js'
 import { ConnectionError } from '../utils/connectionError.js'
 import { getConnectionForMember, getLiveConnectionForUser } from '../services/connectionAccess.js'
 import { getLetterForNarration } from '../services/messageService.js'
@@ -28,6 +34,8 @@ speechRouter.get(
   '/connections/:connectionId/messages/:messageId/narration',
   requireAuth,
   narrationLimiter,
+  narrationDailyLimiter,
+  speechGlobalDailyLimiter,
   async (req, res) => {
     const connectionId = String(req.params.connectionId)
     if (!UUID_RE.test(connectionId)) throw notFound()
@@ -72,7 +80,7 @@ const audioBody: RequestHandler = (req, res, next) =>
   })
 
 // Speech-to-text for the composer. The client inserts the text; nothing is sent.
-speechRouter.post('/transcribe', requireAuth, transcribeLimiter, async (req, res, next) => {
+speechRouter.post('/transcribe', requireAuth, transcribeLimiter, transcribeDailyLimiter, speechGlobalDailyLimiter, async (req, res, next) => {
   const mime = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
   if (!TRANSCRIBE_TYPES.includes(mime)) throw new ConnectionError(415, 'unsupported audio', 'unsupported_audio')
   if (!(await getLiveConnectionForUser(req.appUser!.id))) throw new ConnectionError(409, 'connection is not active')

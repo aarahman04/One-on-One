@@ -1,0 +1,230 @@
+import { test, type TestContext } from 'node:test'
+import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import { createRequire } from 'node:module'
+import { setTimeout as delay } from 'node:timers/promises'
+
+process.env.SUPABASE_URL ??= 'http://localhost:54321'
+process.env.SUPABASE_SERVICE_ROLE_KEY ??= 'test-key'
+process.env.ENCRYPTION_KEY_V1 ??= Buffer.alloc(32, 1).toString('base64')
+
+const { default: express } = await import('express')
+const { supabaseAdmin } = await import('../src/database/supabaseAdmin.js')
+const { installFakeSupabase } = await import('./fakeSupabase.js')
+const { connectionsRouter } = await import('../src/routes/connections.js')
+const { ConnectionError } = await import('../src/services/connectionService.js')
+const { createSocketServer } = await import('../src/websocket/socketServer.js')
+const { RACKET_MAX, RACKET_MIN, WIN_SCORE } = await import('../src/games/pong.js')
+
+const { io: connect } = createRequire(new URL('../../client/package.json', import.meta.url))('socket.io-client')
+
+// Two real Socket.IO clients against the real server: the authoritative match flow end to end.
+
+const A = '00000000-0000-4000-8000-00000000000a'
+const B = '00000000-0000-4000-8000-00000000000b'
+const C = '00000000-0000-4000-8000-00000000000c'
+const CONN = '11111111-1111-4111-8111-111111111111'
+const users = [A, B, C]
+const tokenOf = (id: string) => `tok-${users.indexOf(id)}`
+const waitFor = async (ready: () => boolean, ms = 3000) => {
+  for (let i = 0; i < ms / 10; i++) {
+    if (ready()) return
+    await delay(10)
+  }
+  assert.fail('timed out')
+}
+
+function seed() {
+  const db = installFakeSupabase(supabaseAdmin)
+  db.tables.users = users.map((id, i) => ({ id, auth_user_id: `auth-${i}`, connection_code: `CODE000${i}`, age_verified_at: null, terms_accepted_at: null }))
+  users.forEach((_, i) => db.authUsers.set(`tok-${i}`, `auth-${i}`))
+  db.tables.connections = [{
+    id: CONN, user_a_id: A, user_b_id: B, status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    wallpaper: 'off', message_style: 'bubbles', ended_at: null, ended_by: null,
+  }]
+  db.tables.connection_members = [
+    { connection_id: CONN, user_id: A, nickname: 'Bee', leave_step: 0, leave_last_step_at: null },
+    { connection_id: CONN, user_id: B, nickname: 'Ay', leave_step: 0, leave_last_step_at: null },
+  ]
+  db.tables.messages = []
+  return db
+}
+
+async function server(t: TestContext) {
+  const app = express()
+  app.use(express.json())
+  app.use('/api', connectionsRouter)
+  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err instanceof ConnectionError) return void res.status(err.status).json({ error: err.message })
+    res.status(500).json({ error: 'internal server error' })
+  })
+  const http = createServer(app)
+  const io = createSocketServer(http, ['http://localhost'])
+  await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${(http.address() as { port: number }).port}`
+  const clients: ReturnType<typeof connect>[] = []
+  t.after(async () => {
+    for (const c of clients) c.disconnect()
+    await new Promise<void>((resolve) => io.close(() => resolve()))
+  })
+  const socket = async (user: string) => {
+    const client = connect(base, { auth: { token: tokenOf(user) }, reconnection: false })
+    clients.push(client)
+    const states: any[] = []
+    const frames: any[] = []
+    client.on('match:state', (s: unknown) => states.push(s))
+    client.on('match:pong', (f: unknown) => frames.push(f))
+    await waitFor(() => client.connected)
+    await delay(30)
+    const emit = (name: string, data?: unknown) => new Promise<any>((resolve) => client.emit(name, data, (res: unknown) => resolve(res)))
+    return { client, states, frames, emit, last: () => states.at(-1) }
+  }
+  const api = (user: string, method: string, path: string) =>
+    fetch(`${base}/api${path}`, { method, headers: { Authorization: `Bearer ${tokenOf(user)}` } })
+  return { socket, api }
+}
+
+test('chess between two clients: same seats, server-validated moves, both see identical state, reconnect restores the board', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A)
+  let b = await socket(B)
+  const carol = await socket(C)
+
+  const invite = await a.emit('match:invite', { game: 'chess' })
+  assert.equal(invite.ok, true)
+  const id = invite.match.id
+  await waitFor(() => b.last()?.id === id)
+  assert.equal(b.last().status, 'invited')
+  assert.equal(carol.states.length, 0)
+  assert.deepEqual(await carol.emit('match:accept', { matchId: id }), { ok: false, error: 'not_member' })
+  assert.equal((await a.emit('match:accept', { matchId: id })).error, 'bad_state')
+
+  const started = await b.emit('match:accept', { matchId: id })
+  assert.equal(started.match.status, 'playing')
+  await waitFor(() => a.last()?.status === 'playing')
+  // Exactly one white (seat 1) and one black, and both clients agree.
+  assert.deepEqual(a.last().players, b.last().players)
+  assert.deepEqual([...a.last().players].sort(), [A, B])
+  const white = a.last().players[0] === A ? a : b
+  const black = white === a ? b : a
+
+  assert.equal((await black.emit('match:move', { matchId: id, seq: 0, move: { uci: 'e7e5' } })).error, 'not_your_turn')
+  assert.equal((await white.emit('match:move', { matchId: id, seq: 0, move: { uci: 'e2e5' } })).error, 'illegal_move')
+  assert.equal((await white.emit('match:move', { matchId: id, seq: 0, move: { uci: 'f2f3' } })).ok, true)
+  // A resent move (lost ack) is not applied twice.
+  assert.equal((await white.emit('match:move', { matchId: id, seq: 0, move: { uci: 'f2f3' } })).ok, true)
+  assert.equal((await black.emit('match:move', { matchId: id, seq: 1, move: { uci: 'e7e5' } })).ok, true)
+
+  // Black drops and comes back: the board is restored from the server.
+  const blackUser = black === a ? A : B
+  black.client.disconnect()
+  await waitFor(() => white.last()?.away?.includes(blackUser))
+  const back = await socket(blackUser)
+  const synced = await back.emit('match:sync')
+  assert.equal(synced.match.seq, 2)
+  assert.equal(synced.match.board.fen, 'rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2')
+  if (black === b) b = back
+
+  assert.equal((await white.emit('match:move', { matchId: id, seq: 2, move: { uci: 'g2g4' } })).ok, true)
+  const mate = await back.emit('match:move', { matchId: id, seq: 3, move: { uci: 'd8h4' } })
+  assert.deepEqual(mate.match.outcome, { winner: blackUser, reason: 'checkmate' })
+  await waitFor(() => white.last()?.status === 'over' && back.last()?.status === 'over')
+  assert.deepEqual(white.last(), back.last())
+  assert.equal((await white.emit('match:move', { matchId: id, seq: 4, move: { uci: 'a2a3' } })).error, 'game_over')
+
+  // Rematch: both ask, colours swap.
+  await white.emit('match:rematch', { matchId: id })
+  const re = await back.emit('match:rematch', { matchId: id })
+  assert.equal(re.match.status, 'playing')
+  assert.equal(re.match.players[0], blackUser)
+  assert.equal(re.match.series[blackUser], 1)
+})
+
+test('table tennis between two clients: one server simulation, identical frames, paddles, scoring', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A)
+  const b = await socket(B)
+  const id = (await a.emit('match:invite', { game: 'pong' })).match.id
+  await waitFor(() => b.last()?.id === id)
+  await b.emit('match:accept', { matchId: id })
+  const seatOfA = (await a.emit('match:sync')).match.players[0] === A ? 0 : 1
+  // Both paddles parked in a corner so the first serve is missed.
+  a.client.emit('match:paddle', { matchId: id, x: 0 })
+  b.client.emit('match:paddle', { matchId: id, x: 1 })
+  await waitFor(() => a.frames.length > 10 && b.frames.length > 10)
+  const last = a.frames.at(-1)
+  assert.equal(last.p[seatOfA], RACKET_MIN) // clamped to the table
+  assert.equal(last.p[1 - seatOfA], RACKET_MAX)
+  // Same frames on both clients (match by server time).
+  const shared = a.frames.filter((f) => b.frames.some((g) => g.t === f.t))
+  assert.ok(shared.length > 5)
+  for (const f of shared) assert.deepEqual(f, b.frames.find((g) => g.t === f.t))
+  // Countdown, then the ball moves, then a point is scored and the ball resets.
+  await waitFor(() => a.frames.at(-1).s[0] + a.frames.at(-1).s[1] === 1, 15000)
+  const scored = a.frames.find((f) => f.s[0] + f.s[1] === 1)
+  assert.deepEqual(scored.b.slice(2), [0, 0])
+  assert.ok(scored.c > 0)
+  // Frame rate stays at ~30/s (not one packet per display frame).
+  const span = (a.frames.at(-1).t - a.frames[0].t) / 1000
+  assert.ok(a.frames.length / span < 36, `${a.frames.length / span} frames/s`)
+  assert.equal((await a.emit('match:resign', { matchId: id })).match.outcome.reason, 'resigned')
+  await waitFor(() => b.last()?.status === 'over')
+})
+
+test('table tennis gameplay over real sockets: two players who chase the ball rally; one who stops loses', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A)
+  const b = await socket(B)
+  const id = (await a.emit('match:invite', { game: 'pong' })).match.id
+  await waitFor(() => b.last()?.id === id)
+  await b.emit('match:accept', { matchId: id })
+  // Each bot sees only the frames it receives (with real socket latency) and
+  // sends its racket at ~30/s, like the app: it moves towards where the ball is.
+  const active = new Map([[a, true], [b, true]])
+  const bots = [a, b].map((bot) =>
+    setInterval(() => {
+      const f = bot.frames.at(-1)
+      if (!f || !active.get(bot)) return
+      const ahead = Math.min(0.15, Math.max(-0.15, f.b[2] * 0.06)) // lead the ball a little
+      bot.client.emit('match:paddle', { matchId: id, x: f.b[0] + ahead })
+    }, 33),
+  )
+  t.after(() => bots.forEach(clearInterval))
+  await delay(3000 + 9000) // serve countdown, then 9 s of play
+  const rally = a.frames.at(-1)
+  assert.deepEqual(rally.s, [0, 0], 'nobody missed')
+  assert.ok(rally.h >= 5, `${rally.h} returns`)
+  // B stops moving: A wins every point until the match ends at 7.
+  active.set(b, false)
+  b.client.emit('match:paddle', { matchId: id, x: RACKET_MIN })
+  const bSeat = (await b.emit('match:sync')).match.players[0] === B ? 0 : 1
+  await waitFor(() => a.last()?.status === 'over', 60_000)
+  const end = a.last()
+  assert.equal(end.outcome.winner, A)
+  assert.equal(end.outcome.reason, 'first_to_7')
+  const score = a.frames.at(-1).s
+  assert.equal(score[1 - bSeat], WIN_SCORE)
+  assert.deepEqual(b.last(), end, 'both clients agree on the result')
+  // Rematch from both: a fresh game with sides swapped.
+  await a.emit('match:rematch', { matchId: id })
+  const re = await b.emit('match:rematch', { matchId: id })
+  assert.equal(re.match.status, 'playing')
+  assert.equal(re.match.series[A], 1)
+})
+
+test('invites need the partner online; leaving the connection ends the match', async (t) => {
+  seed()
+  const { socket, api } = await server(t)
+  const a = await socket(A)
+  assert.deepEqual(await a.emit('match:invite', { game: 'chess' }), { ok: false, error: 'partner_offline' })
+  assert.equal((await a.emit('match:invite', { game: 'poker' })).error, 'invalid_payload')
+  const b = await socket(B)
+  const id = (await a.emit('match:invite', { game: 'dots' })).match.id
+  await b.emit('match:accept', { matchId: id })
+  assert.equal((await api(A, 'POST', `/connections/${CONN}/leave`)).status, 200)
+  await waitFor(() => b.last()?.outcome?.reason === 'connection_ended')
+  assert.equal((await b.emit('match:sync')).error, 'connection_inactive')
+})

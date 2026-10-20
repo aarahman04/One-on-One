@@ -34,6 +34,7 @@ import {
 import { getIceServers } from '../services/turnService.js'
 import { registerPresence } from './presence.js'
 import { registerGameHandlers } from './games.js'
+import { endMatchesForConnection, initMatches, registerMatchHandlers } from '../games/matchSocket.js'
 
 interface SocketData {
   userId: string
@@ -57,6 +58,7 @@ let ioRef: Server | null = null
 // Called by the leave/terminate REST paths so the other member's client learns
 // the connection is gone immediately instead of on its next 4s poll.
 export function emitConnectionEnded(connectionId: string): void {
+  endMatchesForConnection(connectionId)
   ioRef?.to(room(connectionId)).emit('connection:ended')
 }
 
@@ -259,6 +261,7 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
   })
 
   registerPresence(io, getLiveConnectionForUser)
+  initMatches(io, { getConnection: getLiveConnectionForUser, hasInactiveConnection })
   io.on('connection', (socket: Socket) => {
     const { userId, connectionId } = socket.data as SocketData
     if (connectionId) {
@@ -505,6 +508,18 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
 
     // game:* relay (games.ts): non-move events share the flood guard above.
     registerGameHandlers(io, socket, { withinRateLimit, getConnection: getLiveConnectionForUser, hasInactiveConnection })
+
+    // match:* authoritative games (games/matchSocket.ts). Paddle updates get
+    // their own 40/s bucket; everything else shares the flood guard above.
+    const recentPaddles: number[] = []
+    const withinPaddleLimit = (): boolean => {
+      const now = Date.now()
+      while (recentPaddles.length && now - recentPaddles[0] > 1000) recentPaddles.shift()
+      if (recentPaddles.length >= 40) return false
+      recentPaddles.push(now)
+      return true
+    }
+    registerMatchHandlers(io, socket, { withinRateLimit, withinPaddleLimit, getConnection: getLiveConnectionForUser, hasInactiveConnection })
 
     socket.on(
       'reaction:add',
