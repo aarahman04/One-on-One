@@ -20,7 +20,7 @@ const LIVENESS_CHECK_MS = 5000
 const INVITE_PUSH_TTL = '30s' // matches INVITE_TTL_MS: a later delivery is an expired invite
 
 export const GAME_TITLES: Record<MatchGame, string> = {
-  chess: 'Chess', pong: 'Table Tennis', connect4: 'Connect 4', tictactoe: 'Tic-Tac-Toe', dots: 'Dots & Boxes',
+  chess: 'Chess', pong: 'Table Tennis', connect4: 'Connect 4', tictactoe: 'Tic-Tac-Toe', dots: 'Dots & Boxes', reversi: 'Reversi',
 }
 
 // Readable fallback `content` for clients that don't render the 'game' type yet.

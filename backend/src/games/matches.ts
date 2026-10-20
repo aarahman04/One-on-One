@@ -7,7 +7,7 @@ import { PongSim, type PongFrame } from './pong.js'
 // validates every move, runs the table tennis simulation and is the only
 // source of game state; a server restart ends all matches.
 
-export const MATCH_GAMES = ['chess', 'pong', 'connect4', 'tictactoe', 'dots'] as const
+export const MATCH_GAMES = ['chess', 'pong', 'connect4', 'tictactoe', 'dots', 'reversi'] as const
 export type MatchGame = (typeof MATCH_GAMES)[number]
 export type MatchStatus = 'invited' | 'playing' | 'over'
 
