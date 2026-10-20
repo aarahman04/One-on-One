@@ -164,6 +164,9 @@ budget. What this design uses instead: Serverless sleep, a replica memory/CPU li
 
 1. Same project + environment as the backend: **New → GitHub Repo →
    `aarahman04/One-on-One`**, service name **`speech`** (private host `speech.railway.internal`).
+   It must be a service **inside the backend's project** (`fabulous-connection`), not a project of
+   its own: `*.railway.internal` only resolves within one project. (2026-10-20: a separate `speech`
+   project plus an empty backend `SPEECH_SERVICE_TOKEN` made every speech call 503 until moved.)
 2. Settings → Source: **Root Directory `speech`** (uses `speech/Dockerfile`); watch path `speech/**`.
 3. **No public domain.** Private networking stays on.
 4. Variables on `speech`: `SPEECH_SERVICE_TOKEN` = long random secret (`openssl rand -base64 48`),
@@ -172,7 +175,8 @@ budget. What this design uses instead: Serverless sleep, a replica memory/CPU li
    restart on failure. **Serverless: on.** **Replica limits: 2 vCPU, 2 GB memory**
    (peak measured 1.5 GB; a limit only caps, billing is on actual use).
 6. Variables on the **backend**: `SPEECH_SERVICE_URL=http://speech.railway.internal:8000`,
-   `SPEECH_SERVICE_TOKEN=${{speech.SPEECH_SERVICE_TOKEN}}`; optionally the three quota
+   `SPEECH_SERVICE_TOKEN=${{speech.SPEECH_SERVICE_TOKEN}}` (add the reference only after the `speech`
+   service exists, otherwise it resolves to an empty string); optionally the three quota
    variables. Redeploy the backend. Without the two URL/token variables the speech
    routes answer 503 `speech_unavailable` and nothing else changes.
 7. Workspace → Usage: set a **custom email alert** (e.g. at your current monthly

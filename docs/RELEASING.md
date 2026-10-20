@@ -1,5 +1,7 @@
 # Releasing One on One
 
+Games + speech round (2026-10-20, Android 2.0.8 / versionCode 15): backend #115 adds the `game_invite` native push and server-authored `game` chat rows; it needs **migration 040** (`040_message_type_game.sql`, widens `messages_type_chk`) applied in Supabase before or with the backend deploy — without it games still work but their history rows fail to save (logged). Speech now runs as the `speech` service inside the backend's Railway project (see SPEECH-SERVICE.md). The web client renders `game` rows as plain text (`content`) until it implements the card (`docs/prompts/codex-web-2.0.8.md`).
+
 Web 2.0.7 parity is a web-only deploy through Vercel after merge. The accompanying backend fix only exposes existing narration part headers through CORS; deploy it through the existing Railway pipeline before checking cross-origin natural narration. No migration, settings change, Android build/version change or Play action is needed.
 
 Web owner-feedback follow-up (2026-10-19): this client-only PR deploys through the normal Vercel web pipeline after merge. It needs no backend or Supabase migration and no Android build, version bump or Play upload. First launch after upgrading from global gate storage asks for DOB/rules once; later sign-ins by that same account skip them. Test PDF downloads and the OS share picker on the target browsers before rollout. The separate Kotlin Android release remains 12 / 2.0.5.
