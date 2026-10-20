@@ -25,7 +25,10 @@ export const GAME_TITLES: Record<MatchGame, string> = {
 
 // Readable fallback `content` for clients that don't render the 'game' type yet.
 export function gameLogText(log: MatchLog): string {
-  const time = log.durationSec < 60 ? `${log.durationSec} sec` : `${Math.round(log.durationSec / 60)} min`
+  const s = log.durationSec
+  const hr = Math.floor(s / 3600)
+  const min = Math.floor(s / 60) % 60
+  const time = s < 60 ? `${s} sec` : s < 3600 ? (s % 60 ? `${min} min ${s % 60} sec` : `${min} min`) : min ? `${hr} hr ${min} min` : `${hr} hr`
   return `Played ${GAME_TITLES[log.game]} · ${time}`
 }
 
