@@ -14,6 +14,7 @@ const { installFakeSupabase } = await import('./fakeSupabase.js')
 const { connectionsRouter } = await import('../src/routes/connections.js')
 const { ConnectionError } = await import('../src/services/connectionService.js')
 const { createSocketServer } = await import('../src/websocket/socketServer.js')
+const { RACKET_MAX, RACKET_MIN, WIN_SCORE } = await import('../src/games/pong.js')
 
 const { io: connect } = createRequire(new URL('../../client/package.json', import.meta.url))('socket.io-client')
 
@@ -154,8 +155,8 @@ test('table tennis between two clients: one server simulation, identical frames,
   b.client.emit('match:paddle', { matchId: id, x: 1 })
   await waitFor(() => a.frames.length > 10 && b.frames.length > 10)
   const last = a.frames.at(-1)
-  assert.equal(last.p[seatOfA], 0.12) // clamped to the court
-  assert.equal(last.p[1 - seatOfA], 0.88)
+  assert.equal(last.p[seatOfA], RACKET_MIN) // clamped to the table
+  assert.equal(last.p[1 - seatOfA], RACKET_MAX)
   // Same frames on both clients (match by server time).
   const shared = a.frames.filter((f) => b.frames.some((g) => g.t === f.t))
   assert.ok(shared.length > 5)
@@ -170,6 +171,48 @@ test('table tennis between two clients: one server simulation, identical frames,
   assert.ok(a.frames.length / span < 36, `${a.frames.length / span} frames/s`)
   assert.equal((await a.emit('match:resign', { matchId: id })).match.outcome.reason, 'resigned')
   await waitFor(() => b.last()?.status === 'over')
+})
+
+test('table tennis gameplay over real sockets: two players who chase the ball rally; one who stops loses', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A)
+  const b = await socket(B)
+  const id = (await a.emit('match:invite', { game: 'pong' })).match.id
+  await waitFor(() => b.last()?.id === id)
+  await b.emit('match:accept', { matchId: id })
+  // Each bot sees only the frames it receives (with real socket latency) and
+  // sends its racket at ~30/s, like the app: it moves towards where the ball is.
+  const active = new Map([[a, true], [b, true]])
+  const bots = [a, b].map((bot) =>
+    setInterval(() => {
+      const f = bot.frames.at(-1)
+      if (!f || !active.get(bot)) return
+      const ahead = Math.min(0.15, Math.max(-0.15, f.b[2] * 0.06)) // lead the ball a little
+      bot.client.emit('match:paddle', { matchId: id, x: f.b[0] + ahead })
+    }, 33),
+  )
+  t.after(() => bots.forEach(clearInterval))
+  await delay(3000 + 9000) // serve countdown, then 9 s of play
+  const rally = a.frames.at(-1)
+  assert.deepEqual(rally.s, [0, 0], 'nobody missed')
+  assert.ok(rally.h >= 5, `${rally.h} returns`)
+  // B stops moving: A wins every point until the match ends at 7.
+  active.set(b, false)
+  b.client.emit('match:paddle', { matchId: id, x: RACKET_MIN })
+  const bSeat = (await b.emit('match:sync')).match.players[0] === B ? 0 : 1
+  await waitFor(() => a.last()?.status === 'over', 60_000)
+  const end = a.last()
+  assert.equal(end.outcome.winner, A)
+  assert.equal(end.outcome.reason, 'first_to_7')
+  const score = a.frames.at(-1).s
+  assert.equal(score[1 - bSeat], WIN_SCORE)
+  assert.deepEqual(b.last(), end, 'both clients agree on the result')
+  // Rematch from both: a fresh game with sides swapped.
+  await a.emit('match:rematch', { matchId: id })
+  const re = await b.emit('match:rematch', { matchId: id })
+  assert.equal(re.match.status, 'playing')
+  assert.equal(re.match.series[A], 1)
 })
 
 test('invites need the partner online; leaving the connection ends the match', async (t) => {

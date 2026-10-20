@@ -93,7 +93,8 @@ export class ChessRules implements TurnRules {
     return null
   }
   view(): Record<string, unknown> {
-    return { fen: this.chess.fen(), last: this.last, check: this.chess.inCheck(), claim: this.claimable() }
+    // `history`: every move so far in SAN ("e4", "Nf3", "O-O", "exd8=Q+"), for the move list.
+    return { fen: this.chess.fen(), last: this.last, check: this.chess.inCheck(), claim: this.claimable(), history: this.chess.history() }
   }
 }
 

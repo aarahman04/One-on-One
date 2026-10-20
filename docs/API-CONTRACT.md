@@ -414,7 +414,7 @@ One match per connection. `game` in `chess|pong|connect4|tictactoe|dots`.
   paused: bool,                          // table tennis waiting for an away player
   expiresAt: epochMs|null }              // invite expiry
 ```
-`board`: chess `{fen, last: {from, to, promotion?, captured?}|null, check, claim: "threefold_repetition"|"fifty_moves"|null}`; tictactoe `{cells[9], line[], last}`; connect4 `{cells[42] (row-major, row 0 top), line[], last}`; dots `{h[30] (6 rows x 5), v[30] (5 rows x 6), boxes[25], last: {h, r, c}|null}`; pong `{score: [seat1, seat2]}`. Cells/lines/boxes hold the owning seat (1|2) or 0.
+`board`: chess `{fen, last: {from, to, promotion?, captured?}|null, check, claim: "threefold_repetition"|"fifty_moves"|null, history: [SAN]}` (`history` since 2026-10-20: every move in SAN, e.g. `["e4","e5","Nf3"]`); tictactoe `{cells[9], line[], last}`; connect4 `{cells[42] (row-major, row 0 top), line[], last}`; dots `{h[30] (6 rows x 5), v[30] (5 rows x 6), boxes[25], last: {h, r, c}|null}`; pong `{score: [seat1, seat2]}`. Cells/lines/boxes hold the owning seat (1|2) or 0.
 
 Seats: the first match's seats are random; a rematch swaps them (colours and first move alternate). `series` carries across rematches of the same game.
 
@@ -437,7 +437,8 @@ Errors: `invalid_payload`, `rate_limited`, `not_member`, `connection_inactive`, 
 
 ### Server -> client
 - `match:state` MatchSnapshot, to the connection room on every change.
-- `match:pong` `{id, t (server epoch ms), b: [x, y, vx, vy], p: [seat1X, seat2X], s: [seat1, seat2], c: serveCountdownMs, h: hits}` at ~30/s while table tennis is playing, **volatile** (dropped, not queued, for a congested socket). Court: x 0..1, y 0..1.6; seat 1 defends y = 1.6 (bottom), seat 2 y = 0 (top); paddle half-width 0.12 at 0.08 from its edge, ball radius 0.022; velocities in court units/second, so the ball moves in a straight line (reflecting off x = 0.022 / 0.978) between frames until a paddle hit or point. First to 7.
+- `match:pong` `{id, t (server epoch ms), b: [x, y, vx, vy], p: [seat1X, seat2X], s: [seat1, seat2], c: serveCountdownMs, h: hits}` at ~30/s while table tennis is playing, **volatile** (dropped, not queued, for a congested socket).
+- Table tennis geometry (2026-10-20, `games/pong.ts`): top-down table, x 0..1, y 0..1.8. Seat 1's racket head is a circle of radius 0.13 centred on the bottom end line (y = 1.8), seat 2's on the top end line (y = 0); `p` is each head's x, clamped to 0.078..0.922. Ball radius 0.03; it moves in straight lines (velocities in table units/s), reflects off x = 0.03 / 0.97, is returned when it overlaps a head (server allows +0.025 for latency) while its centre is on the table side of that end line, and scores for the other seat once it is fully past an end line. Return direction: from the head centre to the ball (centre hit = straight back, edge = up to 62°) plus 30 % of the racket's sideways speed; each return ×1.06, 0.95 → max 2.6 units/s. Serve after a 3 s countdown (1.2 s between points) towards the player who lost the point. First to 7. Clients draw their own racket at the bottom by rotating the table 180° for seat 2. There is no ball height in the simulation; clients may draw one for looks.
 
 ### Lifecycle
 - Invites expire after 30 s (`expired`). A finished match stays 120 s for a rematch, then is dropped.
