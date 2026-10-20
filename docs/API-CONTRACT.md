@@ -1,4 +1,4 @@
-# API Contract (instant leave, gates, games, instant receipts, speech 2.0.6: 2026-10-19)
+# API Contract (instant leave, gates, games, instant receipts, speech 2.0.6: 2026-10-19; authoritative matches 2.0.7: 2026-10-20)
 
 Source of truth for the native Android app (and any other client). **Derived only from the backend code** (`backend/src/index.ts`, `routes/*.ts`, `services/*.ts`, `websocket/socketServer.ts`, `middleware/*.ts`); where behaviour is not visible in code it is not described. File references are given so a disagreement can be settled by reading the code.
 
@@ -190,6 +190,7 @@ Every handler re-resolves the live connection from the DB; the client never name
 | `message:send` | `{content?: string, type?: MessageType, payload?, replyTo?: string, tempId?: string}`; `tempId` must match `^[A-Za-z0-9-]{1,64}$` (else treated as absent) | `{ok:true, message}` ; repeat of the same `(user, tempId)` within 5 min -> `{ok:true, duplicate:true, message:<original>}` and nothing is saved/broadcast again; concurrent duplicate -> `{error:'send already in progress'}`. Errors listed in section 4. The server also `message:new`-broadcasts to the room (sender included) and bumps the sender's last_read. |
 | `message:read` | `{connectionId}` | `{ok:true}` or `{ok:false, error}`. Same effect and checks as `POST /connections/:id/read` (member + live); `receipt:update` goes to the other member right after the write. |
 | `game:invite` / `game:accept` / `game:decline` / `game:move` / `game:end` | see §10 | `{ok:true}` or `{ok:false, error}` |
+| `match:*` (authoritative games) | see §12 | `{ok:true, match}` or `{ok:false, error, match?}` |
 | `reaction:add` | `{messageId, emoji}` | `{ok:true}`. Emoji must be ONE emoji (any; clients offer ❤️ 👍 😂 😮 😢 🙏 as the quick bar and a full picker), max 32 UTF-16 units, else `invalid emoji`. One reaction per user per message (a new emoji replaces the old). `system` messages can't be reacted to. Errors: `invalid emoji`, 403/404/409 messages. |
 | `reaction:remove` | `{messageId, emoji}` | `{ok:true}` |
 | `message:edit` | `{messageId, content}` | `{ok:true, message}`. Sender only, `type=text`, not deleted, within 30 min of `createdAt` (server clock); content 1-4000 after trim. Broadcasts `message:update`. Errors: `only your own messages can be edited`, `only text messages can be edited`, `messages can only be edited within 30 minutes`, `this message was deleted`, `message not found`. |
@@ -216,6 +217,7 @@ Call state is in memory (one call per connection). Outcomes: `end` by caller bef
 | `presence` | `{userId, online: boolean, lastSeenAt: string\|null}` | to the other member on an online-state change; partner snapshot to a connecting socket or presence sender |
 | `connection:ended` | none | to the room when the connection ends (leave, block) |
 | `game:invite` / `game:accept` / `game:decline` / `game:move` / `game:end` | the sender's payload + `from` (sender userId) | to the partner's sockets only (§10) |
+| `match:state` / `match:pong` | see §12 | to the connection room |
 | `call:incoming` | `{callId, kind, fromUserId}` | to the callee's sockets; also replayed on (re)connect while ringing |
 | `call:accepted` | `{callId}` | to the whole room (so the callee's other devices drop their prompt) |
 | `call:signal` | `{callId, data}` | to the other participant |
@@ -391,3 +393,52 @@ Backend proxies to a private `speech` service (Kokoro-82M TTS, Parakeet TDT 0.6B
 - `503 {code:"speech_unavailable"}`, `504 {code:"speech_timeout"}` (90 s).
 - Audio and text are never logged or stored.
 - Languages: Parakeet TDT 0.6B v3 covers 25 European languages only (bg, hr, cs, da, nl, en, et, fi, fr, de, el, hu, it, lv, lt, mt, pl, pt, ro, sk, sl, es, sv, ru, uk). **Hindi, Urdu, Telugu and other non-European languages are not supported**; show a limitation note. Narration voice `af_heart` is American English; letters in other languages/scripts will not be read correctly.
+
+## 12. Authoritative matches (2.0.7)
+Server-owned game sessions: the backend assigns seats, validates every move with its own rules (chess via chess.js 1.4.0), runs the table-tennis simulation and is the only source of state. Code: `backend/src/games/{rules,pong,matches,matchSocket}.ts`, tests `backend/test/gameRules.test.ts`, `backend/test/matches.test.ts`. In memory (single instance, like calls); a backend restart ends every match (`match:sync` then returns `match:null`). No migration. The §10 `game:*` relay is unchanged and still used by the web client; the two protocols do not interoperate (an Android player and a web player cannot play each other until the web client adopts §12).
+
+One match per connection. `game` in `chess|pong|connect4|tictactoe|dots`.
+
+### MatchSnapshot
+```
+{ id, game, status: "invited"|"playing"|"over", inviter: userId,
+  players: [seat1UserId, seat2UserId],   // chess: seat 1 = white; in every turn game seat 1 moves first
+  turn: userId|null,                     // whose move (turn games, while playing)
+  seq: int,                              // moves applied so far
+  version: int,                          // increases on every emitted change of this match; ignore older
+  board: object|null,                    // per game, below
+  outcome: {winner: userId|null, reason}|null,
+  drawOffer: userId|null, rematch: [userId], series: {userId: wins},
+  away: [userId],                        // members with no socket right now
+  paused: bool,                          // table tennis waiting for an away player
+  expiresAt: epochMs|null }              // invite expiry
+```
+`board`: chess `{fen, last: {from, to, promotion?, captured?}|null, check, claim: "threefold_repetition"|"fifty_moves"|null}`; tictactoe `{cells[9], line[], last}`; connect4 `{cells[42] (row-major, row 0 top), line[], last}`; dots `{h[30] (6 rows x 5), v[30] (5 rows x 6), boxes[25], last: {h, r, c}|null}`; pong `{score: [seat1, seat2]}`. Cells/lines/boxes hold the owning seat (1|2) or 0.
+
+Seats: the first match's seats are random; a rematch swaps them (colours and first move alternate). `series` carries across rematches of the same game.
+
+### Client -> server (all acked; every one re-reads the caller's live connection from the DB and joins its room)
+| Event | Payload | Notes |
+|---|---|---|
+| `match:invite` | `{game}` | partner must have a socket (`partner_offline`); `busy` (+`match`) if a match is invited/playing |
+| `match:accept` | `{matchId}` | invitee only → `playing` |
+| `match:decline` | `{matchId}` | invitee → over `declined`; inviter → over `cancelled` |
+| `match:leave` | `{matchId}` | invited → as decline; playing → opponent wins `left`; over → withdraws a rematch request |
+| `match:resign` | `{matchId}` | playing → opponent wins `resigned` (any game) |
+| `match:move` | `{matchId, seq, move}` | turn games. `seq` must equal snapshot `seq`. Same `seq` + identical move from the same player again → `{ok:true}` without re-applying (retry after a lost ack); a different move at an old `seq` → `stale`; a future `seq` → `out_of_order`. `move`: chess `{uci:"e7e8q"}` (promotion letter required when promoting), tictactoe `{cell 0..8}`, connect4 `{col 0..6}`, dots `{h: bool, r, c}`. Exact keys only. |
+| `match:draw` | `{matchId, action: "offer"\|"accept"\|"decline"\|"claim"}` | chess only. Making a move declines a pending offer; offering back to an offer agrees. `claim`: player to move, when `board.claim` is set (threefold repetition / fifty-move rule) |
+| `match:rematch` | `{matchId}` | over (not declined/cancelled/expired). When both members asked: a new `playing` match, seats swapped |
+| `match:sync` | none | returns the current match (or `null`); marks the caller present again (resumes a paused table-tennis match after a 3 s serve countdown) |
+| `match:paddle` | `{matchId, x}` | **no ack**, fire-and-forget; `x` 0..1 (clamped). 40/s per socket; checked against the in-memory match only (see below) |
+
+Errors: `invalid_payload`, `rate_limited`, `not_member`, `connection_inactive`, `partner_offline`, `busy`, `not_found`, `bad_state`, `game_over`, `not_your_turn`, `invalid_move`, `illegal_move`, `stale`, `out_of_order`, `no_offer`, `no_claim`, `internal`. Illegal moves never change state. Rate limits: `match:paddle` 40/s/socket; all other `match:*` share the generic 60/10 s guard.
+
+### Server -> client
+- `match:state` MatchSnapshot, to the connection room on every change.
+- `match:pong` `{id, t (server epoch ms), b: [x, y, vx, vy], p: [seat1X, seat2X], s: [seat1, seat2], c: serveCountdownMs, h: hits}` at ~30/s while table tennis is playing, **volatile** (dropped, not queued, for a congested socket). Court: x 0..1, y 0..1.6; seat 1 defends y = 1.6 (bottom), seat 2 y = 0 (top); paddle half-width 0.12 at 0.08 from its edge, ball radius 0.022; velocities in court units/second, so the ball moves in a straight line (reflecting off x = 0.022 / 0.978) between frames until a paddle hit or point. First to 7.
+
+### Lifecycle
+- Invites expire after 30 s (`expired`). A finished match stays 120 s for a rematch, then is dropped.
+- A member with no socket left is listed in `away`: turn games keep their state for 120 s, table tennis pauses for 30 s; past that the match ends `abandoned` (the present member wins). An invited match ends at once if a member disconnects. Turn games with no move for 30 min end `inactive`.
+- Leave/terminate (`emitConnectionEnded`) ends the match with `connection_ended`; running table tennis is re-checked against the DB every 5 s.
+- Outcome reasons: `checkmate`, `stalemate`, `insufficient_material`, `fivefold_repetition`, `seventy_five_moves`, `threefold_repetition`, `fifty_moves`, `agreement`, `three_in_a_row`, `four_connected`, `most_boxes`, `board_full`, `first_to_7`, `resigned`, `left`, `abandoned`, `inactive`, `declined`, `cancelled`, `expired`, `connection_ended`.
