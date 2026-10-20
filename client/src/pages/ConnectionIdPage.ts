@@ -10,15 +10,15 @@ const POLL_INTERVAL_MS = 3000
 export const ConnectionIdPage: Page = (root, go) => {
   root.innerHTML = `
     <div class="screen">
-      <div class="screen__eyebrow">YOUR CONNECTION ID</div>
+      <div class="screen__title">Your connection ID</div>
       <button type="button" class="connection-id" id="connection-id" aria-label="Copy your connection ID" disabled>...</button>
       <div class="screen__actions">
         <button id="share-btn" disabled>Share</button>
-        <button id="new-id-btn" disabled>Get a new ID</button>
+        <button id="new-id-btn" disabled>New ID</button>
       </div>
       <div class="screen__subtitle" id="subtitle">Loading…</div>
       <div class="screen__actions">
-        <button class="primary" id="continue-btn">I have an ID to connect with</button>
+        <button class="primary" id="continue-btn">I have their ID</button>
       </div>
       <div class="screen__actions">
         <button id="logout-btn">Log out</button>
@@ -38,7 +38,7 @@ export const ConnectionIdPage: Page = (root, go) => {
     .then(({ connectionCode }) => {
       code = connectionCode
       idEl.textContent = code
-      subtitleEl.textContent = 'Give this ID to the person you want to connect with.'
+      subtitleEl.textContent = 'Share this ID to connect.'
       shareBtn.disabled = false
       idEl.disabled = false
       newIdBtn.disabled = false

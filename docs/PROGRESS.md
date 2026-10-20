@@ -1,5 +1,31 @@
 # Progress Log
 
+## [Web] Android 2.0.7 parity — 2026-10-20
+
+Branch `feat/web-parity-2.0.7`, based on main `37d5fbe`. Detailed feature → Android source → starting/final web checklist: [WEB-ANDROID-PARITY-2.0.7.md](WEB-ANDROID-PARITY-2.0.7.md).
+
+- Replaced web peer relay/client engines with §12 server snapshots/actions, version/seq dedupe, independent reconnect sync, identical-move retry, authoritative series/rematch seats and away handling. Legacy backend relay remains untouched.
+- Original green chess board/art/sounds, inside coordinates, move hints/check/last highlights, prediction/revert, 170ms slides/capture fade, lifted drag/click, promotion strip, captured/material bars, SAN history, draw/claim and final board.
+- Portrait canvas table tennis with rotated seat 2, round rackets/handles, bounded frame extrapolation, height/shadow/bounce/racket hold, ~30/s paddles, server score/countdown/pause. Grid games render server state with keyboard controls and last-move animation.
+- Natural letter voice (multipart prefetch, loading/pause/resume/stop, autoplay recovery), recorded English dictation, long cold-wake deadlines and exact Android device-fallback conditions. Audio stays in memory; cancellation prevents late draft insertion. One unavoidable backend fix exposes the existing narration part headers via CORS; **no migration**.
+- Completed reaction detail sheet and same-account old-chat warning before accepting a request; matched Figtree display type and dark theme background. Existing web keyboard/hover controls retained.
+
+Validation: client `npm ci`, lint/typecheck, 34 unit tests and build pass; backend `npm ci`, 82 tests and build pass. Full two-context Chromium games and existing chat/media/archive regression checks pass at 1280/360px. Environment-example checks and local gitleaks pass; runtime dependency audit is clean. Commands and screenshots: [ui-web-2.0.7](ui-web-2.0.7/README.md).
+
+Self-review of PR #116 corrected closed reaction-sheet teardown registration, an incorrectly encoded label separator and Dots point stacking over lines. Earlier review checks also fixed hidden-tab reconnect pause, authoritative final scores, recorder-start cleanup and narration boundary/autoplay handling. No outstanding code finding remains; the production/device checks below remain manual.
+
+Production Google sign-in was attempted with the existing reviewer account, which is stopped at its incomplete DOB gate. No birth date was invented or terms accepted; deployed two-account games and actual server voice remain unverified. No Android, secret, infrastructure setting or Play file changed.
+
+Phone/browser checklist:
+
+- [ ] Web ↔ Android 2.0.7: accept all five games, confirm same turns/results, rematch swaps seats and preserves series.
+- [ ] Chess: castling/en passant/promotions, check glow, drag/click/keyboard, draw offers/claims, final board and sounds.
+- [ ] Table tennis: both sides drag smoothly, same score to seven; background/resume pauses and counts down; reconnect restores chess.
+- [ ] Letter after idle: loading then natural voice, all parts, pause/resume/stop/dismiss; offline/quota uses device voice.
+- [ ] /audio: English speech appends to the draft without sending; cancel and voice-note exclusion; microphone denial.
+- [ ] Light/dark at phone/desktop widths, reduced motion, keyboard focus and screen reader labels.
+- [ ] Reaction sheet names/removal/Add; known ended-chat acceptance warns; gates, leave/ZIP/partner-left regression.
+
 ## [Web] Android 2.0.6 parity — 2026-10-20
 
 Implemented on `feat/web-2.0.6-parity`, based on current main `89d7486`. Client-only; API contract §§5/10/11 and sibling Android used as read-only references.

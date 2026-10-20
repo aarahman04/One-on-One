@@ -1,4 +1,4 @@
-// Real client + scripted Socket.IO relay; disposable users, no deployed writes.
+// Existing gates/archive/card regression. Full authoritative games and server speech: web207.browser.mjs.
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -10,10 +10,10 @@ import { createServer as createViteServer } from 'vite'
 import JSZip from 'jszip'
 const { Server } = createRequire(new URL('../../backend/package.json', import.meta.url))('socket.io')
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright')
-const screenshots = fileURLToPath(new URL('../../docs/ui-web-2.0.6/', import.meta.url))
+const screenshots = fileURLToPath(new URL(process.env.PARITY_SCREENSHOT_DIR || '../../docs/ui-web-2.0.6/', import.meta.url))
 await mkdir(screenshots, { recursive: true })
 const id = (n) => `20000000-0000-4000-8000-${String(n).padStart(12,'0')}`
-let connection, messages, gates, calls, signed, moves, mediaDelay
+let connection, messages, gates, calls, signed, mediaDelay
 const reset = () => {
   connection = { id:'fixture-chat', status:'active', myUserId:'me', isRequester:true, otherNickname:'Alex', otherConnectionCode:'ABCDEFGH', otherLastReadAt:new Date().toISOString(), otherLastDeliveredAt:new Date().toISOString(), wallpaper:'off', messageStyle:'bubbles', pinnedMessageId:null, pinnedBy:null, pinnedAt:null, myAvatarId:null, otherAvatarId:null }
   const msg = (n,type,content,payload=null,extra={}) => ({id:id(n),senderId:'other',type,content,payload,replyTo:null,createdAt:new Date(Date.now()-(100-n)*1000).toISOString(),reactions:[],deletedAt:null,editedAt:null,...extra})
@@ -27,7 +27,7 @@ const reset = () => {
   messages.push(msg(59,'image','',{path:'fixture-chat/sticker.webp',mime:'image/webp',width:512,height:512,size:20}))
   messages.push(msg(60,'voice','',{path:'fixture-chat/voice.m4a',mime:'audio/mp4',duration:1,size:4}))
   gates=new Map(['me','other'].map((u)=>[u,{ageVerifiedAt:'2026-10-19T12:00:00Z',termsAcceptedAt:'2026-10-19T12:00:00Z'}]))
-  calls=[];signed=[];moves=[];mediaDelay=0
+  calls=[];signed=[];mediaDelay=0
 }
 reset()
 const api=createServer(async(req,res)=>{
@@ -42,11 +42,13 @@ const api=createServer(async(req,res)=>{
   else if(url.pathname==='/api/connections/current')json({connection:!connection||connection.endedBy===user?null:{...connection,myUserId:user,otherNickname:user==='me'?connection.otherNickname:'Sam'}})
   else if(url.pathname==='/api/me/avatars')json({mine:null,other:null})
   else if(url.pathname==='/api/me/blocks')json({blocks:[]})
+  else if(url.pathname.endsWith('/narration')){res.statusCode=503;json({code:'speech_unavailable'})}
   else if(url.pathname.endsWith('/messages')){const before=url.searchParams.get('before'),after=url.searchParams.get('after'),list=messages.filter((m)=>(!before||m.createdAt<before)&&(!after||m.createdAt>after));json({messages:after?list.slice(0,50):list.slice(-50)})}
   else if(url.pathname.endsWith('/attachments/signed')){const{paths}=await body();signed.push(...paths);json({urls:Object.fromEntries(paths.map((p)=>[p,`${apiOrigin}/media?path=${encodeURIComponent(p)}`]))})}
   else if(url.pathname==='/media'){if(mediaDelay)await new Promise((r)=>setTimeout(r,mediaDelay));if(url.searchParams.get('path').endsWith('.webp')){res.setHeader('Content-Type','image/webp');res.end(await readFile(new URL('../public/stickers/packs/Shapes/01_circle.webp',import.meta.url)))}else{res.setHeader('Content-Type','application/octet-stream');res.end('note')}}
   else if(url.pathname.endsWith('/leave')){connection={...connection,status:'ended',endedBy:user,endedAt:new Date().toISOString(),purgeAt:new Date(Date.now()+7*86400000).toISOString()};io.emit('connection:ended');json({leave:{terminated:true,status:'ended'}})}
   else if(url.pathname.endsWith('/acknowledge-end')){connection=null;res.writeHead(204).end()}
+  else if(url.pathname.endsWith('/accept')){connection={...connection,status:'active'};json({connection})}
   else if(url.pathname.endsWith('/read')||url.pathname.endsWith('/delivered'))res.writeHead(204).end()
   else{res.writeHead(404);json({error:`Fixture route missing: ${url.pathname}`})}
 })
@@ -55,7 +57,8 @@ io.on('connection',(socket)=>{
   const user=socket.handshake.auth.token,peer=user==='me'?'other':'me';socket.join(user)
   socket.on('presence',()=>socket.emit('presence',{userId:peer,online:true,lastSeenAt:null}))
   socket.on('message:read',(_data,ack)=>{calls.push(['socket','message:read',user]);io.to(peer).emit('receipt:update',{userId:user,lastReadAt:new Date().toISOString()});ack({ok:true})})
-  for(const event of ['game:invite','game:accept','game:decline','game:move','game:end'])socket.on(event,(packet,ack)=>{moves.push([event,packet,user]);io.to(peer).emit(event,{...packet,from:user});ack({ok:true})})
+  socket.on('match:sync',(_packet,ack)=>ack({ok:true,match:null}))
+  for(const op of ['add','remove'])socket.on(`reaction:${op}`,(data,ack)=>{io.emit('reaction:update',{...data,userId:user,op});ack({ok:true})})
   socket.on('message:send',(data,ack)=>{const m={id:id(1000+messages.length),senderId:user,createdAt:new Date().toISOString(),type:data.type||'text',content:data.content,payload:data.payload,replyTo:data.replyTo,reactions:[],tempId:data.tempId};messages.push(m);io.emit('message:new',m);ack({ok:true,message:m})})
 })
 await new Promise((r)=>api.listen(0,'127.0.0.1',r))
@@ -73,7 +76,7 @@ try{
     reset()
     const context=await browser.newContext({viewport:{width,height:850},hasTouch:width===360,isMobile:width===360,serviceWorkers:'block',colorScheme:'dark'});contexts.push(context)
     const errors=[]
-    await context.addInitScript(()=>{localStorage.setItem('notificationReminderAt',String(Date.now()));window.__utterances=[];Object.defineProperty(window,'speechSynthesis',{value:{speak:(u)=>window.__utterances.push(u.text),cancel:()=>{window.__stopped=true}}});window.SpeechRecognition=class{start(){window.__recognition=this}stop(){this.onend?.()}abort(){this.onend?.()}}})
+    await context.addInitScript(()=>{localStorage.setItem('notificationReminderAt',String(Date.now()));window.MediaRecorder=undefined;window.__utterances=[];Object.defineProperty(window,'speechSynthesis',{value:{speak:(u)=>window.__utterances.push(u.text),cancel:()=>{window.__stopped=true}}});window.SpeechRecognition=class{start(){window.__recognition=this}stop(){this.onend?.()}abort(){this.onend?.()}}})
     await context.route('**/*',(route)=>route.request().url().startsWith(origin)||route.request().url().startsWith(apiOrigin)?route.continue():route.abort())
     const page=await context.newPage(),other=await context.newPage()
     for(const p of [page,other]){p.setDefaultTimeout(12_000);p.on('pageerror',(err)=>errors.push(err.message))}
@@ -88,9 +91,10 @@ try{
     assert.equal(calls.filter(([method,path,user])=>method==='POST'&&path==='/api/me/gates'&&user==='me').length,migrations)
     assert(calls.some(([kind,name])=>kind==='socket'&&name==='message:read'))
     assert.equal(await page.locator('.chat__reaction-total').textContent(),'2')
+    await page.locator('.chat__reaction-chip').first().click();await page.getByRole('heading',{name:'Reactions',exact:true}).waitFor();await page.getByRole('button',{name:/You · tap to remove/}).click();await page.waitForFunction(()=>!document.querySelector('.chat__reaction-total'))
     assert.equal(await page.locator('.thisorthat-card__option').count(),2);assert.equal(await page.locator('.thisorthat-card__pick').count(),2);await wait(page,'You matched!')
     if(width===1280){
-      connection.otherNickname='Alex & Bea <b>friend</b>';await page.reload();await page.locator('#message-input').waitFor()
+      connection.otherNickname='Alex & Bea <b>friend</b>';await page.reload();await page.locator('.thisorthat-card__pick').first().waitFor()
       assert.equal(await page.locator('.thisorthat-card__pick').count(),2)
       assert((await page.locator('.thisorthat-card__pick').allTextContents()).includes(connection.otherNickname))
       assert.equal(await page.locator('.thisorthat-card__picks b').count(),0)
@@ -104,8 +108,8 @@ try{
     assert(messages.some((m)=>m.replyTo===id(70)&&m.payload?.pickRecipient==='a'),'received tile reveals with one tap')
     for(const theme of ['dark','light']){await page.evaluate((theme)=>document.querySelector('.chat').dataset.theme=theme,theme);await page.screenshot({path:join(screenshots,`${width}-${theme}-chat.png`)})}
     await page.locator(`[data-id="${id(53)}"] .letter-card`).click();await page.locator('.letter-sheet').waitFor()
-    await page.getByRole('button',{name:'Read letter aloud',exact:true}).click();assert.match((await page.evaluate(()=>window.__utterances))[0],/^Dear Sam\. A promise/)
-    await page.getByRole('button',{name:'Stop reading',exact:true}).click();assert(await page.evaluate(()=>window.__stopped));await page.screenshot({path:join(screenshots,`${width}-letter.png`)});await page.keyboard.press('Escape')
+    await page.getByRole('button',{name:'Read letter aloud',exact:true}).click();await page.waitForFunction(()=>window.__utterances.length>0);assert.match((await page.evaluate(()=>window.__utterances))[0],/^Dear Sam\. A promise/)
+    await page.getByRole('button',{name:'Stop reading',exact:true}).last().click();assert(await page.evaluate(()=>window.__stopped));await page.screenshot({path:join(screenshots,`${width}-letter.png`)});await page.keyboard.press('Escape')
     await command(page,'audio');await page.locator('.voice-typing').waitFor();await page.locator('#message-input').fill('Draft')
     await page.evaluate(()=>window.__recognition.onresult({resultIndex:0,results:[{isFinal:false,0:{transcript:'partial words'}}]}));await wait(page,'partial words')
     const count=messages.length
@@ -119,25 +123,6 @@ try{
     await page.evaluate(()=>{delete window.SpeechRecognition;delete window.webkitSpeechRecognition});await command(page,'audio');await wait(page,"Voice typing isn't supported in this browser")
     await command(page,'thisorthat');await page.locator('#thisorthat-a').fill('Beach');await page.locator('#thisorthat-b').fill('Mountains');await page.getByRole('button',{name:'Mountains',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Mountains',exact:true}).getAttribute('aria-pressed'),'true');await page.screenshot({path:join(screenshots,`${width}-choice-composer.png`)});await page.keyboard.press('Escape')
     await other.goto(origin+'?user=other');await other.locator('#message-input').waitFor()
-    await page.bringToFront();await command(page,'games');await page.getByRole('button',{name:'Tic-Tac-Toe',exact:true}).click();await other.getByRole('button',{name:'Accept',exact:true}).click();await wait(page,'Your turn')
-    const equalRows=async(p)=>{const heights=await p.locator('.game-board > button').evaluateAll((buttons)=>buttons.map((b)=>b.getBoundingClientRect().height));assert(Math.max(...heights)-Math.min(...heights)<1,'board squares keep equal row heights')}
-    await equalRows(page)
-    for(const[p,key]of[[page,'0'],[other,'3'],[page,'1'],[other,'4'],[page,'2']]){await p.locator(`.game-board [data-key="${key}"][aria-disabled="false"]`).waitFor();await p.locator(`.game-board [data-key="${key}"]`).click()}
-    await wait(page,'You won');await wait(other,'Sam won');assert.deepEqual(moves.filter(([e])=>e==='game:move').map(([,p])=>[p.seq,p.data]),[[0,{cell:0}],[1,{cell:3}],[2,{cell:1}],[3,{cell:4}],[4,{cell:2}]])
-    await page.screenshot({path:join(screenshots,`${width}-tictactoe-result.png`)})
-    await page.getByRole('button',{name:'Rematch',exact:true}).click();await other.getByRole('button',{name:'Decline',exact:true}).click();await wait(page,'declined');await page.getByRole('button',{name:'Done',exact:true}).click()
-    for(const title of ['Chess','Connect 4','Dots & Boxes','Table Tennis']){
-      await page.bringToFront();await command(page,'games');await page.getByRole('button',{name:title,exact:true}).click();await other.getByRole('button',{name:'Accept',exact:true}).click();await page.locator('.game-surface:not([hidden])').waitFor()
-      if(title==='Chess'){await page.getByRole('button',{name:/^e2, white pawn/}).click();await page.getByRole('button',{name:/^e4, empty, legal destination/}).click()}
-      if(title==='Chess')await equalRows(page)
-      if(title==='Connect 4')await page.locator('.game-board [data-key="0"]').click()
-      if(title==='Dots & Boxes')await page.getByRole('button',{name:'Horizontal line, row 1, column 1, empty',exact:true}).click()
-      if(title==='Table Tennis'){await page.locator('.game-paddle').fill('0.605');await page.waitForTimeout(150);assert(moves.some(([e,p])=>e==='game:move'&&p.data?.b?.length===4))}
-      assert(await page.locator('.game-surface').evaluate((el)=>el.scrollWidth<=el.clientWidth))
-      await page.screenshot({path:join(screenshots,`${width}-${title.replaceAll(/[^a-z0-9]/gi,'-')}.png`)})
-      await page.getByRole('button',{name:'Resign',exact:true}).click();await page.getByRole('button',{name:'Resign',exact:true}).last().click();await wait(page,'You resigned.');await other.getByRole('button',{name:'Done',exact:true}).waitFor();await page.getByRole('button',{name:'Done',exact:true}).click();await other.getByRole('button',{name:'Done',exact:true}).click()
-    }
-    await page.bringToFront();io.to('me').emit('presence',{userId:'other',online:false,lastSeenAt:new Date().toISOString()});await wait(page,'Last seen');await command(page,'games');await wait(page,'Games need Alex online');assert.equal(await page.locator('.game-hub').count(),0)
     await go(page,'leave');await wait(page,'Leave connection?');assert.equal(await page.getByRole('button',{name:'Save a copy first',exact:true}).count(),1);assert.equal(await page.getByRole('button',{name:'Leave without saving',exact:true}).count(),1);await page.screenshot({path:join(screenshots,`${width}-leave.png`)});await page.getByRole('button',{name:'Cancel',exact:true}).click();assert(!calls.some(([,p])=>p.endsWith('/leave')))
     await go(page,'export');await page.getByRole('button',{name:'Save zip with photos and files',exact:true}).waitFor()
     const download=page.waitForEvent('download');await page.getByRole('button',{name:'Save zip with photos and files',exact:true}).click();const file=await download,dir=await mkdtemp(join(tmpdir(),'web206-')),archivePath=join(dir,file.suggestedFilename());await file.saveAs(archivePath);assert.match(file.suggestedFilename(),/^one-on-one-Alex-\d{4}-\d{2}-\d{2}\.zip$/)
@@ -154,7 +139,16 @@ try{
     else{const endedDownload=other.waitForEvent('download');await other.getByRole('button',{name:'Save zip',exact:true}).click();await endedDownload}
     await other.waitForFunction(()=>!document.querySelector('[data-save]'))
     assert(calls.some(([,p])=>p.endsWith('/acknowledge-end')));assert(!calls.some(([,p])=>/leave\/(cancel|confirm-end)/.test(p)));assert.deepEqual(errors,[])
-    await context.close();console.log(`PASS web 2.0.6 ${width}px: gates, speech, cards, receipts, five game UIs, two-page full tic-tac-toe, zip, leave and partner-left`)
+    connection={id:'next-chat',status:'pending',myUserId:'other',isRequester:false,otherNickname:'Sam',otherConnectionCode:'ABCDEFGH',wallpaper:'off',messageStyle:'bubbles'}
+    await other.evaluate(()=>localStorage.setItem('endedConnection:other','old-chat'))
+    await go(other,'request');await other.getByRole('button',{name:'Accept',exact:true}).click();await wait(other,'Your old chat will be deleted')
+    assert(!calls.some(([,p])=>p.endsWith('/accept')))
+    await other.getByRole('button',{name:'Go back',exact:true}).click();await other.getByRole('button',{name:'Accept',exact:true}).click();await other.getByRole('button',{name:'Accept and delete old chat',exact:true}).click();await other.locator('#message-input').waitFor()
+    assert.equal(await other.evaluate(()=>localStorage.getItem('endedConnection:other')),null)
+    await go(other,'connect');await other.getByLabel('Their connection ID',{exact:true}).fill('ab-12 x!');assert.equal(await other.getByLabel('Their connection ID',{exact:true}).inputValue(),'AB12X');assert(await other.getByRole('button',{name:'Connect',exact:true}).isDisabled())
+    await other.getByLabel('Their connection ID',{exact:true}).fill('abcdefgh');assert.equal(await other.getByLabel('Their connection ID',{exact:true}).inputValue(),'ABCDEFGH');assert(await other.getByRole('button',{name:'Connect',exact:true}).isEnabled())
+    await go(other,'login');await other.getByText('One on One',{exact:true}).waitFor();assert.equal(await other.locator('.sign-in-logo').count(),1);await other.screenshot({path:join(screenshots,`${width}-sign-in.png`),animations:'disabled'})
+    await context.close();console.log(`PASS web 2.0.6 ${width}px: gates, device speech, cards, receipts, zip, leave and partner-left`)
   }
 }catch(error){
   for(const context of contexts)for(const[i,page]of context.pages().entries())if(!page.isClosed()){await page.screenshot({path:join(screenshots,`failure-${i}.png`)}).catch(()=>{});console.error((await page.locator('body').innerText()).slice(-1800))}

@@ -635,6 +635,21 @@ export const ChatPage: Page = (root, go) => {
     // after `transport` is populated by connectMessaging().
     const reactionsByMessage = new Map<string, ReactionSummary[]>()
 
+    const showReactions = (messageId: string): void => {
+      const box = document.createElement('div'), title = document.createElement('h2')
+      title.textContent = 'Reactions'; box.append(title)
+      const modal = openModal(box, { onClose: () => overlays.delete(modal.close) })
+      overlays.add(modal.close)
+      for (const reaction of reactionsByMessage.get(messageId) ?? []) for (const user of reaction.userIds) {
+        const row = document.createElement(user === myUserId ? 'button' : 'p')
+        row.textContent = `${reaction.emoji} ${user === myUserId ? 'You · tap to remove' : otherName}`
+        if (user === myUserId) { (row as HTMLButtonElement).type = 'button'; row.addEventListener('click', () => { modal.close(); toggleReaction(messageId, reaction.emoji) }) }
+        box.append(row)
+      }
+      const add = document.createElement('button'); add.type = 'button'; add.textContent = '+ Add reaction'
+      add.addEventListener('click', () => { modal.close(); showQuickReactions(messageId) }); box.append(add)
+    }
+
     // One rounded reaction pill overlaps the bubble's lower edge.
     const renderReactionChips = (messageId: string): void => {
       const row = rowsById.get(messageId)
@@ -646,6 +661,7 @@ export const ChatPage: Page = (root, go) => {
         badge = document.createElement('div')
         badge.className = 'chat__reaction-badge'
         badge.setAttribute('role', 'group')
+        badge.addEventListener('click', (e) => { if (e.target === badge || (e.target as HTMLElement).classList.contains('chat__reaction-total')) { e.stopPropagation(); showReactions(messageId) } })
         row.append(badge)
       }
       for (const chip of badge.querySelectorAll<HTMLElement>('.chat__reaction-chip')) {
@@ -659,7 +675,7 @@ export const ChatPage: Page = (root, go) => {
           chip.innerHTML = '<span class="chat__reaction-emoji"></span>'
           chip.querySelector('.chat__reaction-emoji')!.textContent = r.emoji
           chip.addEventListener('pointerdown', (e) => e.preventDefault())
-          chip.addEventListener('click', (e) => { e.stopPropagation(); toggleReaction(messageId, r.emoji) })
+          chip.addEventListener('click', (e) => { e.stopPropagation(); showReactions(messageId) })
           badge.append(chip)
         }
         chip.type = 'button'
@@ -802,7 +818,7 @@ export const ChatPage: Page = (root, go) => {
       card.append(icon, txt)
       card.addEventListener('click', (e) => {
         e.stopPropagation() // don't also toggle the row's timestamp
-        overlays.add(openLetter(message.content, p, message.createdAt))
+        overlays.add(openLetter(message.content, p, message.createdAt, message.id ? {connection: connectionId, message: message.id} : undefined))
       })
       return card
     }
@@ -2459,12 +2475,14 @@ export const ChatPage: Page = (root, go) => {
     resetRecordingUI()
 
     const beginRecording = async (): Promise<void> => {
-      if (isRecording) return
-      if (!(await ensurePermissionRationale('microphone'))) return
+      if (isRecording || composer.dataset.dictating === 'true') return
+      isRecording = true
+      if (!(await ensurePermissionRationale('microphone'))) { isRecording = false; return }
       let handle: VoiceRecorderHandle
       try {
         handle = await startRecording()
       } catch {
+        isRecording = false
         showNotice('Could not access the microphone.')
         return
       }
@@ -2522,16 +2540,16 @@ export const ChatPage: Page = (root, go) => {
       stopRecordingTimer()
     })
 
-    const games = mountGames(chatEl, otherName, (event, packet) => {
+    const games = mountGames(chatEl, otherName, myUserId, (event, packet) => {
       if (!transport) return Promise.reject(new Error('not connected'))
-      return transport.sendGame(event, packet)
-    }, showNotice)
+      return transport.sendMatch(event, packet)
+    }, (id, x) => transport?.sendPaddle(id, x), showNotice)
     overlays.add(games.dispose)
     let stopDictation = () => {}
     overlays.add(() => stopDictation())
     const slashCtx = {
       playGames: games.open,
-      writeAudio: () => { stopDictation(); stopDictation = startVoiceTyping(composer, input, showNotice) },
+      writeAudio: () => { if (isRecording) { showNotice('Finish your voice note first.'); return }; stopDictation(); stopDictation = startVoiceTyping(composer, input, showNotice) },
       input,
       writeLetter: () =>
         openLetterComposer({
@@ -3433,7 +3451,8 @@ export const ChatPage: Page = (root, go) => {
         updatePresence(otherLastRead)
         syncGames()
       }))
-      overlays.add(t.onGame(games.receive))
+      overlays.add(t.onMatch(games.receive))
+      overlays.add(t.onPong(games.frame))
       unsubscribeEnded = t.onConnectionEnded(() => {
         void getCurrentConnection().then((next) => { if (!disposed) go(next ? nextScreenFor(next) : 'connection-id') }).catch(() => { /* poll retries without losing the export opportunity */ })
       })
@@ -3489,7 +3508,7 @@ export const ChatPage: Page = (root, go) => {
     // taps Acknowledge (or the 2min no-ack auto-clear) — opening or focusing
     // the chat no longer silences it, so a raise can't be missed by glancing
     // at the tab.
-    const syncGames = (): void => games.availability(transport?.getState() === 'connected' && livePresence?.online === true && document.visibilityState === 'visible', livePresence?.userId)
+    const syncGames = (): void => games.availability(transport?.getState() === 'connected', livePresence?.online === true)
     const syncPresence = (): void => {
       syncGames()
       transport?.sendPresence(!disposed && document.visibilityState === 'visible' && document.hasFocus())

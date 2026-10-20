@@ -11,7 +11,7 @@ import { ownerFeedbackChecks } from './ownerFeedback.browser.mjs'
 
 const { Server } = createRequire(new URL('../../backend/package.json', import.meta.url))('socket.io')
 const playwright = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright')
-const screenshotDir = new URL(process.env.PARITY_OWNER_FEEDBACK_ONLY ? '../../docs/ui-web-owner-feedback/' : '../../docs/ui-web-android-parity/', import.meta.url).pathname.replace(/^\/(\w:)/, '$1')
+const screenshotDir = new URL(process.env.PARITY_SCREENSHOT_DIR || (process.env.PARITY_OWNER_FEEDBACK_ONLY ? '../../docs/ui-web-owner-feedback/' : '../../docs/ui-web-android-parity/'), import.meta.url).pathname.replace(/^\/(\w:)/, '$1')
 await mkdir(screenshotDir, { recursive: true })
 const ME = 'me'
 const OTHER = 'other'

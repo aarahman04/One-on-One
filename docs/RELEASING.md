@@ -1,5 +1,7 @@
 # Releasing One on One
 
+Web 2.0.7 parity is a web-only deploy through Vercel after merge. The accompanying backend fix only exposes existing narration part headers through CORS; deploy it through the existing Railway pipeline before checking cross-origin natural narration. No migration, settings change, Android build/version change or Play action is needed.
+
 Web owner-feedback follow-up (2026-10-19): this client-only PR deploys through the normal Vercel web pipeline after merge. It needs no backend or Supabase migration and no Android build, version bump or Play upload. First launch after upgrading from global gate storage asks for DOB/rules once; later sign-ins by that same account skip them. Test PDF downloads and the OS share picker on the target browsers before rollout. The separate Kotlin Android release remains 12 / 2.0.5.
 
 Presence follow-up (2026-10-19): deploy the reviewed `feat/live-presence` backend

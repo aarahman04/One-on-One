@@ -10,7 +10,9 @@
     "dev": "vite",
     "test": "node --test test/*.test.mjs",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

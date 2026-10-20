@@ -1,0 +1,9 @@
+One on One original game artwork and sounds.
+
+Chess SVGs generated without changes from the read-only Android 2.0.7 reference:
+One-on-One-Android/docs/design/chess-pieces/make.py
+Run the generator in a temporary directory, then copy svg/*.svg here.
+No third-party chess piece set is used.
+
+chess_move.ogg, chess_capture.ogg, chess_check.ogg and game_end.ogg are the
+app's synthesized sounds copied unchanged from Android app/src/main/res/raw/.

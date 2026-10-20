@@ -44,7 +44,21 @@ export interface HistoryMessage extends IncomingMessage {
 export async function getCurrentConnection(): Promise<CurrentConnection | null> {
   const res = await authedFetch('/api/connections/current')
   const body = await unwrap<{ connection: CurrentConnection | null }>(res)
-  return body.connection
+  const current = body.connection
+  if (current) try {
+    const key = `endedConnection:${current.myUserId}`
+    if (current.status === 'ended') localStorage.setItem(key, current.id)
+    else if (current.status !== 'pending') localStorage.removeItem(key)
+  } catch { /* same-account recovery hint only; the backend still owns access */ }
+  return current
+}
+
+export function endedConnectionId(userId: string): string | null {
+  try { return localStorage.getItem(`endedConnection:${userId}`) } catch { return null }
+}
+
+export function forgetEndedConnection(userId: string): void {
+  try { localStorage.removeItem(`endedConnection:${userId}`) } catch { /* optional hint */ }
 }
 
 // `after`: messages strictly newer than that createdAt, oldest first (reconnect resync).

@@ -132,6 +132,7 @@ test('narration: member gets DB text as ogg parts with headers', async (t) => {
   const res = await api.narrate(B, CONN, LETTER)
   assert.equal(res.status, 200)
   assert.equal(res.headers.get('content-type'), 'audio/ogg')
+  assert.equal(res.headers.get('access-control-expose-headers'), 'X-Narration-Part, X-Narration-Parts')
   assert.equal(res.headers.get('x-narration-part'), '0')
   assert.equal(res.headers.get('x-narration-parts'), String(expected.length))
   assert.equal(res.headers.get('cache-control'), 'private, no-store')
