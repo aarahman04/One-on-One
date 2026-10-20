@@ -285,6 +285,18 @@ export class MatchManager {
     return ok(this.snapshot(m))
   }
 
+  // The member's app went to the background (or came back) with its socket still open.
+  away(connectionId: string, userId: string, matchId: unknown, away: unknown): MatchResult {
+    const m = this.find(connectionId, userId, matchId)
+    if (!m) return fail('not_found', this.get(connectionId))
+    if (typeof away !== 'boolean') return fail('invalid_payload')
+    if (m.status !== 'playing') return ok(this.snapshot(m))
+    if (!away) return this.sync(connectionId, userId)
+    if (m.away.has(userId)) return ok(this.snapshot(m))
+    m.away.set(userId, this.now())
+    return ok(this.emit(m))
+  }
+
   // The member has no socket left. Turn games wait; table tennis pauses.
   disconnected(userId: string): void {
     for (const m of this.matches.values()) {

@@ -429,6 +429,7 @@ Seats: the first match's seats are random; a rematch swaps them (colours and fir
 | `match:draw` | `{matchId, action: "offer"\|"accept"\|"decline"\|"claim"}` | chess only. Making a move declines a pending offer; offering back to an offer agrees. `claim`: player to move, when `board.claim` is set (threefold repetition / fifty-move rule) |
 | `match:rematch` | `{matchId}` | over (not declined/cancelled/expired). When both members asked: a new `playing` match, seats swapped |
 | `match:sync` | none | returns the current match (or `null`); marks the caller present again (resumes a paused table-tennis match after a 3 s serve countdown) |
+| `match:away` | `{matchId, away: bool}` | playing only: `true` lists the caller in `away` like a disconnect (pauses table tennis; starts the abandonment grace), `false` is `match:sync`. Clients send it when the app is backgrounded during table tennis |
 | `match:paddle` | `{matchId, x}` | **no ack**, fire-and-forget; `x` 0..1 (clamped). 40/s per socket; checked against the in-memory match only (see below) |
 
 Errors: `invalid_payload`, `rate_limited`, `not_member`, `connection_inactive`, `partner_offline`, `busy`, `not_found`, `bad_state`, `game_over`, `not_your_turn`, `invalid_move`, `illegal_move`, `stale`, `out_of_order`, `no_offer`, `no_claim`, `internal`. Illegal moves never change state. Rate limits: `match:paddle` 40/s/socket; all other `match:*` share the generic 60/10 s guard.

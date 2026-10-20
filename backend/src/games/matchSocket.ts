@@ -9,7 +9,7 @@ import { MATCH_GAMES, MatchManager, type MatchGame, type MatchResult } from './m
 // which only exists for a DB-verified live connection and is ended by the
 // leave/terminate paths and by the 5 s liveness re-check below.
 
-export const MATCH_EVENTS = ['match:invite', 'match:accept', 'match:decline', 'match:leave', 'match:resign', 'match:move', 'match:draw', 'match:rematch', 'match:sync'] as const
+export const MATCH_EVENTS = ['match:invite', 'match:accept', 'match:decline', 'match:leave', 'match:resign', 'match:move', 'match:draw', 'match:rematch', 'match:sync', 'match:away'] as const
 type MatchEvent = (typeof MATCH_EVENTS)[number]
 
 const MAX_PAYLOAD_BYTES = 2048
@@ -156,5 +156,7 @@ async function handle(
       return m.rematch(id, me, p.matchId)
     case 'match:sync':
       return m.sync(id, me)
+    case 'match:away':
+      return m.away(id, me, p.matchId, p.away)
   }
 }

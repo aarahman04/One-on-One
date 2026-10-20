@@ -302,6 +302,10 @@ test('matches: pong runs only on the server, pauses for an absent player and end
   assert.equal(JSON.stringify((frames.at(-1) as { b: number[] }).b), frozen)
   m.sync(C, B)
   assert.equal(m.get(C)!.paused, false)
+  // Backgrounded with the socket still open: same pause, explicit resume.
+  assert.equal(m.away(C, A, id, true).match!.paused, true)
+  assert.equal(m.away(C, A, id, 'yes').ok, false)
+  assert.equal(m.away(C, A, id, false).match!.paused, false)
   assert.ok(frames.length > before)
   m.advancePong(C, 120_000)
   const end = m.get(C)!
