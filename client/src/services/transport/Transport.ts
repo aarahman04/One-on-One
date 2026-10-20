@@ -1,3 +1,4 @@
+import type { MatchTransport } from './MatchTransport'
 // Transport abstraction (spec §22). V1 ships only InternetTransport; a
 // future BluetoothTransport implements this same interface so the chat UI
 // and MessageService never change.
@@ -62,17 +63,7 @@ export interface ReceiptUpdate {
 // UI text: "connecting…" / "waiting for network".
 export type TransportState = 'connected' | 'connecting' | 'offline'
 
-export type GameEventName = 'game:invite' | 'game:accept' | 'game:decline' | 'game:move' | 'game:end'
-export interface GamePacket {
-  gameId: string
-  game?: string
-  seq?: number
-  data?: unknown
-  reason?: string
-}
-export interface GameEvent extends GamePacket { name: GameEventName; from: string }
-
-export interface Transport {
+export interface Transport extends MatchTransport {
   connect(): Promise<void>
   disconnect(): void
   sendMessage(
@@ -103,6 +94,4 @@ export interface Transport {
   onStateChange(callback: (state: TransportState, reconnected: boolean) => void): () => void
   getState(): TransportState
   markRead(connectionId: string): Promise<void>
-  sendGame(event: GameEventName, payload: GamePacket): Promise<void>
-  onGame(callback: (event: GameEvent) => void): () => void
 }

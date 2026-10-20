@@ -27,9 +27,9 @@ export const LoginPage: Page = (root, go) => {
   }
 
   root.innerHTML = `
-    <div class="screen">
-      <div class="screen__eyebrow">ONE</div>
-      <div class="screen__title">one connection. nothing else.</div>
+    <div class="screen screen--sign-in">
+      <svg class="sign-in-logo" viewBox="32 56 128 80" aria-hidden="true"><circle cx="76" cy="96" r="40" fill="#7ee787"/><circle cx="116" cy="96" r="40" fill="#79c0ff" fill-opacity="0.85"/></svg>
+      <div class="screen__title">One on One</div>
       <div class="screen__actions">
         <button class="primary" id="login-btn">Continue with Google</button>
       </div>

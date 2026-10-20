@@ -7,8 +7,8 @@ const POLL_INTERVAL_MS = 2500
 export const WaitingPage: Page = (root, go) => {
   root.innerHTML = `
     <div class="screen">
-      <div class="screen__eyebrow">CONNECTION REQUEST SENT</div>
-      <div class="screen__subtitle">Waiting for them to accept.</div>
+      <div class="screen__title">Request sent</div>
+      <div class="screen__subtitle" id="waiting-for">Waiting for them to accept.</div>
       <div class="screen__actions">
         <button id="cancel-btn">Cancel request</button>
       </div>
@@ -34,21 +34,23 @@ export const WaitingPage: Page = (root, go) => {
   const poll = async (): Promise<void> => {
     if (cancelled) return
     const current = await getCurrentConnection()
+    if (cancelled) return
 
     if (!current) {
       go('connection-id')
       return
     }
     connectionId = current.id
+    root.querySelector('#waiting-for')!.textContent = `Waiting for ${current.otherConnectionCode || 'them'} to accept.`
 
     const next = nextScreenFor(current)
     if (next !== 'waiting') go(next)
   }
 
-  void poll()
+  void poll().catch(() => {})
   const interval = setInterval(() => {
     poll().catch(() => {})
   }, POLL_INTERVAL_MS)
 
-  return () => clearInterval(interval)
+  return () => { cancelled = true; clearInterval(interval) }
 }

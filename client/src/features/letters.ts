@@ -1,7 +1,8 @@
 import { openModal } from '../components/Modal'
 import { escapeHtml } from '../utils/download'
 import { layoutLetter } from './letterLayout'
-import { SPEAKER_ICON, STOP_ICON } from './chatIcons'
+import { SPEAKER_ICON } from './chatIcons'
+import { mountLetterNarrator } from './letterNarrator'
 
 type LetterAppearance = 'dawn' | 'botanical'
 
@@ -64,7 +65,7 @@ function themeStyle(): HTMLStyleElement {
 }
 
 // Viewer: opens a received letter, styled, with a Download button.
-export function openLetter(body: string, payload: Partial<LetterPayload> | null, createdAt = new Date().toISOString()): () => void {
+export function openLetter(body: string, payload: Partial<LetterPayload> | null, createdAt = new Date().toISOString(), ids?: {connection:string;message:string}): () => void {
   const p = normalize(payload)
   const wrap = document.createElement('div')
   wrap.className = 'letter-view'
@@ -95,22 +96,13 @@ export function openLetter(body: string, payload: Partial<LetterPayload> | null,
   heading.className = 'letter-view__heading'
   const title = document.createElement('h2'); title.textContent = 'Letter'
   const speaker = document.createElement('button'); speaker.type = 'button'
-  let reading = false
-  const updateSpeaker = () => { speaker.setAttribute('aria-label', reading ? 'Stop reading' : 'Read letter aloud'); speaker.innerHTML = reading ? STOP_ICON : SPEAKER_ICON }
-  const stop = () => { const wasReading = reading; reading = false; updateSpeaker(); if (wasReading) window.speechSynthesis?.cancel() }
-  speaker.addEventListener('click', () => {
-    if (reading) { stop(); return }
-    if (!('speechSynthesis' in window)) { status.textContent = 'Reading aloud is not supported in this browser.'; return }
-    const utterance = new SpeechSynthesisUtterance(`Dear ${p.to}. ${body}. With love, ${p.from}.`)
-    utterance.onend = stop
-    utterance.onerror = () => { stop(); status.textContent = 'Could not read the letter aloud. Try again.' }
-    reading = true; updateSpeaker(); window.speechSynthesis.speak(utterance)
-  })
-  updateSpeaker(); heading.append(title, speaker)
-  const visibility = () => { if (document.hidden) stop() }
-  document.addEventListener('visibilitychange', visibility)
+  speaker.innerHTML = SPEAKER_ICON
+  const speechControls = document.createElement('div'); speechControls.className = 'letter-speech-controls'
+  const stop = mountLetterNarrator(speaker, speechControls, status, `Dear ${p.to}. ${body}. With love, ${p.from}.`, ids)
+  heading.append(title, speaker)
+  actions.prepend(speechControls)
   wrap.append(themeStyle(), heading, holder, actions)
-  const modal = openModal(wrap, { onClose: () => { stop(); document.removeEventListener('visibilitychange', visibility) } })
+  const modal = openModal(wrap, { onClose: stop })
   modal.panel.classList.add('letter-modal')
   return modal.close
 }

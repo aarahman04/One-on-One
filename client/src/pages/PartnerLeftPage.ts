@@ -1,5 +1,5 @@
 import type { Page } from '../state/router'
-import { acknowledgeEnd, getCurrentConnection } from '../services/connectionsApi'
+import { acknowledgeEnd, getCurrentConnection, forgetEndedConnection } from '../services/connectionsApi'
 import { nextScreenFor } from '../state/nextScreen'
 import { loadingScreenHtml } from '../utils/loadingScreen'
 import { openArchiveSave } from '../features/conversationArchive'
@@ -18,7 +18,7 @@ export const PartnerLeftPage: Page = (root, go) => {
     root.querySelector('.screen__subtitle')!.textContent = `Save your conversation before it's deleted on ${date}?`
     const acknowledge = async () => {
       root.querySelectorAll('button').forEach((b) => { b.disabled = true })
-      try { await acknowledgeEnd(current.id); if (!disposed) go('connection-id') }
+      try { await acknowledgeEnd(current.id); forgetEndedConnection(current.myUserId); if (!disposed) go('connection-id') }
       catch (err) {
         if (disposed) return
         root.querySelector('[role="status"]')!.textContent = err instanceof Error ? err.message : 'Could not continue. Try again.'

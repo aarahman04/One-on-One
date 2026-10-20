@@ -25,20 +25,26 @@ function pickMimeType(): string {
 
 export async function startRecording(): Promise<VoiceRecorderHandle> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  const mimeType = pickMimeType()
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+  let mimeType: string
+  let recorder: MediaRecorder
   const chunks: BlobPart[] = []
   const startedAt = Date.now()
-
-  recorder.addEventListener('dataavailable', (e) => {
-    if (e.data.size > 0) chunks.push(e.data)
-  })
 
   const stopTracks = (): void => {
     for (const track of stream.getTracks()) track.stop()
   }
 
-  recorder.start()
+  try {
+    mimeType = pickMimeType()
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    recorder.addEventListener('dataavailable', (e) => {
+      if (e.data.size > 0) chunks.push(e.data)
+    })
+    recorder.start()
+  } catch (error) {
+    stopTracks()
+    throw error
+  }
 
   const assembleBlob = (): Blob => new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' })
 

@@ -1,6 +1,6 @@
 :root {
   /* Color — dark-first; light values below flip these under prefers-color-scheme */
-  --bg: #0d1117;
+  --bg: #0d1017;
   --bg-raised: #12181f;
   --border: #1f2630;
   --text: #e6edf3;
@@ -10,9 +10,8 @@
   --accent-other: #79c0ff;
   --danger: #f85149;
 
-  /* Type: three voices — serif for display/titles, humanist sans for reading,
-     mono kept as the "data" voice (codes, timestamps, receipts). */
-  --font-display: 'Fraunces', Georgia, 'Iowan Old Style', serif;
+  /* Type: Figtree headings/body and mono codes/timestamps, as on Android. */
+  --font-display: 'Figtree', -apple-system, 'Segoe UI', system-ui, sans-serif;
   --font-body: 'Figtree', -apple-system, 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
@@ -279,10 +278,15 @@ input:focus {
 .screen__title {
   font-family: var(--font-display);
   font-size: var(--text-xl);
-  font-weight: 600;
+  font-weight: 700;
+  line-height: 36px;
+  letter-spacing: -.01em;
   max-width: 340px;
   text-wrap: balance;
 }
+.sign-in-logo { width: 128px; height: 64px; }
+.screen--sign-in .screen__actions, .screen--sign-in .screen__legal { width: min(100%,280px); }
+.screen--sign-in #login-btn { width: 100%; }
 
 .screen__subtitle {
   color: var(--text-dim);
@@ -1408,7 +1412,7 @@ input:focus {
    when the OS is light but the user's chat appearance preference is dark,
    this overrides the app-wide prefers-color-scheme flip for .chat only. */
 .chat[data-theme='dark'] {
-  --bg: #0d1117;
+  --bg: #0d1017;
   --bg-raised: #12181f;
   --border: #1f2630;
   --text: #e6edf3;
@@ -2905,7 +2909,7 @@ input:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #0d1117;
+  background: var(--bg);
   transition: opacity 250ms ease;
 }
 
@@ -3264,6 +3268,8 @@ input:focus {
 .game-hub { display: grid; gap: 10px; }
 .game-hub > button { display: flex; align-items: center; gap: 16px; text-align: left; padding: 12px; }
 .game-hub svg { width: 36px; height: 36px; color: var(--accent-you); }
+.game-hub-label { display: flex; flex-direction: column; gap: 2px; }
+.game-hub-label small { color: var(--text-dim); font-size: 12px; }
 .game-surface { position: absolute; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 12px; overflow: auto; overscroll-behavior: contain; background: var(--bg); color: var(--text); padding: 12px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)); }
 .game-surface header { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
 .game-surface h2 { font: 600 20px var(--font-body); margin: 0; }
@@ -3275,18 +3281,87 @@ input:focus {
 .game-board svg { width: 100%; height: 100%; display: block; }
 .game-board--tictactoe { grid-template-columns: repeat(3,1fr); grid-template-rows: repeat(3,minmax(0,1fr)); }
 .game-board--connect4 { grid-template-columns: repeat(7,1fr); grid-template-rows: repeat(6,1fr); aspect-ratio: 7/6; }
-.game-board--chess { grid-template-columns: repeat(8,1fr); grid-template-rows: repeat(8,minmax(0,1fr)); touch-action: none; }
-.game-board--chess > button { border: 0; touch-action: none; }
 .game-board > .game-cell--mine, .game-box.game-cell--mine { color: var(--accent-you); }
 .game-board > .game-cell--other, .game-box.game-cell--other { color: var(--accent-other); }
-.game-board .game-cell--dark { background: var(--border); }
-.game-board .game-cell--selected, .game-board .game-cell--winning { background: color-mix(in srgb, var(--accent-you) 25%, transparent); }
-.game-board .game-cell--legal { box-shadow: inset 0 0 0 3px var(--accent-you); }
-.game-captured { font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
+.game-board .game-cell--winning { background: color-mix(in srgb, var(--accent-you) 25%, transparent); }
 .game-board--dots { grid-template-columns: repeat(11,1fr); grid-template-rows: repeat(11,1fr); }
 .game-board--dots > button { border: 0; padding: 0; }
 .game-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text); place-self: center; }
 .game-box { display: grid; place-items: center; font-size: 12px; background: color-mix(in srgb, var(--accent-you) 7%, transparent); }
-.game-board--pong { display: block; position: relative; touch-action: none; border: 1px solid var(--border); }
-.game-paddle { position: absolute; bottom: 4px; width: 70%; left: 15%; accent-color: var(--accent-you); }
 @media (prefers-reduced-motion: reduce) { .chat__message { transition: none; } }
+
+/* Android 2.0.7: ChessColors and PongUi geometry are shared across themes. */
+.game-surface { gap: 8px; padding-top: max(12px, env(safe-area-inset-top)); }
+.game-surface header { min-height: 40px; flex-shrink: 0; }
+.game-surface header > span { font-size: 12px; color: var(--text-dim); }
+.game-identity { font-size: 13px; color: var(--text-dim); }
+.game-status { min-height: 24px; font-weight: 600; }
+.game-above, .game-below, .game-footer { width: min(100%,520px,65dvh); }
+.game-footer { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
+.game-footer > p, .game-footer > h3 { width: 100%; margin: 0; text-align: center; }
+.game-result { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-raised); padding: 16px; }
+.game-result h3 { font-size: 20px; }
+.game-result p { color: var(--text-dim); font-size: 13px; }
+.game-board--chess { position: relative; grid-template-columns: repeat(8,1fr); grid-template-rows: repeat(8,minmax(0,1fr)); touch-action: none; border-radius: 4px; overflow: visible; isolation: isolate; }
+.game-board--chess > .chess-square { position: relative; border: 0; padding: 0; background: #ebecd0; color: #739552; touch-action: none; }
+.game-board--chess > .chess-square.dark { background: #739552; color: #ebecd0; }
+.game-board--chess > .chess-square:is(.last,.selected) { background: #f5f682; }
+.game-board--chess > .chess-square.dark:is(.last,.selected) { background: #b9ca43; }
+.chess-square.check::before { content: ''; position: absolute; inset: 0; background: radial-gradient(#e5484d,transparent 75%); }
+.chess-square.hint::after { content: ''; position: absolute; width: 32%; height: 32%; top: 34%; left: 34%; border-radius: 50%; background: #00000024; }
+.chess-square.capture-hint::after { width: 90%; height: 90%; top: 5%; left: 5%; background: transparent; border: max(3px,.5vw) solid #00000024; }
+.chess-square.hover { box-shadow: inset 0 0 0 3px #ffffffa6; }
+.chess-file, .chess-rank { position: absolute; font: 600 10px/11px var(--font-body); z-index: 1; }
+.chess-file { bottom: 1px; right: 3px; }
+.chess-rank { top: 1px; left: 3px; }
+.chess-piece { position: absolute; width: 12.5%; height: 12.5%; padding: .5%; pointer-events: none; transition: left 170ms var(--ease-standard),top 170ms var(--ease-standard); z-index: 2; }
+.chess-piece.dragging { transition: none; transform: scale(1.2); filter: drop-shadow(0 6px 5px #0007); z-index: 5; }
+.chess-piece.captured { animation: chess-capture 170ms var(--ease-standard) forwards; z-index: 1; }
+@keyframes chess-capture { to { opacity: 0; transform: scale(.8); } }
+.chess-promotion-scrim { position: absolute; inset: 0; z-index: 6; background: #0006; }
+.chess-promotion { position: absolute; top: 0; width: 12.5%; display: flex; flex-direction: column; background: #fff; box-shadow: var(--elevation-3); }
+.chess-promotion button { padding: 0; aspect-ratio: 1; width: 100%; min-height: 32px; }
+.chess-promotion img { width: 100%; display: block; }
+.chess-player { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 13px; }
+.chess-avatar { width: 32px; height: 32px; flex-shrink: 0; display: grid; place-items: center; border-radius: 6px; border: 1px solid var(--border); }
+.chess-avatar.white { background: #fbfaf7; color: #2c2a27; }
+.chess-avatar.black { background: #2c2a27; color: #fbfaf7; }
+.chess-player-status { color: var(--text-dim); font-size: 12px; }
+.chess-captured { display: flex; flex: 1; flex-wrap: wrap; gap: 0; }
+.chess-captured img { width: 19px; height: 22px; margin-right: -5px; }
+.chess-history { display: flex; gap: 16px; overflow: auto; white-space: nowrap; font: 12px var(--font-mono); padding: 8px 0; color: var(--text-dim); }
+.game-board--tictactoe { position: relative; border-radius: var(--radius-lg); padding: 8px; }
+.game-win-line { position: absolute; inset: 0; pointer-events: none; }
+.game-win-line path { stroke-dasharray: 100; animation: game-win 320ms var(--ease-emphasized); }
+@keyframes game-win { from { stroke-dashoffset: 100; } }
+.game-board--tictactoe > button { border-width: 0 1px 1px 0; padding: 20%; }
+.game-board--tictactoe > button:nth-child(3n) { border-right: 0; }
+.game-board--tictactoe > button:nth-last-child(-n+3) { border-bottom: 0; }
+.game-board--connect4 { background: var(--border); gap: 4px; padding: 8px; border-radius: var(--radius-lg); }
+.game-board--connect4 > button { border: 0; border-radius: 50%; margin: 3px; background: var(--bg); padding: 0; }
+.game-board--connect4 svg circle { fill: currentColor; stroke: none; r: 21px; }
+.game-board--connect4 svg .win-ring { r: 14px; fill: none; stroke: var(--bg); stroke-width: 4px; }
+.game-cell--last svg { animation: game-mark 200ms var(--ease-standard); }
+.game-board--connect4 .game-cell--last svg { animation: game-drop 320ms var(--ease-emphasized); }
+@keyframes game-mark { from { opacity: .3; transform: scale(.7); } }
+@keyframes game-drop { from { transform: translateY(-300%); } }
+.game-board--dots { padding: 16px; grid-template-columns: repeat(5,8px minmax(0,1fr)) 8px; grid-template-rows: repeat(5,8px minmax(0,1fr)) 8px; }
+.game-board--dots .game-line { --line-width: 2px; overflow: visible; position: relative; color: var(--border); }
+.game-board--dots .game-line:is(.game-cell--mine,.game-cell--other) { --line-width: 4px; }
+.game-board--dots .game-line.game-cell--mine { color: var(--accent-you); }
+.game-board--dots .game-line.game-cell--other { color: var(--accent-other); }
+.game-board--dots .game-line::before { content: ''; position: absolute; left: -4px; right: -4px; top: calc(50% - var(--line-width) / 2); height: var(--line-width); background: currentColor; border-radius: 999px; }
+.game-board--dots .game-line[data-horizontal='false']::before { top: -4px; bottom: -4px; left: calc(50% - var(--line-width) / 2); right: auto; width: var(--line-width); height: auto; }
+.game-board--dots .game-line::after { content: ''; position: absolute; inset: -12px; }
+.game-board--dots .game-line svg { overflow: visible; }
+.game-box { border-radius: 8px; background: transparent; }
+.game-box.game-cell--mine { background: color-mix(in srgb,var(--accent-you) 16%,transparent); }
+.game-box.game-cell--other { background: color-mix(in srgb,var(--accent-other) 16%,transparent); }
+.game-board--pong { --pong-table: color-mix(in srgb,var(--bg-raised),var(--accent-you) 12%); --pong-line: color-mix(in srgb,var(--text) 28%,transparent); display: block; position: relative; background: transparent; aspect-ratio: 1 / 2.42; width: min(100%,320px,29dvh); touch-action: none; overflow: visible; }
+.game-board--pong { margin-bottom: 28px; }
+.game-board--pong canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+.game-board--pong input { position: absolute; bottom: -28px; left: 0; width: 100%; height: 24px; accent-color: var(--accent-you); }
+.pong-countdown { position: absolute; top: 46%; left: 50%; transform: translate(-50%,-50%); padding: 4px 14px; border-radius: var(--radius-pill); background: var(--bg-raised); font-weight: 600; }
+.pong-score { font-size: 20px; font-weight: 600; padding: 8px 16px; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--bg-raised); }
+.letter-speech-controls { display: flex; gap: 8px; }
+@media (prefers-reduced-motion: reduce) { .chess-piece { transition: none; } .chess-piece.captured { animation-duration: 1ms; } .game-cell--last svg, .game-win-line path { animation: none; } }

@@ -4,7 +4,7 @@ import type { IncomingMessage, LinkPreview, MessageType, PinState, PresenceUpdat
 import { authedFetch } from '../apiClient'
 import type { CallTransport } from './CallTransport'
 import { InternetCallTransport } from './InternetCallTransport'
-import type { GameEvent, GameEventName, GamePacket } from './Transport'
+import { decodeMatch, type MatchAck, type MatchAction, type MatchSnapshot, type PongFrame } from './MatchTransport'
 
 const API_URL = import.meta.env.VITE_API_URL
 const CONNECT_TIMEOUT_MS = 15000
@@ -234,21 +234,35 @@ export class InternetTransport implements Transport {
     await this.emitWithAck('message:read', { connectionId })
   }
 
-  async sendGame(event: GameEventName, payload: GamePacket): Promise<void> {
-    if (!/^[A-Za-z0-9-]{1,64}$/.test(payload.gameId) || new TextEncoder().encode(JSON.stringify(payload)).length > 4096) throw new Error('invalid_payload')
-    await this.emitWithAck(event, payload)
+  async sendMatch(event: MatchAction, payload: Record<string, unknown> = {}): Promise<MatchAck> {
+    const socket = this.socket
+    if (!socket?.connected) throw new Error('not connected')
+    return new Promise((resolve, reject) => {
+      socket.timeout(ACK_TIMEOUT_MS).emit(event, payload, (error: Error | null, ack: MatchAck) => {
+        if (error) { reject(new Error('send timeout')); return }
+        if (!ack || typeof ack.ok !== 'boolean') { reject(new Error('invalid acknowledgement')); return }
+        if (ack.match && !decodeMatch(ack.match)) { reject(new Error('invalid match')); return }
+        resolve(ack)
+      })
+    })
   }
 
-  onGame(callback: (event: GameEvent) => void): () => void {
+  sendPaddle(matchId: string, x: number): void {
+    if (this.socket?.connected && Number.isFinite(x)) this.socket.volatile.emit('match:paddle', { matchId, x })
+  }
+
+  onMatch(callback: (match: MatchSnapshot) => void): () => void {
     const socket = this.socket
     if (!socket) throw new Error('not connected')
-    const handlers = (['game:invite', 'game:accept', 'game:decline', 'game:move', 'game:end'] as const).map((name) => {
-      const handler = (packet: GamePacket & { from: string }) => {
-        if (packet && /^[A-Za-z0-9-]{1,64}$/.test(packet.gameId) && typeof packet.from === 'string') callback({ ...packet, name })
-      }
-      socket.on(name, handler)
-      return () => socket.off(name, handler)
-    })
-    return () => { for (const off of handlers) off() }
+    const handler = (value: unknown) => { const match = decodeMatch(value); if (match) callback(match) }
+    socket.on('match:state', handler)
+    return () => { socket.off('match:state', handler) }
+  }
+
+  onPong(callback: (frame: PongFrame) => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    socket.on('match:pong', callback)
+    return () => { socket.off('match:pong', callback) }
   }
 }
