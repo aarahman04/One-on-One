@@ -3286,7 +3286,7 @@ input:focus {
 .game-board .game-cell--winning { background: color-mix(in srgb, var(--accent-you) 25%, transparent); }
 .game-board--dots { grid-template-columns: repeat(11,1fr); grid-template-rows: repeat(11,1fr); }
 .game-board--dots > button { border: 0; padding: 0; }
-.game-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text); place-self: center; }
+.game-dot { position: relative; z-index: 1; pointer-events: none; width: 6px; height: 6px; border-radius: 50%; background: var(--text); place-self: center; }
 .game-box { display: grid; place-items: center; font-size: 12px; background: color-mix(in srgb, var(--accent-you) 7%, transparent); }
 @media (prefers-reduced-motion: reduce) { .chat__message { transition: none; } }
 

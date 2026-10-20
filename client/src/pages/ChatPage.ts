@@ -638,11 +638,11 @@ export const ChatPage: Page = (root, go) => {
     const showReactions = (messageId: string): void => {
       const box = document.createElement('div'), title = document.createElement('h2')
       title.textContent = 'Reactions'; box.append(title)
-      const modal = openModal(box)
+      const modal = openModal(box, { onClose: () => overlays.delete(modal.close) })
       overlays.add(modal.close)
       for (const reaction of reactionsByMessage.get(messageId) ?? []) for (const user of reaction.userIds) {
         const row = document.createElement(user === myUserId ? 'button' : 'p')
-        row.textContent = `${reaction.emoji} ${user === myUserId ? 'You ? tap to remove' : otherName}`
+        row.textContent = `${reaction.emoji} ${user === myUserId ? 'You · tap to remove' : otherName}`
         if (user === myUserId) { (row as HTMLButtonElement).type = 'button'; row.addEventListener('click', () => { modal.close(); toggleReaction(messageId, reaction.emoji) }) }
         box.append(row)
       }

@@ -12,6 +12,8 @@ Branch `feat/web-parity-2.0.7`, based on main `37d5fbe`. Detailed feature → An
 
 Validation: client `npm ci`, lint/typecheck, 34 unit tests and build pass; backend `npm ci`, 82 tests and build pass. Full two-context Chromium games and existing chat/media/archive regression checks pass at 1280/360px. Environment-example checks and local gitleaks pass; runtime dependency audit is clean. Commands and screenshots: [ui-web-2.0.7](ui-web-2.0.7/README.md).
 
+Self-review of PR #116 corrected closed reaction-sheet teardown registration, an incorrectly encoded label separator and Dots point stacking over lines. Earlier review checks also fixed hidden-tab reconnect pause, authoritative final scores, recorder-start cleanup and narration boundary/autoplay handling. No outstanding code finding remains; the production/device checks below remain manual.
+
 Production Google sign-in was attempted with the existing reviewer account, which is stopped at its incomplete DOB gate. No birth date was invented or terms accepted; deployed two-account games and actual server voice remain unverified. No Android, secret, infrastructure setting or Play file changed.
 
 Phone/browser checklist:

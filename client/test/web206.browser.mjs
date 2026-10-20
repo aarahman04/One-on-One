@@ -91,7 +91,7 @@ try{
     assert.equal(calls.filter(([method,path,user])=>method==='POST'&&path==='/api/me/gates'&&user==='me').length,migrations)
     assert(calls.some(([kind,name])=>kind==='socket'&&name==='message:read'))
     assert.equal(await page.locator('.chat__reaction-total').textContent(),'2')
-    await page.locator('.chat__reaction-chip').first().click();await page.getByRole('heading',{name:'Reactions',exact:true}).waitFor();await page.getByRole('button',{name:/You .*tap to remove/}).click();await page.waitForFunction(()=>!document.querySelector('.chat__reaction-total'))
+    await page.locator('.chat__reaction-chip').first().click();await page.getByRole('heading',{name:'Reactions',exact:true}).waitFor();await page.getByRole('button',{name:/You · tap to remove/}).click();await page.waitForFunction(()=>!document.querySelector('.chat__reaction-total'))
     assert.equal(await page.locator('.thisorthat-card__option').count(),2);assert.equal(await page.locator('.thisorthat-card__pick').count(),2);await wait(page,'You matched!')
     if(width===1280){
       connection.otherNickname='Alex & Bea <b>friend</b>';await page.reload();await page.locator('.thisorthat-card__pick').first().waitFor()
