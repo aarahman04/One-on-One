@@ -14,6 +14,11 @@ export const ARC_H = 6 / 12.16
 export const FLOOR_H = -ARC_H
 export const SPIN_DRIFT = 0.4
 export const SPIN_TAU = 1.8
+export const SPIN_LIGHT = 0.2 // A light brush; a hard brush doubles it.
+export const BOUNCE_KICK = 2
+export const BOUNCE_CHECK = 1.1
+// Gentle and medium strokes land on the table; above ~87% power the shot sails long.
+export const shotDepth = (power: number) => power * 0.5 + Math.max(0, power - 0.85) * 2.4
 // Convert network velocity into the reference's per-frame world delta at 60 Hz.
 const STROKE_GAIN = 12.16 / 60
 export const WIN_SCORE = 7
@@ -145,18 +150,18 @@ export class PongSim {
   private strike(seat: Seat): void {
     const stroke = this.strokes[seat - 1]
     const target: Point = [0.5 + stroke.direction * 0.36 * (0.85 + 0.15 * stroke.forward),
-      (seat === 1 ? 0.49 : COURT_H - 0.49) + forward(seat) * stroke.forward * (7 / 12.16), FLOOR_H]
+      (seat === 1 ? 0.49 : COURT_H - 0.49) + forward(seat) * shotDepth(stroke.forward), FLOOR_H]
     const px = this.paddles[seat - 1], py = this.paddleY[seat - 1]
     const dx = target[0] - px, dy = target[1] - py, length = Math.hypot(dx, dy)
     // Launch out of the head along the shot, so a brushing return cannot cut through the racket.
     const clearance = HEAD_R + BALL_R + 0.035 // Includes the drawn outlines and height-scaled ball.
     this.x = px + dx / length * clearance
     this.y = py + dy / length * clearance
-    this.curve(target, 1 - 0.12 * stroke.forward)
+    this.curve(target, 1 - 0.22 * stroke.forward)
     this.lastHit = seat
     this.landed = false
     const brush = Math.abs(stroke.direction) > 0.45 ? stroke.side : 0
-    this.spin = Math.abs(brush) <= 0.08 ? 0 : Math.sign(brush) * (0.1 + 0.1 * Math.min(1, (Math.abs(brush) - 0.08) / 0.6))
+    this.spin = Math.abs(brush) <= 0.08 ? 0 : Math.sign(brush) * (SPIN_LIGHT + SPIN_LIGHT * Math.min(1, (Math.abs(brush) - 0.08) / 0.6))
     this.hits++
   }
 
@@ -180,9 +185,11 @@ export class PongSim {
         this.x = x; this.y = y; this.z = BALL_R
         this.landed = true
         this.bounces++
-        const kickX = this.vx + this.spin * 0.8
-        const length = Math.hypot(kickX, this.vy, this.vz) || 1
-        this.curve([x + kickX / length * (30 / 12.16), y + this.vy / length * (30 / 12.16), FLOOR_H], flight.duration)
+        // Sidespin grips the table: the ball checks (loses forward speed) and breaks sideways.
+        const kickX = this.vx + this.spin * BOUNCE_KICK
+        const kickY = this.vy * (1 - BOUNCE_CHECK * Math.abs(this.spin))
+        const length = Math.hypot(kickX, kickY, this.vz) || 1
+        this.curve([x + kickX / length * (30 / 12.16), y + kickY / length * (30 / 12.16), FLOOR_H], flight.duration)
       }
     }
     if (this.landed && this.lastHit && this.touches(other(this.lastHit))) {

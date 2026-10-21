@@ -101,7 +101,7 @@ test('ping pong: a brushing stroke spins the ball after release, without later r
   assert.ok(active.p.frame().a![9] > active.target + 0.004)
   near(released.p.frame().a![9], active.p.frame().a![9])
   near(active.p.x, released.p.x)
-  assert.ok(released.p.frame().spin > 0.18 && released.p.frame().spin < 0.2)
+  assert.ok(released.p.frame().spin > 0.36 && released.p.frame().spin < 0.4)
   const spin = released.p.frame().spin
   released.p.paddle(2, 0.2, 0.24)
   released.p.step(16)
@@ -176,7 +176,7 @@ test('ping pong: brushing spin kicks sideways on the table, while a plain block 
 })
 
 test('ping pong: ordinary angled strokes have room to land on either side', () => {
-  for (const dx of [-.3, -.2, .2, .3]) for (const dy of [.03, .15, .3]) {
+  for (const dx of [-.3, -.2, .2, .3]) for (const dy of [.02, .035, .05]) {
     const p = manual()
     p.paddle(1, RACKET_MIN, 2.5, true)
     p.paddle(2, .5 - dx, .24 - dy); p.step(16)
@@ -185,6 +185,16 @@ test('ping pong: ordinary angled strokes have room to land on either side', () =
     assert.equal(p.bounces, 1, `stroke ${dx},${dy} lands`)
     assert.deepEqual(p.score, [0, 0])
   }
+})
+
+test('ping pong: a very hard stroke sails long off the table', () => {
+  const p = manual()
+  p.paddle(1, RACKET_MIN, 2.5, true)
+  p.paddle(2, .5, -.06); p.step(16)
+  p.paddle(2, .5, .24); p.step(8)
+  run(p, () => p.score[0] + p.score[1] > 0)
+  assert.equal(p.bounces, 0, 'never touches the table')
+  assert.deepEqual(p.score, [1, 0], 'the hitter loses the point')
 })
 
 test('ping pong: a gentle angled placement aims without adding the brush kick', () => {
@@ -203,8 +213,8 @@ test('ping pong: a hard brush has at most twice the spin of a light brush', () =
     return p.frame().spin
   }
   const light = brush(400), hard = brush(16)
-  assert.ok(light >= .1 && hard > light * 1.5)
-  assert.ok(hard <= light * 2 && hard <= .2)
+  assert.ok(light >= .2 && hard > light * 1.5)
+  assert.ok(hard <= light * 2 && hard <= .4)
 })
 
 test('ping pong: moving past the ball cannot return it with the back of the bat', () => {
