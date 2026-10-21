@@ -141,7 +141,7 @@ test('chess between two clients: same seats, server-validated moves, both see id
   assert.equal(re.match.series[blackUser], 1)
 })
 
-test('table tennis between two clients: one server simulation, identical frames, paddles, scoring', async (t) => {
+test('ping pong between two clients: one server simulation, identical frames, paddles, scoring', async (t) => {
   seed()
   const { socket } = await server(t)
   const a = await socket(A)
@@ -151,11 +151,11 @@ test('table tennis between two clients: one server simulation, identical frames,
   await b.emit('match:accept', { matchId: id })
   const seatOfA = (await a.emit('match:sync')).match.players[0] === A ? 0 : 1
   // Both paddles parked in a corner so the first serve is missed.
-  a.client.emit('match:paddle', { matchId: id, x: 0 })
-  b.client.emit('match:paddle', { matchId: id, x: 1 })
+  a.client.emit('match:paddle', { matchId: id, x: RACKET_MIN })
+  b.client.emit('match:paddle', { matchId: id, x: RACKET_MAX })
   await waitFor(() => a.frames.length > 10 && b.frames.length > 10)
   const last = a.frames.at(-1)
-  assert.equal(last.p[seatOfA], RACKET_MIN) // clamped to the table
+  assert.equal(last.p[seatOfA], RACKET_MIN)
   assert.equal(last.p[1 - seatOfA], RACKET_MAX)
   // Same frames on both clients (match by server time).
   const shared = a.frames.filter((f) => b.frames.some((g) => g.t === f.t))
@@ -173,7 +173,7 @@ test('table tennis between two clients: one server simulation, identical frames,
   await waitFor(() => b.last()?.status === 'over')
 })
 
-test('table tennis gameplay over real sockets: two players who chase the ball rally; one who stops loses', async (t) => {
+test('ping pong over real sockets: two-dimensional rackets rally, missing returns loses, rematch resets', async (t) => {
   seed()
   const { socket } = await server(t)
   const a = await socket(A)
@@ -187,9 +187,13 @@ test('table tennis gameplay over real sockets: two players who chase the ball ra
   const bots = [a, b].map((bot) =>
     setInterval(() => {
       const f = bot.frames.at(-1)
-      if (!f || !active.get(bot)) return
-      const ahead = Math.min(0.15, Math.max(-0.15, f.b[2] * 0.06)) // lead the ball a little
-      bot.client.emit('match:paddle', { matchId: id, x: f.b[0] + ahead })
+      if (!f) return
+      const seat = bot.last()?.players[0] === (bot === a ? A : B) ? 1 : 2
+      const serving = f.serve === seat
+      // An inactive returner still serves: otherwise the reference waits for contact forever.
+      bot.client.emit('match:paddle', { matchId: id,
+        x: serving || active.get(bot) ? f.b[0] : RACKET_MIN,
+        y: serving ? f.b[1] : seat === 1 ? 1.88 : -0.08, released: true })
     }, 33),
   )
   t.after(() => bots.forEach(clearInterval))
@@ -197,7 +201,7 @@ test('table tennis gameplay over real sockets: two players who chase the ball ra
   const rally = a.frames.at(-1)
   assert.deepEqual(rally.s, [0, 0], 'nobody missed')
   assert.ok(rally.h >= 5, `${rally.h} returns`)
-  // B stops moving: A wins every point until the match ends at 7.
+  // B stops returning: A wins every point until the match ends at 7.
   active.set(b, false)
   b.client.emit('match:paddle', { matchId: id, x: RACKET_MIN })
   const bSeat = (await b.emit('match:sync')).match.players[0] === B ? 0 : 1

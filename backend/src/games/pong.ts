@@ -1,55 +1,40 @@
 import type { Outcome, Seat } from './rules.js'
 
-// Authoritative table tennis (2.0.7). The server owns the ball and the score;
-// clients only send their racket position and render the frames.
-//
-// Top-down table, x 0..1 across, y 0..COURT_H along. Each racket head is a
-// circle centred on its own end line (seat 1: y = COURT_H, the bottom; seat 2:
-// y = 0, the top) and slides along it. Clients rotate the table so their own
-// racket is at the bottom of the screen.
-//
-// Arcade rules (no reference video was available; these are the documented
-// choices): the ball travels in a straight line, bounces off the side edges,
-// is returned when it touches a racket head, and scores for the opponent once
-// it passes an end line untouched. The return direction comes from where the
-// ball meets the round head (centre: straight back, edge: angled) plus a
-// share of the racket's sideways swing. Every return is a little faster.
-// First to 7; the player who lost the point receives the next serve.
-//
-// Sidespin (2026-10-21): swinging the racket sideways while hitting also
-// spins the ball. Spin is a sideways acceleration that bends the flight
-// (decaying over the shot), a spinning ball kicks off the next racket in its
-// spin direction, and a side-edge bounce kills it.
-
+// Ping Pong: server-owned strokes and cubic flights over an open table.
+// Coordinates are table widths: x across, y along, z above the surface.
 export const COURT_H = 1.8
-export const HEAD_R = 0.13
-export const BALL_R = 0.03
-// Extra reach on the server's hit test: a racket position is up to one
-// round-trip old when it arrives, so a ball the player saw touch the racket
-// still counts.
+export const HEAD_R = 0.137
+export const BALL_R = 0.033
 export const HIT_SLACK = 0.025
-export const START_SPEED = 0.95
-export const MAX_SPEED = 2.6
-export const SPEEDUP = 1.06
-// The steepest return, measured from straight down the table.
-export const MAX_ANGLE = (62 * Math.PI) / 180
-// Share of the racket's sideways speed passed to the ball.
-export const SWING = 0.3
-// Spin = sideways acceleration (units/s^2) given per unit of racket swing speed,
-// capped; it decays with a time constant; incoming spin turns the return angle.
-export const SPIN_GAIN = 0.3
-export const MAX_SPIN = 0.75
-export const SPIN_TAU_S = 0.6
-export const SPIN_KICK = 0.25
+export const RACKET_MIN = -0.26
+export const RACKET_MAX = 1.26
+export const RACKET_NEAR = 1.3
+export const RACKET_FAR = 2.5
+export const ARC_H = 6 / 12.16
+export const FLOOR_H = -ARC_H
+export const SPIN_DRIFT = 0.35
+export const SPIN_TAU = 1.8
+// Convert network velocity into the reference's per-frame world delta at 60 Hz.
+const STROKE_GAIN = 12.16 / 60
 export const WIN_SCORE = 7
 export const FIRST_SERVE_MS = 3000
-export const NEXT_SERVE_MS = 1200
-// Rackets move along the end line, never past the table's side edges.
-export const RACKET_MIN = HEAD_R * 0.6
-export const RACKET_MAX = 1 - HEAD_R * 0.6
+export const NEXT_SERVE_MS = 1000
 
-const r4 = (n: number): number => Math.round(n * 10_000) / 10_000
-const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n))
+type Point = [number, number, number]
+type Stroke = { side: number; forward: number; direction: number }
+type Flight = { points: [Point, Point, Point, Point]; elapsed: number; duration: number }
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+const r4 = (v: number) => Math.round(v * 10_000) / 10_000
+const other = (seat: Seat): Seat => seat === 1 ? 2 : 1
+const forward = (seat: Seat) => seat === 1 ? -1 : 1
+const serveY = (seat: Seat) => seat === 1 ? COURT_H - 0.24 : 0.24
+
+export const flightPosition = (points: readonly Point[], time: number): Point => {
+  const t = clamp(time, 0, 1)
+  const u = (t * t * t - 2 * t * t + t) * 1.363 + (-2 * t * t * t + 3 * t * t) + (t * t * t - t * t) * 0.3368
+  const a = 1 - u
+  return [0, 1, 2].map(i => a ** 3 * points[0][i] + 3 * a * a * u * points[1][i] + 3 * a * u * u * points[2][i] + u ** 3 * points[3][i]) as Point
+}
 
 export interface PongFrame {
   b: [number, number, number, number]
@@ -58,164 +43,173 @@ export interface PongFrame {
   c: number
   h: number
   w: number
+  z: [number, number]
+  r: [number, number]
+  a: number[] | null
+  spin: number
+  serve: number
+  j: number
 }
 
 export class PongSim {
   x = 0.5
-  y = COURT_H / 2
+  y = COURT_H - 0.24
+  z = 2 / 12.16
   vx = 0
   vy = 0
-  spin = 0
+  vz = 0
   paddles: [number, number] = [0.5, 0.5]
+  paddleY: [number, number] = [COURT_H + 0.08, -0.08]
   score: [number, number] = [0, 0]
   countdownMs = FIRST_SERVE_MS
   hits = 0
+  bounces = 0
   outcome: Outcome | null = null
-  // Simulation clock and each racket's last position, for its swing speed.
   private clock = 0
-  private swing: [number, number] = [0, 0]
   private moved: [number, number] = [-1, -1]
-  private serveTo: Seat
-  private random: () => number
+  private modern: [boolean, boolean] = [false, false]
+  private strokes: [Stroke, Stroke] = [this.emptyStroke(), this.emptyStroke()]
+  private flight: Flight | null = null
+  private lastHit: Seat | null = null
+  private landed = false
+  private spin = 0
+  private server: Seat
 
   constructor(random: () => number = Math.random) {
-    this.random = random
-    this.serveTo = random() < 0.5 ? 1 : 2
+    this.server = random() < 0.5 ? 1 : 2
+    this.y = serveY(this.server)
   }
 
-  paddle(seat: Seat, x: number): void {
+  private emptyStroke(): Stroke { return { side: 0, forward: 0, direction: 0 } }
+
+  paddle(seat: Seat, x: number, y?: number, released = false): void {
     const i = seat - 1
-    const next = clamp(x, RACKET_MIN, RACKET_MAX)
+    const nextX = clamp(x, RACKET_MIN, RACKET_MAX)
+    const nextY = y === undefined ? this.paddleY[i] : seat === 1
+      ? clamp(y, RACKET_NEAR, RACKET_FAR)
+      : COURT_H - clamp(COURT_H - y, RACKET_NEAR, RACKET_FAR)
+    if (y !== undefined) this.modern[i] = true
+    const dx = nextX - this.paddles[i], dy = nextY - this.paddleY[i]
     const dt = this.moved[i] < 0 ? 0 : (this.clock - this.moved[i]) / 1000
-    // Units per second, smoothed; updates arrive at most ~30 per second.
-    if (dt > 0) this.swing[i] = 0.5 * this.swing[i] + 0.5 * clamp((next - this.paddles[i]) / Math.max(dt, 1 / 60), -6, 6)
-    this.paddles[i] = next
-    this.moved[i] = this.clock
+    if (released || Math.hypot(dx, dy) < 1e-5) this.strokes[i] = this.emptyStroke()
+    else if (dt > 0) {
+      const speedX = dx / Math.max(dt, 1 / 60)
+      const speedY = dy / Math.max(dt, 1 / 60)
+      this.strokes[i] = {
+        side: clamp(speedX * STROKE_GAIN, -1, 1),
+        forward: clamp(speedY * forward(seat) * STROKE_GAIN, -0.5, 1),
+        direction: y === undefined ? clamp(speedX * STROKE_GAIN, -1, 1) : dx / Math.hypot(dx, dy),
+      }
+    }
+    this.paddles[i] = nextX
+    this.paddleY[i] = nextY
+    this.moved[i] = released ? -1 : this.clock
   }
 
-  // Restart the serve countdown (after a pause) without touching the score.
   holdServe(ms: number): void {
     if (this.outcome) return
-    if (this.vx !== 0 || this.vy !== 0) {
-      this.x = 0.5
-      this.y = COURT_H / 2
-      this.vx = 0
-      this.vy = 0
-      this.spin = 0
-    }
+    this.resetBall()
     this.countdownMs = Math.max(this.countdownMs, ms)
   }
 
   step(ms: number): void {
     if (this.outcome || ms <= 0) return
     this.clock += ms
-    // A racket that stopped sending updates has stopped moving.
-    for (const i of [0, 1]) if (this.clock - this.moved[i] > 120) this.swing[i] = 0
+    for (const i of [0, 1]) if (this.clock - this.moved[i] > 120) this.strokes[i] = this.emptyStroke()
     if (this.countdownMs > 0) {
-      this.countdownMs -= ms
-      if (this.countdownMs <= 0) {
-        this.countdownMs = 0
-        this.serve()
-      }
+      this.countdownMs = Math.max(0, this.countdownMs - ms)
+      if (this.countdownMs === 0 && !this.modern[this.server - 1]) this.strike(this.server)
       return
     }
-    const dt = ms / 1000
-    const speed = Math.hypot(this.vx, this.vy)
-    // Each substep moves the ball less than its radius, and a hit is an
-    // overlap test, so no speed or frame time lets it pass through a racket.
-    const n = Math.min(32, Math.max(1, Math.ceil((speed * dt) / (BALL_R * 0.8))))
-    const decay = Math.exp(-dt / n / SPIN_TAU_S)
-    const maxVx = (v: number) => Math.abs(v) * Math.tan(MAX_ANGLE)
-    for (let i = 0; i < n && !this.outcome && this.countdownMs === 0; i++) {
-      if (this.spin !== 0) {
-        // The curve never turns the ball flatter than the steepest return.
-        this.vx = clamp(this.vx + (this.spin * dt) / n, -maxVx(this.vy), maxVx(this.vy))
-        this.spin *= decay
-      }
-      this.x += (this.vx * dt) / n
-      this.y += (this.vy * dt) / n
-      if (this.x < BALL_R) {
-        this.x = 2 * BALL_R - this.x
-        this.vx = Math.abs(this.vx)
-        this.spin = 0
-      } else if (this.x > 1 - BALL_R) {
-        this.x = 2 * (1 - BALL_R) - this.x
-        this.vx = -Math.abs(this.vx)
-        this.spin = 0
-      }
-      if (this.vy > 0 && this.y <= COURT_H && this.touches(1)) this.hit(1)
-      else if (this.vy < 0 && this.y >= 0 && this.touches(2)) this.hit(2)
-      else if (this.y - BALL_R > COURT_H) this.point(2)
-      else if (this.y + BALL_R < 0) this.point(1)
+    if (!this.flight) {
+      if (this.touches(this.server)) this.strike(this.server)
+      return
     }
-  }
-
-  private head(seat: Seat): [number, number] {
-    return [this.paddles[seat - 1], seat === 1 ? COURT_H : 0]
+    for (let left = ms / 1000; left > 1e-8 && this.flight && !this.outcome; left -= 0.008) this.advance(Math.min(left, 0.008))
   }
 
   private touches(seat: Seat): boolean {
-    const [hx, hy] = this.head(seat)
-    return Math.hypot(this.x - hx, this.y - hy) <= HEAD_R + BALL_R + HIT_SLACK
+    return this.z >= -BALL_R && Math.hypot(this.x - this.paddles[seat - 1], this.y - this.paddleY[seat - 1]) <= HEAD_R + BALL_R + HIT_SLACK
   }
 
-  private serve(): void {
-    const angle = (this.random() * 2 - 1) * (Math.PI / 8)
-    this.vx = START_SPEED * Math.sin(angle)
-    this.vy = START_SPEED * Math.cos(angle) * (this.serveTo === 1 ? 1 : -1)
+  private curve(target: Point, duration: number): void {
+    const start: Point = [this.x, this.y, this.z]
+    this.flight = {
+      points: [start, [start[0] + (target[0] - start[0]) * 0.2, start[1] + (target[1] - start[1]) * 0.2, ARC_H], [target[0], target[1], ARC_H], target],
+      elapsed: 0, duration,
+    }
   }
 
-  private hit(seat: Seat): void {
-    const [hx, hy] = this.head(seat)
-    const away = seat === 1 ? -1 : 1 // direction of travel back up the table
-    // Contact normal from the head's centre; behind the line it can't point
-    // backwards, so its forward part is at least a little positive.
-    let nx = this.x - hx
-    let ny = (this.y - hy) * away
-    const len = Math.hypot(nx, ny) || 1
-    nx /= len
-    ny = Math.max(ny / len, 0.05)
-    let angle = Math.atan2(nx, ny) // 0 = straight up the table
-    const speed = Math.min(MAX_SPEED, Math.max(START_SPEED, Math.hypot(this.vx, this.vy) * SPEEDUP))
-    // Angles and swing are both in table x for either side: a racket moving
-    // towards +x pushes the ball towards +x.
-    angle += Math.atan2(SWING * this.swing[seat - 1], speed)
-    // Incoming sidespin kicks off the racket towards its spin direction.
-    angle += SPIN_KICK * this.spin
-    angle = clamp(angle, -MAX_ANGLE, MAX_ANGLE)
-    this.spin = clamp(SPIN_GAIN * this.swing[seat - 1], -MAX_SPIN, MAX_SPIN)
-    this.vx = speed * Math.sin(angle)
-    this.vy = speed * Math.cos(angle) * away
-    // Sit the ball on the head's surface along the outgoing direction's side.
-    const reach = HEAD_R + BALL_R
-    this.x = clamp(hx + Math.sin(angle) * reach, BALL_R, 1 - BALL_R)
-    this.y = hy + Math.cos(angle) * reach * away
+  private strike(seat: Seat): void {
+    const stroke = this.strokes[seat - 1]
+    const target: Point = [0.5 + stroke.direction * 0.36 * (0.85 + 0.15 * stroke.forward),
+      (seat === 1 ? 0.49 : COURT_H - 0.49) + forward(seat) * stroke.forward * (7 / 12.16), FLOOR_H]
+    this.curve(target, 1 - 0.12 * stroke.forward)
+    this.lastHit = seat
+    this.landed = false
+    const brush = Math.abs(stroke.direction) > 0.45 ? stroke.side : 0
+    this.spin = Math.sign(brush) * Math.min(1, Math.max(0, Math.abs(brush) - 0.08) * 2)
     this.hits++
   }
 
-  private point(scorer: Seat): void {
-    this.score[scorer - 1]++
-    this.x = 0.5
-    this.y = COURT_H / 2
-    this.vx = 0
-    this.vy = 0
-    this.spin = 0
-    if (this.score[scorer - 1] >= WIN_SCORE) {
-      this.outcome = { winner: scorer, reason: 'first_to_7' }
-      return
+  private advance(dt: number): void {
+    const flight = this.flight!
+    const [oldX, oldY, oldZ] = [this.x, this.y, this.z]
+    const decay = Math.exp(-dt / SPIN_TAU)
+    flight.points[3][0] += this.spin * SPIN_DRIFT * SPIN_TAU * (1 - decay)
+    this.spin *= decay
+    flight.elapsed += dt
+    const position = flightPosition(flight.points, flight.elapsed / flight.duration)
+    this.x = position[0]; this.y = position[1]; this.z = position[2]
+    this.vx = (this.x - oldX) / dt
+    this.vy = (this.y - oldY) / dt
+    this.vz = (this.z - oldZ) / dt
+    if (oldZ > BALL_R && this.z <= BALL_R && this.vz < 0) {
+      const t = (oldZ - BALL_R) / (oldZ - this.z)
+      const x = oldX + (this.x - oldX) * t, y = oldY + (this.y - oldY) * t
+      if (x >= 0 && x <= 1 && y >= 0 && y <= COURT_H) {
+        if (this.landed) { this.point(this.lastHit!); return }
+        this.x = x; this.y = y; this.z = BALL_R
+        this.landed = true
+        this.bounces++
+        const kickX = this.vx + this.spin * 1.2
+        const length = Math.hypot(kickX, this.vy, this.vz) || 1
+        this.curve([x + kickX / length * (30 / 12.16), y + this.vy / length * (30 / 12.16), FLOOR_H], flight.duration)
+      }
     }
-    this.serveTo = scorer === 1 ? 2 : 1
-    this.countdownMs = NEXT_SERVE_MS
+    if (this.landed && this.lastHit && this.touches(other(this.lastHit))) {
+      this.strike(other(this.lastHit))
+    } else if (this.z <= FLOOR_H || (this.flight === flight && flight.elapsed >= flight.duration)) {
+      this.point(this.landed ? this.lastHit! : other(this.lastHit!))
+    }
+  }
+
+  private resetBall(): void {
+    this.flight = null; this.lastHit = null; this.landed = false
+    this.spin = 0
+    this.x = 0.5; this.y = serveY(this.server); this.z = 2 / 12.16
+    this.vx = 0; this.vy = 0; this.vz = 0
+    this.strokes = [this.emptyStroke(), this.emptyStroke()]
+    this.moved = [-1, -1]
+  }
+
+  private point(seat: Seat): void {
+    this.score[seat - 1]++
+    if ((this.score[0] + this.score[1]) % 2 === 0) this.server = other(this.server)
+    this.resetBall()
+    if (this.score[seat - 1] >= WIN_SCORE) this.outcome = { winner: seat, reason: 'first_to_7' }
+    else this.countdownMs = NEXT_SERVE_MS
   }
 
   frame(): PongFrame {
     return {
       b: [r4(this.x), r4(this.y), r4(this.vx), r4(this.vy)],
-      p: [r4(this.paddles[0]), r4(this.paddles[1])],
-      s: [this.score[0], this.score[1]],
-      c: Math.ceil(this.countdownMs),
-      h: this.hits,
-      w: r4(this.spin),
+      p: this.paddles.map(r4) as [number, number], s: [...this.score],
+      c: Math.ceil(this.countdownMs), h: this.hits, w: 0,
+      z: [r4(this.z), r4(this.vz)], r: this.paddleY.map(r4) as [number, number],
+      a: this.flight ? [...this.flight.points.flat(), this.flight.elapsed, this.flight.duration].map(r4) : null,
+      spin: r4(this.spin),
+      serve: this.flight || this.outcome ? 0 : this.server, j: this.bounces,
     }
   }
 }
