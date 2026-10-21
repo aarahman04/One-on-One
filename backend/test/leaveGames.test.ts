@@ -20,6 +20,7 @@ const { deleteConnectionAttachments } = await import('../src/services/attachment
 const { createSocketServer } = await import('../src/websocket/socketServer.js')
 const { gamePayload } = await import('../src/websocket/games.js')
 const { encrypt } = await import('../src/services/crypto.js')
+const { CALL_DISCONNECT_GRACE_MS } = await import('../src/services/callService.js')
 
 const { io: connect } = createRequire(new URL('../../client/package.json', import.meta.url))('socket.io-client')
 
@@ -149,6 +150,7 @@ test('leave is instant; leaver sees nothing, partner sees ended; old countdown r
   assert.equal(partner.status, 'ended')
   assert.equal(partner.endedBy, A)
   assert.equal(partner.otherNickname, 'Bee')
+  assert.equal(partner.myNickname, 'Ay') // what A calls B
   assert.equal(Date.parse(partner.purgeAt) - Date.parse(partner.endedAt), 7 * DAY)
   assert.equal(partner.myLeaveStep, 0) // 2.0.5 fields still present
 
@@ -158,6 +160,66 @@ test('leave is instant; leaver sees nothing, partner sees ended; old countdown r
     assert.equal(res.body.code, 'leave_steps_removed')
   }
   assert.equal((await api(B, 'POST', `/connections/${CONN}/leave`)).status, 409)
+})
+
+test('current connection nicknames follow each member perspective and unset names stay null', async (t) => {
+  const db = seed()
+  addConnection(db, CONN, 'active')
+  const { api } = await server(t)
+  for (const [user, other, mine] of [[A, 'Ay', 'Bee'], [B, 'Bee', 'Ay']]) {
+    const current = (await api(user, 'GET', '/connections/current')).body.connection
+    assert.equal(current.otherNickname, other)
+    assert.equal(current.myNickname, mine)
+  }
+  await api(A, 'PATCH', `/connections/${CONN}/nickname`, { nickname: 'Partner' })
+  assert.equal((await api(A, 'GET', '/connections/current')).body.connection.otherNickname, 'Partner')
+  assert.equal((await api(B, 'GET', '/connections/current')).body.connection.myNickname, 'Partner')
+  db.tables.connection_members[0].nickname = null
+  assert.equal((await api(A, 'GET', '/connections/current')).body.connection.myNickname, null)
+})
+
+test('check-ins reject new socket sends but legacy rows remain in history', async (t) => {
+  const db = seed()
+  addConnection(db, CONN, 'active')
+  const payload = { mood: 'good', note: 'An old check-in' }
+  const legacy = {
+    id: '33333333-3333-4333-8333-333333333335', connection_id: CONN, sender_id: A,
+    type: 'checkin', content: encrypt(payload.note), payload: { enc: encrypt(JSON.stringify(payload)) }, created_at: iso(),
+  }
+  db.tables.messages.push(legacy)
+  const { api, socket } = await server(t)
+  const a = await socket(A)
+  const rejected = await a.emit('message:send', { type: 'checkin', content: 'A new check-in', payload, tempId: 'new-checkin' })
+  assert.deepEqual(rejected, { error: 'check-ins are no longer supported' })
+  assert.equal(db.tables.messages.length, 2)
+  assert.ok(!a.events.some((event) => event.name === 'message:new'))
+  const history = await api(B, 'GET', `/connections/${CONN}/messages`)
+  assert.equal(history.status, 200)
+  const old = history.body.messages.find((message: any) => message.id === legacy.id)
+  assert.deepEqual([old.type, old.content, old.payload], ['checkin', payload.note, payload])
+})
+
+test('calls formed after socket handshake end when the participant loses their last socket', async (t) => {
+  const db = seed()
+  const { socket } = await server(t)
+  const a = await socket(A), second = await socket(A), b = await socket(B)
+  addConnection(db, CONN, 'active')
+  for (const member of [a, second, b]) member.client.emit('presence', { active: true })
+  await waitFor(() => [a, second, b].every((member) => member.events.some((event) => event.name === 'presence')))
+  // Unit tests assert the full 30 seconds; this checks the real socket wiring.
+  const timeout = setTimeout
+  t.mock.method(globalThis, 'setTimeout', (fn: any, ms?: number, ...args: any[]) => timeout(fn, ms === CALL_DISCONNECT_GRACE_MS ? 10 : ms, ...args))
+  const invited = await a.emit('call:invite', { kind: 'video' })
+  assert.ok(invited.callId)
+  assert.equal((await b.emit('call:accept', { callId: invited.callId })).ok, true)
+  a.client.disconnect()
+  await delay(50)
+  assert.equal(db.tables.messages.filter((message) => message.type === 'call').length, 0)
+  second.client.disconnect()
+  await waitFor(() => db.tables.messages.some((message) => message.type === 'call'))
+  const ended = b.events.filter((event) => event.name === 'call:ended')
+  assert.deepEqual(ended.map((event) => event.data), [{ callId: invited.callId, reason: 'completed' }])
+  assert.equal(db.tables.messages.filter((message) => message.type === 'call').length, 1)
 })
 
 test('leaver and partner can both start a new connection at once; partner starting one purges the ended chat', async (t) => {

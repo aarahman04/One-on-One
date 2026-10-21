@@ -4,6 +4,7 @@
 import { ConnectionError } from '../utils/connectionError.js'
 
 export const NARRATION_PART_CHARS = 400
+export const NARRATION_FIRST_PART_CHARS = 160
 // Generous enough for a cold wake (boot + model load, measured in docs/SPEECH-SERVICE.md) plus the work.
 const TTS_TIMEOUT_MS = 90_000
 const STT_TIMEOUT_MS = 120_000
@@ -50,18 +51,24 @@ function pieces(paragraph: string, max: number): string[] {
 
 // Deterministic: the same letter always yields the same parts, so part N is
 // stable across calls. Paragraph breaks stay as "\n\n" (the service pauses there).
-export function splitNarration(paragraphs: string[], max = NARRATION_PART_CHARS): string[] {
+// Part 0 is kept short (salutation + first sentence(s), at most `first` chars;
+// a longer first sentence is cut between words) so its audio is synthesized,
+// and starts playing, quickly while part 1 is prefetched.
+export function splitNarration(paragraphs: string[], max = NARRATION_PART_CHARS, first = NARRATION_FIRST_PART_CHARS): string[] {
   const parts: string[] = []
   let cur = ''
-  for (const paragraph of paragraphs) {
-    pieces(paragraph, max).forEach((piece, i) => {
+  paragraphs.forEach((paragraph, p) => {
+    let list = pieces(paragraph, max)
+    const room = first - cur.length - 2
+    if (p === 1 && parts.length === 0 && cur && room > 0 && list[0].length > room) list = [...pieces(list[0], room), ...list.slice(1)]
+    list.forEach((piece, i) => {
       const sep = cur ? (i === 0 ? '\n\n' : ' ') : ''
-      if (cur && cur.length + sep.length + piece.length > max) {
+      if (cur && cur.length + sep.length + piece.length > (parts.length === 0 ? first : max)) {
         parts.push(cur)
         cur = piece
       } else cur += sep + piece
     })
-  }
+  })
   if (cur) parts.push(cur)
   return parts
 }

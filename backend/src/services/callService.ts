@@ -43,9 +43,13 @@ interface CallRecord {
   state: 'ringing' | 'connected'
   connectedAt: number | null
   ringTimer: ReturnType<typeof setTimeout>
+  // userId -> timer, armed while that participant has no socket (see callSocketGone).
+  graceTimers: Map<string, ReturnType<typeof setTimeout>>
 }
 
 const RING_TIMEOUT_MS = 45_000
+// How long a participant may stay disconnected before their call is ended.
+export const CALL_DISCONNECT_GRACE_MS = 30_000
 // FCM ttl for the incoming-call / call-end data pushes: a ring older than this
 // is stale (the ring itself lasts 45s), so FCM must not deliver it late.
 export const CALL_PUSH_TTL = '30s'
@@ -96,6 +100,7 @@ function writeCallLog(
 // being deleted a moment later is noise.
 function resolveCall(io: Server, record: CallRecord, outcome: CallOutcome, notify = true): void {
   clearTimeout(record.ringTimer)
+  record.graceTimers.forEach(clearTimeout)
   activeCalls.delete(record.connectionId)
   // Tells a native callee's killed/backgrounded app to dismiss its ring UI
   // (cancel, decline from another device, ring timeout, end, forced end).
@@ -173,6 +178,44 @@ export function getRingingCallForCallee(
   return { callId: record.id, kind: record.kind, fromUserId: record.callerId }
 }
 
+// A participant's socket reconnected: their call lives on.
+export function callSocketBack(connectionId: string, userId: string): void {
+  const record = activeCalls.get(connectionId)
+  const timer = record?.graceTimers.get(userId)
+  if (record && timer) { clearTimeout(timer); record.graceTimers.delete(userId) }
+}
+
+// A participant's socket disconnected. Without this a call whose client died
+// (killed app, lost network, failed teardown) never sends call:end, so no call
+// row is written and the next invite gets 409. If they have no socket left after
+// CALL_DISCONNECT_GRACE_MS the call ends: 'completed' once answered, otherwise
+// 'cancelled' (the caller left while ringing). A ringing callee is left to the
+// ring timeout: a push may still wake their app.
+export async function callSocketGone(io: Server, connectionId: string, userId: string): Promise<void> {
+  const record = activeCalls.get(connectionId)
+  if (!record || (record.callerId !== userId && record.calleeId !== userId)) return
+  if (record.state === 'ringing' && record.calleeId === userId) return
+  if (await hasSocket(io, connectionId, userId)) return
+  if (activeCalls.get(connectionId) !== record || record.graceTimers.has(userId)) return
+  const timer = setTimeout(() => {
+    void (async () => {
+      const online = await hasSocket(io, connectionId, userId)
+      // A reconnect can cancel this timer while the socket lookup is pending.
+      if (record.graceTimers.get(userId) !== timer || activeCalls.get(connectionId) !== record) return
+      record.graceTimers.delete(userId)
+      if (online) return
+      const outcome: CallOutcome = record.state === 'connected' ? 'completed' : 'cancelled'
+      io.to(room(connectionId)).emit('call:ended', { callId: record.id, reason: outcome })
+      resolveCall(io, record, outcome)
+    })().catch((err) => console.error('callService: disconnect grace failed', err))
+  }, CALL_DISCONNECT_GRACE_MS)
+  record.graceTimers.set(userId, timer)
+}
+
+async function hasSocket(io: Server, connectionId: string, userId: string): Promise<boolean> {
+  return (await io.in(room(connectionId)).fetchSockets()).some((s) => socketUserId(s) === userId)
+}
+
 // Server-initiated: ends whatever call is active on a connection, with no
 // participant check — used when the CONNECTION itself is going away
 // (connectionService.terminate), not by either caller or callee's own action.
@@ -237,6 +280,7 @@ export async function inviteCall(
       io.to(room(connection.id)).emit('call:ended', { callId: id, reason: 'missed' })
       resolveCall(io, current, 'missed')
     }, RING_TIMEOUT_MS),
+    graceTimers: new Map(),
   }
   activeCalls.set(connection.id, record)
 
@@ -251,6 +295,7 @@ export function acceptCall(io: Server, connectionId: string, callId: string, use
   const record = activeCalls.get(connectionId)
   if (!record || record.id !== callId) throw new ConnectionError(409, 'call is no longer active')
   if (record.calleeId !== userId) throw new ConnectionError(403, 'not the callee')
+  if (record.state === 'connected') return
   clearTimeout(record.ringTimer)
   record.state = 'connected'
   record.connectedAt = Date.now()
@@ -258,6 +303,9 @@ export function acceptCall(io: Server, connectionId: string, callId: string, use
   // callee is also signed into drops its own incoming-call prompt — same
   // broadcast-and-let-the-client-filter pattern as message:new.
   io.to(room(connectionId)).emit('call:accepted', { callId })
+  // A disconnect can finish while the accept handler is awaiting membership.
+  void Promise.all([callSocketGone(io, connectionId, record.callerId), callSocketGone(io, connectionId, record.calleeId)])
+    .catch((err) => console.error('callService: accepted-call socket check failed', err))
 }
 
 export function declineCall(io: Server, connectionId: string, callId: string, userId: string): void {

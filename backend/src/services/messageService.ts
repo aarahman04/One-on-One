@@ -16,7 +16,6 @@ export function isMessageType(x: unknown): x is MessageType {
 
 const LETTER_APPEARANCES = ['dawn', 'botanical']
 const MEDIA_TYPES: AttachmentKind[] = ['voice', 'image', 'file']
-const CHECKIN_MOODS = ['great', 'good', 'okay', 'down', 'struggling']
 
 export interface Message {
   id: string
@@ -146,15 +145,6 @@ function validateCountdownPayload(payload: unknown): { label: string; targetIso:
   const target = new Date(String(p.targetIso ?? ''))
   if (Number.isNaN(target.getTime())) throw new ConnectionError(400, 'invalid countdown date')
   return { label, targetIso: target.toISOString() }
-}
-
-function validateCheckinPayload(payload: unknown): { mood: string; note: string } {
-  const p = (typeof payload === 'object' && payload !== null ? payload : {}) as Record<string, unknown>
-  const mood = String(p.mood ?? '')
-  if (!CHECKIN_MOODS.includes(mood)) throw new ConnectionError(400, 'invalid check-in mood')
-  const note = String(p.note ?? '').trim()
-  if (note.length < 1 || note.length > 300) throw new ConnectionError(400, 'note must be 1-300 characters')
-  return { mood, note }
 }
 
 function validateAskPayload(payload: unknown): { question: string; answerA: string; answerB?: string } {
@@ -479,13 +469,15 @@ export async function saveMessage(
   replyTo: string | null = null,
 ): Promise<Message> {
   if (!isMessageType(type)) throw new ConnectionError(400, 'invalid message type')
+  // Legacy: existing check-in rows stay readable, but no new ones are accepted.
+  if (type === 'checkin') throw new ConnectionError(400, 'check-ins are no longer supported')
   const isMedia = (MEDIA_TYPES as string[]).includes(type)
 
   // Media messages carry an optional caption, and an alarm/call/system carry
   // no meaningful content of their own — all three can be empty. Every other
-  // type (text, letter, ask, countdown, checkin, thisorthat, location) still
+  // type (text, letter, ask, countdown, thisorthat, location) still
   // requires actual content — each one's primary display string
-  // (body / question / label / note / "optionA vs optionB" / "lat, lng").
+  // (body / question / label / "optionA vs optionB" / "lat, lng").
   const trimmed = content.trim()
   if (isMedia || type === 'alarm' || type === 'call' || type === 'system' || type === 'game') {
     if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
@@ -499,23 +491,21 @@ export async function saveMessage(
       ? validateLetterPayload(payload)
       : type === 'countdown'
         ? validateCountdownPayload(payload)
-        : type === 'checkin'
-          ? validateCheckinPayload(payload)
-          : type === 'ask'
-            ? validateAskPayload(payload)
-            : type === 'thisorthat'
-              ? validateThisOrThatPayload(payload)
-              : type === 'alarm'
-                ? validateAlarmPayload(payload)
-                : type === 'call'
-                  ? validateCallPayload(payload)
-                  : type === 'location'
-                    ? validateLocationPayload(payload)
-                    : type === 'system'
-                      ? validateSystemPayload(payload)
-                      : type === 'game'
-                        ? validateGamePayload(payload)
-                        : null
+        : type === 'ask'
+          ? validateAskPayload(payload)
+          : type === 'thisorthat'
+            ? validateThisOrThatPayload(payload)
+            : type === 'alarm'
+              ? validateAlarmPayload(payload)
+              : type === 'call'
+                ? validateCallPayload(payload)
+                : type === 'location'
+                  ? validateLocationPayload(payload)
+                  : type === 'system'
+                    ? validateSystemPayload(payload)
+                    : type === 'game'
+                      ? validateGamePayload(payload)
+                      : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 

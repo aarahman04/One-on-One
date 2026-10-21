@@ -49,14 +49,14 @@ Connection code alphabet: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, length 8.
 
 `CurrentConnection` (camelCase):
 ```
-{ id, status, myUserId, isRequester, otherNickname|null,
+{ id, status, myUserId, isRequester, otherNickname|null, myNickname|null,
   otherConnectionCode ("" unless status=pending),
   myLeaveStep, otherLeaveStep, daysRemaining|null, bothLeaving, canAdvanceLeave,
   otherLastReadAt|null, otherLastDeliveredAt|null,
   wallpaper ("off"|"love"|"samurai"), messageStyle ("line"|"bubbles"),
   endedBy|null, endedAt|null, purgeAt|null }   // non-null only when status = "ended"
 ```
-Statuses `pending`, `active`, `leave_pending` are returned, and `ended` to the partner (never the leaver) of a connection the other member left, until acknowledged or purged (§10). The leave-step fields are legacy: always `0`/`0`/`null`/`false`/`true`. `otherNickname` is what **I** call the other person.
+Statuses `pending`, `active`, `leave_pending` are returned, and `ended` to the partner (never the leaver) of a connection the other member left, until acknowledged or purged (§10). The leave-step fields are legacy: always `0`/`0`/`null`/`false`/`true`. `otherNickname` is what **I** call the other person; `myNickname` is what the other person calls **me** (the nickname they set, stored on my member row), or `null` if they haven't set one. Clients may use it as the default letter signature.
 
 | Route | Body | Success | Errors |
 |---|---|---|---|
@@ -156,7 +156,7 @@ Socket.IO (in-memory, per socket unless stated):
 | `file` | `{path, mime, size, name}`; mime in file allowlist; `size<=25MiB`; `name` 1-255 | caption (optional) | |
 | `ask` | `{question 1-300, answerA 1-500, answerB? 1-500}` | the question (required) | |
 | `countdown` | `{label 1-100, targetIso: valid date}` (stored as ISO) | the label (required) | |
-| `checkin` | `{mood: great\|good\|okay\|down\|struggling, note 1-300}` | the note (required) | |
+| `checkin` | legacy `{mood: great\|good\|okay\|down\|struggling, note 1-300}` | the note | History/export only. New sends rejected: `check-ins are no longer supported`. Keep existing rows, payload decoding and the DB constraint. |
 | `thisorthat` | `{optionA 1-100, optionB 1-100, pickSender:"a"\|"b", pickRecipient?:"a"\|"b"}` | e.g. "A vs B" (required non-empty) | |
 | `alarm` | raise: none. ack: `{ack:<raise message id>}`. cancel: `{ack:<raise id>, cancelled:true}` | empty | see alarm rules below |
 | `location` | `{lat -90..90, lng -180..180, accuracy? >=0}` | non-empty display string, e.g. "lat, lng" | |
@@ -199,12 +199,12 @@ Every handler re-resolves the live connection from the DB; the client never name
 | `message:pin` | `{messageId}` or `{messageId: null}` to unpin | `{ok:true, pin}`. One pin per connection; either member pins, a new pin replaces the old one. Not deleted / system messages. Broadcasts `pin:update`. |
 | `typing` | `{typing: boolean}` | no ack. Relayed to the other member's sockets as `typing`, never stored. 20 per socket / 10 s. Clients send `true` at most every 3 s while composing and `false` when the draft empties or sends; receivers expire it ~6 s after the last `true`. |
 | `call:invite` | `{kind?: "audio"\|"video"}` (anything else = audio) | `{ok:true, callId, iceServers}`. Errors: `a call is already in progress on this connection` (409); if the callee has no live socket **and no `android-native` push token**: `They're not reachable right now — they'll see that you called` (an `unreachable` call row is written and a text push is sent; no ring). If the callee has a native token the call rings normally (state is held server-side; the woken app reconnects and gets `call:incoming` replayed) and a data-only `call` FCM is sent (section 6). |
-| `call:accept` | `{callId}` | `{ok:true, iceServers}`; errors `call is no longer active`, `not the callee` |
+| `call:accept` | `{callId}` | `{ok:true, iceServers}`; repeated accept by the callee is a no-op (preserves call duration); errors `call is no longer active`, `not the callee` |
 | `call:decline` | `{callId}` | `{ok:true}`; same errors |
 | `call:signal` | `{callId, data}` opaque SDP/ICE, relayed untouched to the other participant's sockets only | `{ok:true}`; errors `call is no longer active`, `not a participant in this call` |
 | `call:end` | `{callId}` | `{ok:true}` (no-op if the call already ended) |
 
-Call state is in memory (one call per connection). Outcomes: `end` by caller before accept = `cancelled`, by callee before accept = `declined`, after accept = `completed`; no answer in 45 s = `missed`. The server writes the `call` message row on every resolution. A "missed/cancelled" resolution sends the callee a text push (title = caller nickname, body `Missed voice call` / `Missed video call`).
+Call state is in memory (one call per connection). Outcomes: `end` by caller before accept = `cancelled`, by callee before accept = `declined`, after accept = `completed`; no answer in 45 s = `missed`. Disconnect rule (2026-10-21): when a participant's last socket in the room closes, a 30 s grace timer starts (cleared when any socket of theirs reconnects); if it expires with the call still active, the server emits `call:ended` and resolves it as `completed` (answered) or `cancelled` (caller left while ringing). A ringing callee's disconnect starts no timer (a push may still wake the app; the 45 s ring timeout applies). Clients should still send `call:end` on every exit, waiting for the socket if needed. The server writes the `call` message row on every resolution. A "missed/cancelled" resolution sends the callee a text push (title = caller nickname, body `Missed voice call` / `Missed video call`).
 
 ### Server -> client
 | Event | Payload | When |
@@ -383,7 +383,7 @@ Backend proxies to a private `speech` service (Kokoro-82M TTS, Whisper base.en S
 `GET /api/connections/:connectionId/messages/:messageId/narration?part=<n>` (`n` default `0`, decimal integer).
 - Caller must be a member of a **live** connection, or the partner of an ended connection inside its read-only window (same rule as `GET /connections/:id/messages`). The message must belong to that connection, be `type === "letter"` and not deleted.
 - The text comes **only from the DB** (decrypted): paragraphs `Dear <payload.to>.`, each non-empty body line (whitespace collapsed), `With love, <payload.from>.` — exactly what the letter shows, never summarised or rewritten.
-- Split deterministically into parts of ≤ 400 characters: whole sentences packed greedily; a sentence over 400 is cut between words; only a single word over 400 characters is cut mid-word. Paragraph breaks are kept as `\n\n` and spoken as a ~0.45 s pause. The same letter always yields the same parts, so part `n` is stable. A 4000-character letter is about 11 parts.
+- Split deterministically into parts of ≤ 400 characters, except part `0`, which is ≤ 160 characters (the salutation plus the first sentence(s); a longer first sentence is cut between words) so the first audio starts quickly: whole sentences packed greedily; a sentence over 400 is cut between words; only a single word over 400 characters is cut mid-word. Paragraph breaks are kept as `\n\n` and spoken as a ~0.45 s pause. The same letter always yields the same parts, so part `n` is stable. A 4000-character letter is about 11–12 parts.
 - `200` body `audio/ogg` (Opus, mono, 24 kHz input rate, ~32 kbps) for that part, streamed. Headers: `X-Narration-Part: <n>`, `X-Narration-Parts: <total>`, `Cache-Control: private, no-store`. The two narration part headers are exposed through CORS for browser clients. Play parts `0 .. total-1` in order (prefetching `n+1` while `n` plays hides synthesis time).
 - `404 {code:"not_found"}`: not a member, other connection's message, not a letter, deleted, malformed ids, malformed or out-of-range `part` — one answer for all, so existence never leaks.
 - `429 {code:"rate_limited"}`: more than 30 part-requests / 60 s **per user**.
