@@ -279,10 +279,11 @@ export class MatchManager {
     return ok(this.emit(next))
   }
 
-  paddle(connectionId: string, userId: string, matchId: unknown, x: unknown): boolean {
+  paddle(connectionId: string, userId: string, matchId: unknown, x: unknown, y: unknown = undefined, released: unknown = false): boolean {
     const m = this.find(connectionId, userId, matchId)
-    if (!m || m.status !== 'playing' || !m.pong || typeof x !== 'number' || !Number.isFinite(x)) return false
-    m.pong.paddle(this.seat(m, userId) as Seat, x)
+    if (!m || m.status !== 'playing' || m.away.size > 0 || !m.pong || typeof x !== 'number' || !Number.isFinite(x) || typeof released !== 'boolean') return false
+    if (y !== undefined && (typeof y !== 'number' || !Number.isFinite(y))) return false
+    m.pong.paddle(this.seat(m, userId) as Seat, x, y as number | undefined, released)
     return true
   }
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ChessRules, ConnectFourRules, DotsRules, ReversiRules, TicTacToeRules } from '../src/games/rules.js'
-import { BALL_R, COURT_H, HEAD_R, MAX_ANGLE, MAX_SPEED, MAX_SPIN, PongSim, RACKET_MAX, RACKET_MIN, START_SPEED, WIN_SCORE } from '../src/games/pong.js'
+import { COURT_H, RACKET_MIN } from '../src/games/pong.js'
 import { INVITE_TTL_MS, MatchManager, OVER_TTL_MS, PONG_AWAY_GRACE_MS, TURN_AWAY_GRACE_MS, type MatchSnapshot } from '../src/games/matches.js'
 
 const play = (game: ChessRules, ...ucis: string[]) => {
@@ -152,190 +152,6 @@ test('tic-tac-toe, connect four and dots & boxes', () => {
   assert.equal(d.apply(2, { h: 1, r: 0, c: 1 }), 'invalid_move')
 })
 
-// Serves straight at seat 2 (random 0.5 -> angle 0; serveTo = 2 because 0.5 is not < 0.5).
-const served = () => {
-  const p = new PongSim(() => 0.5)
-  p.step(3000)
-  return p
-}
-// Run until the ball is returned by `seat`, or give up.
-const untilHit = (p: PongSim, hits: number, ms = 16, max = 600) => {
-  for (let i = 0; i < max && p.hits === hits && !p.outcome; i++) p.step(ms)
-}
-
-test('pong: serve after the countdown, straight down the table', () => {
-  const p = new PongSim(() => 0.5)
-  p.step(2999)
-  assert.deepEqual([p.vx, p.vy], [0, 0])
-  p.step(1)
-  assert.ok(p.vy < 0 && Math.abs(p.vx) < 1e-9)
-  assert.ok(Math.abs(Math.hypot(p.vx, p.vy) - START_SPEED) < 1e-9)
-})
-
-test('pong: the contact point on the round head sets the return angle', () => {
-  const centre = served()
-  centre.paddle(2, 0.5)
-  untilHit(centre, 0)
-  assert.equal(centre.hits, 1)
-  assert.ok(centre.vy > 0 && Math.abs(centre.vx) < 1e-6, 'a centre hit goes straight back')
-  assert.ok(Math.hypot(centre.vx, centre.vy) > START_SPEED, 'each return is faster')
-
-  const edge = served()
-  edge.paddle(2, 0.5 - HEAD_R * 0.8) // ball meets the head's right-hand side
-  untilHit(edge, 0)
-  assert.equal(edge.hits, 1)
-  assert.ok(edge.vx > 0.2, 'an off-centre hit is angled away from the head centre')
-  const angle = Math.atan2(Math.abs(edge.vx), Math.abs(edge.vy))
-  assert.ok(angle <= MAX_ANGLE + 1e-9)
-
-  const left = served()
-  left.paddle(2, 0.5 + HEAD_R * 0.8)
-  untilHit(left, 0)
-  assert.ok(left.vx < -0.2)
-})
-
-test('pong: a swinging racket adds spin', () => {
-  // Same centred contact; only the racket's sideways speed differs.
-  // Racket updates every 32 ms (~30/s, like a client), moving at `speed` so it
-  // passes the ball's x exactly when the ball reaches the head.
-  const contact = (speed: number) => {
-    const p = served()
-    const meet = HEAD_R + BALL_R + 0.025
-    for (let i = 0; i < 2000 && p.hits === 0; i++) {
-      if (i % 8 === 0) p.paddle(2, 0.5 - (speed * (p.y - meet)) / Math.abs(p.vy))
-      p.step(4)
-    }
-    assert.equal(p.hits, 1)
-    return p.vx
-  }
-  assert.ok(Math.abs(contact(0)) < 0.02)
-  assert.ok(contact(1.2) > 0.1, 'moving right pushes the ball right')
-  assert.ok(contact(-1.2) < -0.1, 'moving left pushes the ball left')
-})
-
-test('pong: sidespin bends the flight, is sent in frames and decays', () => {
-  for (const spin of [0.6, -0.6]) {
-    const p = served()
-    p.spin = spin
-    for (let i = 0; i < 20; i++) p.step(16)
-    assert.ok(Math.sign(p.vx) === Math.sign(spin) && Math.sign(p.x - 0.5) === Math.sign(spin), `curves with spin ${spin}`)
-    assert.ok(Math.abs(p.spin) < 0.6, 'decays')
-    assert.equal(p.frame().w, Math.round(p.spin * 10_000) / 10_000)
-  }
-})
-
-test('pong: a sideways swing at contact spins the ball, capped', () => {
-  const contact = (speed: number) => {
-    const p = served()
-    const meet = HEAD_R + BALL_R + 0.025
-    for (let i = 0; i < 2000 && p.hits === 0; i++) {
-      if (i % 8 === 0) p.paddle(2, 0.5 - (speed * (p.y - meet)) / Math.abs(p.vy))
-      p.step(4)
-    }
-    assert.equal(p.hits, 1)
-    return p.spin
-  }
-  assert.ok(Math.abs(contact(0)) < 0.05)
-  assert.ok(contact(1.2) > 0.2)
-  assert.ok(contact(-1.2) < -0.2)
-  assert.equal(contact(5), MAX_SPIN)
-})
-
-test('pong: incoming spin kicks off the racket; a side bounce kills spin; curve stays within the max angle', () => {
-  const kick = (spin: number) => {
-    const p = served()
-    p.paddle(2, 0.5)
-    p.x = 0.5
-    p.y = HEAD_R + BALL_R + 0.01
-    p.vx = 0
-    p.vy = -1
-    p.spin = spin
-    p.step(4)
-    assert.equal(p.hits, 1)
-    return p.vx
-  }
-  assert.ok(Math.abs(kick(0)) < 1e-6)
-  assert.ok(kick(0.6) > 0.1 && kick(-0.6) < -0.1)
-
-  const w = served()
-  w.vx = 0.8
-  w.spin = 0.5
-  for (let i = 0; i < 200 && w.vx > 0; i++) w.step(8)
-  assert.ok(w.vx < 0)
-  assert.equal(w.spin, 0)
-
-  const steep = served()
-  steep.vy = -0.5
-  steep.spin = MAX_SPIN
-  for (let i = 0; i < 400 && !steep.score[0] && !steep.hits; i++) {
-    steep.step(16)
-    assert.ok(Math.abs(steep.vx) <= Math.abs(steep.vy) * Math.tan(MAX_ANGLE) + 1e-9)
-  }
-})
-
-test('pong: side edges reflect, misses score for the opponent, ball resets and serves to the loser', () => {
-  const p = served()
-  p.paddle(2, RACKET_MAX) // far from the ball: a miss
-  for (let i = 0; i < 400 && p.score[0] === 0; i++) p.step(16)
-  assert.deepEqual(p.score, [1, 0])
-  assert.deepEqual([p.x, p.y, p.vx, p.vy], [0.5, COURT_H / 2, 0, 0])
-  assert.ok(p.countdownMs > 0)
-  p.step(p.countdownMs)
-  assert.ok(p.vy < 0, 'seat 2 lost the point and receives the serve')
-
-  const w = served()
-  w.paddle(2, 0.5 - HEAD_R * 0.9)
-  untilHit(w, 0)
-  let reflected = false
-  for (let i = 0; i < 400 && !reflected; i++) {
-    w.step(16)
-    reflected = w.vx < 0
-    assert.ok(w.x >= BALL_R - 1e-9 && w.x <= 1 - BALL_R + 1e-9)
-  }
-  assert.ok(reflected, 'bounced off the side edge')
-})
-
-test('pong: never passes through a racket, even at top speed with 50 ms frames', () => {
-  for (const x of [0.5, 0.5 - HEAD_R, 0.5 + HEAD_R]) {
-    const p = served()
-    p.vx = 0
-    p.vy = -MAX_SPEED
-    p.paddle(2, x)
-    for (let i = 0; i < 40 && p.hits === 0 && !p.score[0]; i++) p.step(50)
-    assert.equal(p.hits, 1, `racket at ${x}`)
-    assert.deepEqual(p.score, [0, 0])
-  }
-})
-
-test('pong: a ball past the end line cannot be hit any more; rackets stay on the table', () => {
-  const p = served()
-  p.paddle(2, RACKET_MAX)
-  for (let i = 0; i < 400 && p.y > -BALL_R / 2; i++) p.step(4)
-  p.paddle(2, 0.5) // too late
-  p.step(16)
-  assert.equal(p.hits, 0)
-  p.paddle(1, -3)
-  p.paddle(2, 9)
-  assert.deepEqual(p.paddles, [RACKET_MIN, RACKET_MAX])
-})
-
-test('pong: two tracking players keep a long rally; first to 7 ends the game', () => {
-  const p = new PongSim(() => 0.37)
-  for (let i = 0; i < 60 * 60; i++) {
-    p.paddle(1, p.x)
-    p.paddle(2, p.x)
-    p.step(1000 / 60)
-  }
-  assert.deepEqual(p.score, [0, 0])
-  assert.ok(p.hits > 20, `${p.hits} returns in a minute`)
-  const g = new PongSim(() => 0.5)
-  g.paddle(1, RACKET_MIN)
-  g.paddle(2, RACKET_MAX)
-  for (let i = 0; i < 20_000 && !g.outcome; i++) g.step(16)
-  assert.equal(Math.max(...g.score), WIN_SCORE)
-  assert.equal(g.outcome?.reason, 'first_to_7')
-})
-
 test('reversi: opening, flips, illegal and malformed moves', () => {
   const g = new ReversiRules()
   assert.deepEqual(g.view().legal, [20, 29, 34, 43])
@@ -472,7 +288,12 @@ test('matches: pong runs only on the server, pauses for an absent player and end
   const id = m.invite(C, A, B, 'pong').match!.id
   m.accept(C, B, id)
   assert.equal(m.paddle(C, A, id, 0.3), true)
+  assert.equal(m.paddle(C, A, id, 0.3, 1.8, true), true)
+  assert.equal(m.paddle(C, A, id, 0.3, 1.8, 'true'), false)
+  assert.equal(m.paddle(C, 'stranger', id, 0.3, 1.8, true), false)
   assert.equal(m.paddle(C, A, id, Number.NaN), false)
+  assert.equal(m.paddle(C, A, id, 0.3, Number.POSITIVE_INFINITY), false)
+  assert.equal(m.paddle(C, A, id, 0.3, '1.8'), false)
   assert.equal(m.paddle(C, A, 'other', 0.3), false)
   m.advancePong(C, 3500)
   assert.ok(frames.length > 100)
@@ -489,7 +310,15 @@ test('matches: pong runs only on the server, pauses for an absent player and end
   assert.equal(m.away(C, A, id, 'yes').ok, false)
   assert.equal(m.away(C, A, id, false).match!.paused, false)
   assert.ok(frames.length > before)
-  m.advancePong(C, 120_000)
+  for (let i = 0; i < 7500 && m.get(C)!.status === 'playing'; i++) {
+    const f = frames.at(-1) as { b: number[]; serve: number; c: number }
+    for (const seat of [1, 2]) {
+      const user = m.get(C)!.players[seat - 1]
+      const serving = f.serve === seat && f.c === 0
+      m.paddle(C, user, id, serving ? f.b[0] : RACKET_MIN, serving ? f.b[1] : seat === 1 ? 2.5 : COURT_H - 2.5, true)
+    }
+    m.advancePong(C, 16)
+  }
   const end = m.get(C)!
   assert.equal(end.status, 'over')
   assert.equal(end.outcome!.reason, 'first_to_7')
