@@ -98,14 +98,14 @@ test('ping pong: a brushing stroke spins the ball after release, without later r
     return { p, target }
   }
   const active = brush(false), released = brush(true)
-  assert.ok(active.p.frame().a![9] > active.target + 0.004)
+  assert.ok(active.p.frame().a![9] < active.target - 0.004, 'a rightward brush hooks the ball left')
   near(released.p.frame().a![9], active.p.frame().a![9])
   near(active.p.x, released.p.x)
-  assert.ok(released.p.frame().spin > 0.18 && released.p.frame().spin < 0.2)
-  const spin = released.p.frame().spin
+  assert.ok(released.p.frame().spin < -0.45 && released.p.frame().spin > -0.5)
+  const spin = Math.abs(released.p.frame().spin)
   released.p.paddle(2, 0.2, 0.24)
   released.p.step(16)
-  assert.ok(released.p.frame().spin > 0 && released.p.frame().spin < spin)
+  assert.ok(released.p.frame().spin < 0 && Math.abs(released.p.frame().spin) < spin)
 })
 
 test('ping pong: equal-speed gestures at 30 and 60 Hz have equal power and spin', () => {
@@ -127,8 +127,9 @@ test('ping pong: equal-speed gestures at 30 and 60 Hz have equal power and spin'
 test('ping pong: side and corner misses keep travelling outside instead of reflecting', () => {
   const p = manual()
   p.paddle(1, RACKET_MIN, 2.5, true)
+  // A slow sideways placement (no spin) aims wide and runs on past the edge.
   p.paddle(2, 0.2, 0.24)
-  p.step(16)
+  p.step(900)
   p.paddle(2, 0.5, 0.24)
   p.step(8)
   run(p, () => p.x > 1.02)
@@ -167,7 +168,7 @@ test('ping pong: brushing spin kicks sideways on the table, while a plain block 
   assert.ok(p.x > .1 && p.x < .95, 'the spinning shot visibly touches the table')
   const a = p.frame().a!
   const outgoing = (a[9] - p.x) / (a[10] - p.y)
-  assert.ok(outgoing > incoming + .05, 'sidespin changes direction at the bounce')
+  assert.ok(outgoing < incoming - .05, 'sidespin turns the ball at the bounce, with its hook')
 
   const flat = new PongSim(() => .5)
   flat.paddle(1, RACKET_MIN); flat.step(FIRST_SERVE_MS)
@@ -176,7 +177,7 @@ test('ping pong: brushing spin kicks sideways on the table, while a plain block 
 })
 
 test('ping pong: ordinary angled strokes have room to land on either side', () => {
-  for (const dx of [-.3, -.2, .2, .3]) for (const dy of [.03, .15, .3]) {
+  for (const dx of [-.3, -.2, .2, .3]) for (const dy of [.02, .035, .05]) {
     const p = manual()
     p.paddle(1, RACKET_MIN, 2.5, true)
     p.paddle(2, .5 - dx, .24 - dy); p.step(16)
@@ -185,6 +186,16 @@ test('ping pong: ordinary angled strokes have room to land on either side', () =
     assert.equal(p.bounces, 1, `stroke ${dx},${dy} lands`)
     assert.deepEqual(p.score, [0, 0])
   }
+})
+
+test('ping pong: a very hard stroke sails long off the table', () => {
+  const p = manual()
+  p.paddle(1, RACKET_MIN, 2.5, true)
+  p.paddle(2, .5, -.06); p.step(16)
+  p.paddle(2, .5, .24); p.step(8)
+  run(p, () => p.score[0] + p.score[1] > 0)
+  assert.equal(p.bounces, 0, 'never touches the table')
+  assert.deepEqual(p.score, [1, 0], 'the hitter loses the point')
 })
 
 test('ping pong: a gentle angled placement aims without adding the brush kick', () => {
@@ -200,11 +211,11 @@ test('ping pong: a hard brush has at most twice the spin of a light brush', () =
     const p = manual()
     p.paddle(2, .2, -.06); p.step(ms)
     p.paddle(2, .5, .24); p.step(8)
-    return p.frame().spin
+    return Math.abs(p.frame().spin)
   }
   const light = brush(400), hard = brush(16)
-  assert.ok(light >= .1 && hard > light * 1.5)
-  assert.ok(hard <= light * 2 && hard <= .2)
+  assert.ok(light >= .25 && hard > light * 1.5)
+  assert.ok(hard <= light * 2 && hard <= .5)
 })
 
 test('ping pong: moving past the ball cannot return it with the back of the bat', () => {
@@ -244,4 +255,74 @@ test('ping pong: every two points changes server, first to seven finishes, pause
   assert.equal(Math.max(...p.score), 7)
   assert.equal(p.outcome?.reason, 'first_to_7')
   assert.ok(p.frame().z.every(Number.isFinite))
+})
+
+test('ping pong: swipe speed controls depth smoothly from short to the end line; only a smash goes long', () => {
+  const land = (speed: number) => {
+    const p = new PongSim(() => 0.5)
+    p.paddle(1, RACKET_MIN, 2.5, true)
+    p.paddle(2, 0.5, -0.5); p.step(3000)
+    let y = -0.5
+    while (p.hits === 0 && y < 0.6) { y += speed / 60; p.step(1000 / 60); p.paddle(2, 0.5, y) }
+    run(p, () => p.bounces > 0 || p.score[0] + p.score[1] > 0)
+    return p.bounces ? p.y : Infinity
+  }
+  const depths = [1, 3, 6, 10].map(land)
+  for (let i = 1; i < depths.length; i++) assert.ok(depths[i] > depths[i - 1] + 0.05, `deeper with speed: ${depths}`)
+  assert.ok(depths[0] < 1.35, 'a soft touch lands short')
+  assert.ok(depths[3] > 1.7 && depths[3] < COURT_H, 'a strong swipe reaches the end line')
+  assert.equal(land(14), Infinity, 'a smash sails long')
+})
+
+test('ping pong: even a short hard-spin shot turns at most ~29 degrees at the bounce', () => {
+  for (const side of [-1, 1]) {
+    const p = new PongSim(() => 0.5)
+    p.paddle(1, RACKET_MIN, 2.5, true)
+    // A short ball brushed hard sideways: the old exploit.
+    p.paddle(2, 0.5 - side * 0.3, 0.22); p.step(3000)
+    p.paddle(2, 0.5 - side * 0.3, 0.22); p.step(16)
+    p.paddle(2, 0.5, 0.24); p.step(8)
+    assert.ok(Math.abs(p.frame().spin) > 0.3, 'hard brush spins')
+    let before = 0
+    for (let i = 0; i < 400 && !p.bounces; i++) { before = Math.atan2(p.vx, p.vy); p.step(8) }
+    assert.equal(p.bounces, 1)
+    p.step(24)
+    const after = Math.atan2(p.vx, p.vy)
+    const turned = Math.abs(after - before) * 180 / Math.PI
+    assert.ok(turned > 3 && turned < 30, `turned ${turned.toFixed(1)} deg`)
+  }
+})
+
+test('ping pong: razor spin is rare, needs a maximal brush, breaks sharply and loses pace', () => {
+  const shot = (random: number, dx: number) => {
+    const rolls = [0.5, random] // first roll picks seat 2 to serve, the next is the razor roll
+    const p = new PongSim(() => rolls.shift() ?? random)
+    p.paddle(1, RACKET_MIN, 2.5, true)
+    p.paddle(2, 0.5 - dx, 0.22); p.step(3000)
+    p.paddle(2, 0.5 - dx, 0.22); p.step(16)
+    p.paddle(2, 0.5, 0.24); p.step(8)
+    return p.frame().spin
+  }
+  assert.ok(Math.abs(shot(0.5, 0.3)) <= 0.5, 'no razor without luck') // random .5 > chance
+  assert.ok(Math.abs(shot(0.1, 0.3)) > 0.65, 'a maximal brush can razor')
+  assert.ok(Math.abs(shot(0.1, 0.05)) < 0.4, 'a gentle brush never razors, even with luck')
+})
+
+test('ping pong: network jitter in paddle updates barely changes stroke power', () => {
+  const power = (gaps: number[]) => {
+    const p = new PongSim(() => 0.5)
+    p.paddle(1, RACKET_MIN, 2.5, true)
+    p.paddle(2, 0.5, -0.5); p.step(3000)
+    let y = -0.5, t = 0
+    for (const gap of gaps) {
+      p.step(gap); t += gap
+      y = Math.min(0.24, -0.5 + 6 * (t / 1000)) // a steady 6 table widths/s swipe; clients stop the bat at the ball
+      p.paddle(2, 0.5, y)
+      if (p.hits) break
+    }
+    return p.frame().a![10]
+  }
+  const even = power(Array(40).fill(33))
+  const bunched = power(Array.from({ length: 40 }, (_, i) => i % 2 ? 61 : 5))
+  assert.ok(Math.abs(even - bunched) < 0.05, `even ${even} vs bunched ${bunched}`)
 })
