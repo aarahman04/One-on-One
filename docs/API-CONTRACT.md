@@ -49,14 +49,14 @@ Connection code alphabet: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, length 8.
 
 `CurrentConnection` (camelCase):
 ```
-{ id, status, myUserId, isRequester, otherNickname|null,
+{ id, status, myUserId, isRequester, otherNickname|null, myNickname|null,
   otherConnectionCode ("" unless status=pending),
   myLeaveStep, otherLeaveStep, daysRemaining|null, bothLeaving, canAdvanceLeave,
   otherLastReadAt|null, otherLastDeliveredAt|null,
   wallpaper ("off"|"love"|"samurai"), messageStyle ("line"|"bubbles"),
   endedBy|null, endedAt|null, purgeAt|null }   // non-null only when status = "ended"
 ```
-Statuses `pending`, `active`, `leave_pending` are returned, and `ended` to the partner (never the leaver) of a connection the other member left, until acknowledged or purged (§10). The leave-step fields are legacy: always `0`/`0`/`null`/`false`/`true`. `otherNickname` is what **I** call the other person.
+Statuses `pending`, `active`, `leave_pending` are returned, and `ended` to the partner (never the leaver) of a connection the other member left, until acknowledged or purged (§10). The leave-step fields are legacy: always `0`/`0`/`null`/`false`/`true`. `otherNickname` is what **I** call the other person; `myNickname` is what the other person calls **me** (the nickname they set, stored on my member row), or `null` if they haven't set one. Clients may use it as the default letter signature.
 
 | Route | Body | Success | Errors |
 |---|---|---|---|
@@ -383,7 +383,7 @@ Backend proxies to a private `speech` service (Kokoro-82M TTS, Whisper base.en S
 `GET /api/connections/:connectionId/messages/:messageId/narration?part=<n>` (`n` default `0`, decimal integer).
 - Caller must be a member of a **live** connection, or the partner of an ended connection inside its read-only window (same rule as `GET /connections/:id/messages`). The message must belong to that connection, be `type === "letter"` and not deleted.
 - The text comes **only from the DB** (decrypted): paragraphs `Dear <payload.to>.`, each non-empty body line (whitespace collapsed), `With love, <payload.from>.` — exactly what the letter shows, never summarised or rewritten.
-- Split deterministically into parts of ≤ 400 characters: whole sentences packed greedily; a sentence over 400 is cut between words; only a single word over 400 characters is cut mid-word. Paragraph breaks are kept as `\n\n` and spoken as a ~0.45 s pause. The same letter always yields the same parts, so part `n` is stable. A 4000-character letter is about 11 parts.
+- Split deterministically into parts of ≤ 400 characters, except part `0`, which is ≤ 160 characters (the salutation plus the first sentence(s); a longer first sentence is cut between words) so the first audio starts quickly: whole sentences packed greedily; a sentence over 400 is cut between words; only a single word over 400 characters is cut mid-word. Paragraph breaks are kept as `\n\n` and spoken as a ~0.45 s pause. The same letter always yields the same parts, so part `n` is stable. A 4000-character letter is about 11–12 parts.
 - `200` body `audio/ogg` (Opus, mono, 24 kHz input rate, ~32 kbps) for that part, streamed. Headers: `X-Narration-Part: <n>`, `X-Narration-Parts: <total>`, `Cache-Control: private, no-store`. The two narration part headers are exposed through CORS for browser clients. Play parts `0 .. total-1` in order (prefetching `n+1` while `n` plays hides synthesis time).
 - `404 {code:"not_found"}`: not a member, other connection's message, not a letter, deleted, malformed ids, malformed or out-of-range `part` — one answer for all, so existence never leaks.
 - `429 {code:"rate_limited"}`: more than 30 part-requests / 60 s **per user**.

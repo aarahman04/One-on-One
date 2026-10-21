@@ -176,6 +176,8 @@ interface CurrentConnection {
   myUserId: string
   isRequester: boolean
   otherNickname: string | null
+  // What the other member calls me (the nickname they set, stored on my row).
+  myNickname: string | null
   otherConnectionCode: string
   myLeaveStep: number
   otherLeaveStep: number
@@ -280,6 +282,7 @@ export async function getCurrentConnection(userId: string): Promise<CurrentConne
     myUserId: userId,
     isRequester: data.user_a_id === userId,
     otherNickname: other?.nickname ?? null,
+    myNickname: mine?.nickname ?? null,
     otherConnectionCode,
     myLeaveStep,
     otherLeaveStep,

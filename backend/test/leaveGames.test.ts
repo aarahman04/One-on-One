@@ -149,6 +149,7 @@ test('leave is instant; leaver sees nothing, partner sees ended; old countdown r
   assert.equal(partner.status, 'ended')
   assert.equal(partner.endedBy, A)
   assert.equal(partner.otherNickname, 'Bee')
+  assert.equal(partner.myNickname, 'Ay') // what A calls B
   assert.equal(Date.parse(partner.purgeAt) - Date.parse(partner.endedAt), 7 * DAY)
   assert.equal(partner.myLeaveStep, 0) // 2.0.5 fields still present
 

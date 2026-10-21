@@ -12,7 +12,7 @@ const { installFakeSupabase } = await import('./fakeSupabase.js')
 const { speechRouter } = await import('../src/routes/speech.js')
 const { ConnectionError } = await import('../src/utils/connectionError.js')
 const { encrypt } = await import('../src/services/crypto.js')
-const { splitNarration, narrationParagraphs, NARRATION_PART_CHARS } = await import('../src/services/speechService.js')
+const { splitNarration, narrationParagraphs, NARRATION_PART_CHARS, NARRATION_FIRST_PART_CHARS } = await import('../src/services/speechService.js')
 
 const A = '00000000-0000-4000-8000-00000000000a'
 const B = '00000000-0000-4000-8000-00000000000b'
@@ -120,6 +120,13 @@ test('splitNarration: deterministic, bounded, lossless, paragraph-aware', () => 
   const words = (s: string) => s.split(/\s+/).filter(Boolean).join(' ')
   assert.equal(words(parts.join(' ')).replace(/x(?: *x)*/g, 'x'), words(paragraphs.join(' ')).replace(/x(?: *x)*/g, 'x'))
   assert.ok(parts[0].startsWith('Dear Bee.\n\nI have been meaning'))
+  // Part 0 is short so the first audio arrives fast; the rest use the full size.
+  assert.ok(parts[0].length <= NARRATION_FIRST_PART_CHARS, `${parts[0].length}`)
+  assert.ok(parts[1].length > NARRATION_FIRST_PART_CHARS)
+  // A first sentence longer than the part-0 room is cut between words, losslessly.
+  const long = splitNarration(narrationParagraphs({ from: 'A', to: 'B', body: `${'word '.repeat(60)}end. Next.` }))
+  assert.ok(long[0].startsWith('Dear B.\n\nword word') && long[0].length <= NARRATION_FIRST_PART_CHARS, long[0])
+  assert.equal(words(long.join(' ')), words(`Dear B. ${'word '.repeat(60)}end. Next. With love, A.`))
   // A short letter is one part.
   assert.deepEqual(splitNarration(narrationParagraphs({ from: 'A', to: 'B', body: 'Hi.\nBye.' })), ['Dear B.\n\nHi.\n\nBye.\n\nWith love, A.'])
 })
