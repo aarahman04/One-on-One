@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { Server, Socket } from 'socket.io'
 import type { MemberConnection } from '../services/connectionAccess.js'
 import { otherMemberId, room } from '../utils/connections.js'
@@ -12,12 +13,16 @@ import { MATCH_GAMES, MatchManager, parseClock, parsePoints, type MatchGame, typ
 // which only exists for a DB-verified live connection and is ended by the
 // leave/terminate paths and by the 5 s liveness re-check below.
 
-export const MATCH_EVENTS = ['match:invite', 'match:accept', 'match:decline', 'match:leave', 'match:resign', 'match:move', 'match:draw', 'match:rematch', 'match:sync', 'match:away'] as const
+export const MATCH_EVENTS = ['match:invite', 'match:accept', 'match:decline', 'match:leave', 'match:resign', 'match:move', 'match:draw', 'match:rematch', 'match:sync', 'match:away', 'match:react'] as const
 type MatchEvent = (typeof MATCH_EVENTS)[number]
 
 const MAX_PAYLOAD_BYTES = 2048
 const LIVENESS_CHECK_MS = 5000
 const INVITE_PUSH_TTL = '30s' // matches INVITE_TTL_MS: a later delivery is an expired invite
+// In-game reactions: a short emoji or comment that pops up on both players' screens. Not stored.
+export const REACTION_MAX_CHARS = 60
+const REACTION_GAP_MS = 700
+const lastReaction = new Map<string, number>()
 
 export const GAME_TITLES: Record<MatchGame, string> = {
   chess: 'Chess', pong: 'Ping Pong', connect4: 'Connect 4', tictactoe: 'Tic-Tac-Toe', dots: 'Dots & Boxes', reversi: 'Reversi',
@@ -210,5 +215,20 @@ async function handle(
       return m.sync(id, me)
     case 'match:away':
       return m.away(id, me, p.matchId, p.away)
+    case 'match:react': {
+      const current = m.get(id)
+      if (!current || current.id !== p.matchId || !current.players.includes(me)) return { ok: false, error: 'not_found' }
+      if (current.status !== 'playing' && current.status !== 'over') return { ok: false, error: 'bad_state' }
+      if (typeof p.text !== 'string') return { ok: false, error: 'invalid_payload' }
+      // One line, collapsed whitespace; length counts code points so an emoji is one character.
+      const text = p.text.replace(/\s+/g, ' ').trim()
+      const length = [...text].length
+      if (length < 1 || length > REACTION_MAX_CHARS) return { ok: false, error: 'invalid_payload' }
+      const now = Date.now()
+      if (now - (lastReaction.get(me) ?? 0) < REACTION_GAP_MS) return { ok: false, error: 'rate_limited' }
+      lastReaction.set(me, now)
+      io.to(room(id)).emit('match:reaction', { id: randomUUID(), matchId: current.id, from: me, text })
+      return { ok: true, match: null }
+    }
   }
 }

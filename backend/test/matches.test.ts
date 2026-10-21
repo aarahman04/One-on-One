@@ -260,3 +260,35 @@ test('a played game is logged to chat history; an unanswered invite is not', asy
   assert.deepEqual({ ...logs[0].payload, durationSec: 0 }, { game: 'tictactoe', inviter: A, winner: first, reason: 'three_in_a_row', durationSec: 0 })
   assert.equal(db.tables.messages.filter((m: any) => m.type === 'game').length, 1)
 })
+
+test('in-game reactions reach both players, are bounded and throttled, and need a live match', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A)
+  const b = await socket(B)
+  const carol = await socket(C)
+  const seen: Record<string, any[]> = { a: [], b: [], carol: [] }
+  a.client.on('match:reaction', (r: unknown) => seen.a.push(r))
+  b.client.on('match:reaction', (r: unknown) => seen.b.push(r))
+  carol.client.on('match:reaction', (r: unknown) => seen.carol.push(r))
+
+  const id = (await a.emit('match:invite', { game: 'tictactoe' })).match.id
+  assert.equal((await a.emit('match:react', { matchId: id, text: '🔥' })).error, 'bad_state', 'not while only invited')
+  await b.emit('match:accept', { matchId: id })
+
+  assert.deepEqual(await a.emit('match:react', { matchId: id, text: '  Nice\n move!  ' }), { ok: true, match: null })
+  await waitFor(() => seen.a.length === 1 && seen.b.length === 1)
+  assert.equal(seen.b[0].text, 'Nice move!')
+  assert.equal(seen.b[0].from, A)
+  assert.equal(seen.b[0].matchId, id)
+  assert.equal(typeof seen.b[0].id, 'string')
+
+  assert.equal((await a.emit('match:react', { matchId: id, text: 'again' })).error, 'rate_limited')
+  assert.equal((await b.emit('match:react', { matchId: id, text: 'x'.repeat(61) })).error, 'invalid_payload')
+  assert.equal((await b.emit('match:react', { matchId: id, text: '   ' })).error, 'invalid_payload')
+  assert.equal((await b.emit('match:react', { matchId: id, text: '👍'.repeat(60) })).ok, true, 'emoji count as one character each')
+  assert.equal((await b.emit('match:react', { matchId: 'other', text: 'hi' })).error, 'not_found')
+  assert.equal((await carol.emit('match:react', { matchId: id, text: 'hi' })).error, 'not_member')
+  await delay(50)
+  assert.equal(seen.carol.length, 0)
+})
