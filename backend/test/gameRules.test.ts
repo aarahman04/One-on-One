@@ -397,3 +397,23 @@ test('matches: leaving the results or disconnecting there tells the partner; rem
   const again = m.rematch(C, A, id)
   assert.equal(!again.ok && again.error, 'partner_left')
 })
+
+test('matches: every game can be drawn by agreement or declined; table tennis included', () => {
+  const { m } = manager()
+  for (const game of ['tictactoe', 'connect4', 'reversi', 'dots'] as const) {
+    const id = m.invite(C, A, B, game).match!.id
+    m.accept(C, B, id)
+    assert.equal(m.draw(C, A, id, 'offer').match!.drawOffer, A)
+    const declined = m.draw(C, B, id, 'decline')
+    assert.equal(declined.ok && declined.match!.drawOffer, null)
+    assert.equal(m.draw(C, A, id, 'claim').error, 'no_claim')
+    m.draw(C, B, id, 'offer')
+    const drawn = m.draw(C, A, id, 'accept')
+    assert.deepEqual(drawn.ok && drawn.match!.outcome, { winner: null, reason: 'agreement' }, game)
+  }
+  const pong = m.invite(C, A, B, 'pong').match!.id
+  m.accept(C, B, pong)
+  assert.equal(m.draw(C, B, pong, 'offer').match!.drawOffer, B)
+  const tied = m.draw(C, A, pong, 'accept')
+  assert.deepEqual(tied.ok && tied.match!.outcome, { winner: null, reason: 'agreement' })
+})

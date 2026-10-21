@@ -315,28 +315,31 @@ export class MatchManager {
   draw(connectionId: string, userId: string, matchId: unknown, action: unknown): MatchResult {
     const m = this.find(connectionId, userId, matchId)
     if (!m) return fail('not_found', this.get(connectionId))
-    if (m.status !== 'playing' || !(m.rules instanceof ChessRules)) return fail('bad_state', this.snapshot(m))
+    // Every game can be drawn by agreement; claims stay chess-only.
+    if (m.status !== 'playing' || (!m.rules && !m.pong)) return fail('bad_state', this.snapshot(m))
     const seat = this.seat(m, userId) as Seat
     const other: Seat = seat === 1 ? 2 : 1
-    const chess = m.rules
+    const chess = m.rules instanceof ChessRules ? m.rules : null
+    const agree = (): Outcome => {
+      if (!chess) return { winner: 0, reason: 'agreement' }
+      chess.agreeDraw()
+      return chess.outcome!
+    }
     switch (action) {
       case 'offer':
-        if (m.drawOffer === other) {
-          chess.agreeDraw()
-          return ok(this.finish(m, chess.outcome!))
-        }
+        if (m.drawOffer === other) return ok(this.finish(m, agree()))
         if (m.drawOffer === seat) return ok(this.snapshot(m))
         m.drawOffer = seat
         return ok(this.emit(m))
       case 'accept':
         if (m.drawOffer !== other) return fail('no_offer', this.snapshot(m))
-        chess.agreeDraw()
-        return ok(this.finish(m, chess.outcome!))
+        return ok(this.finish(m, agree()))
       case 'decline':
         if (m.drawOffer !== other) return fail('no_offer', this.snapshot(m))
         m.drawOffer = 0
         return ok(this.emit(m))
       case 'claim': {
+        if (!chess) return fail('no_claim', this.snapshot(m))
         const error = chess.claim(seat)
         if (error) return fail(error, this.snapshot(m))
         return ok(this.finish(m, chess.outcome!))
