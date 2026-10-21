@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { ChessRules, createRules, type Outcome, type Seat, type TurnGameKind, type TurnRules } from './rules.js'
-import { PongSim, type PongFrame } from './pong.js'
+import { PongSim, WIN_SCORE, type PongFrame } from './pong.js'
 
 // Authoritative two-player matches (2.0.7). One match per connection, kept in
 // memory (single-instance backend, like calls). The server assigns seats,
@@ -19,6 +19,32 @@ export const IDLE_TTL_MS = 30 * 60_000
 export const RESUME_MS = 3000
 const PONG_TICK_MS = 1000 / 60
 const FRAME_EVERY = 2 // 30 frames/s
+export const CLOCK_MIN_MS = 10_000
+export const CLOCK_MAX_MS = 3 * 3600_000
+export const CLOCK_INC_MAX_MS = 60_000
+
+export const POINTS_MIN = 1
+export const POINTS_MAX = 99
+
+// Ping Pong target score from match:invite: undefined/null = 7; otherwise a whole number 1..99.
+export function parsePoints(value: unknown): number | 'invalid' {
+  if (value === undefined || value === null) return WIN_SCORE
+  if (!Number.isSafeInteger(value) || (value as number) < POINTS_MIN || (value as number) > POINTS_MAX) return 'invalid'
+  return value as number
+}
+
+// Fischer clock for turn games: `base` each, `inc` added after every move. null = no time limit.
+export interface ClockSetting { base: number; inc: number }
+
+// Validates the optional `clock` of match:invite. undefined/null = no limit; anything else must be in range.
+export function parseClock(value: unknown): ClockSetting | null | 'invalid' {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) return 'invalid'
+  const { base, inc } = value as Record<string, unknown>
+  if (!Number.isSafeInteger(base) || !Number.isSafeInteger(inc)) return 'invalid'
+  if ((base as number) < CLOCK_MIN_MS || (base as number) > CLOCK_MAX_MS || (inc as number) < 0 || (inc as number) > CLOCK_INC_MAX_MS) return 'invalid'
+  return { base: base as number, inc: inc as number }
+}
 
 export interface MatchSnapshot {
   id: string
@@ -38,6 +64,10 @@ export interface MatchSnapshot {
   away: string[]
   paused: boolean
   expiresAt: number | null
+  // Turn games with a time control. `left` is each seat's time at this snapshot (the side to move already charged).
+  clock: { base: number; inc: number; left: [number, number] } | null
+  // Ping Pong: the score that wins (7 unless the inviter chose another).
+  points: number | null
 }
 
 export type MatchResult = { ok: true; match: MatchSnapshot | null } | { ok: false; error: string; match?: MatchSnapshot | null }
@@ -63,6 +93,11 @@ interface Match {
   startedAt: number
   updatedAt: number
   loop: ReturnType<typeof setInterval> | null
+  clock: ClockSetting | null
+  points: number
+  left: [number, number]
+  turnAt: number
+  flag: ReturnType<typeof setTimeout> | null
 }
 
 export interface MatchHost {
@@ -112,7 +147,7 @@ export class MatchManager {
       turn,
       seq: m.seq,
       version: m.version,
-      board: m.rules ? m.rules.view() : m.pong ? { score: m.pong.score } : null,
+      board: m.rules ? m.rules.view() : m.pong ? { score: m.pong.score, target: m.points } : null,
       outcome: m.outcome ? { winner: m.outcome.winner ? m.players[m.outcome.winner - 1] : null, reason: m.outcome.reason } : null,
       drawOffer: m.drawOffer ? m.players[m.drawOffer - 1] : null,
       rematch: [...m.rematch],
@@ -120,7 +155,36 @@ export class MatchManager {
       away: [...m.away.keys()],
       paused: m.status === 'playing' && m.game === 'pong' && m.away.size > 0,
       expiresAt: m.status === 'invited' ? m.createdAt + INVITE_TTL_MS : null,
+      clock: m.clock ? { ...m.clock, left: this.clockLeft(m) } : null,
+      points: m.game === 'pong' ? m.points : null,
     }
+  }
+
+  // Each seat's remaining time now: the side to move is charged since its turn began.
+  private clockLeft(m: Match): [number, number] {
+    const left: [number, number] = [m.left[0], m.left[1]]
+    if (m.status === 'playing' && m.rules) {
+      const i = m.rules.turn - 1
+      left[i] = Math.max(0, left[i] - (this.now() - m.turnAt))
+    }
+    return left
+  }
+
+  // Ends the game on time if the side to move has run out. Returns true when it did.
+  private flagFall(m: Match): boolean {
+    if (!m.clock || m.status !== 'playing' || !m.rules) return false
+    const seat = m.rules.turn
+    if (this.clockLeft(m)[seat - 1] > 0) return false
+    this.finish(m, { winner: seat === 1 ? 2 : 1, reason: 'timeout' })
+    return true
+  }
+
+  // A timer at the moment the side to move would run out; the sweep is the backstop.
+  private armFlag(m: Match): void {
+    this.stopFlag(m)
+    if (!m.clock || m.status !== 'playing' || !m.rules) return
+    m.flag = setTimeout(() => { m.flag = null; this.flagFall(m) }, this.clockLeft(m)[m.rules.turn - 1] + 50)
+    m.flag.unref?.()
   }
 
   private emit(m: Match): MatchSnapshot {
@@ -143,22 +207,23 @@ export class MatchManager {
     return m ? this.snapshot(m) : null
   }
 
-  invite(connectionId: string, userId: string, partnerId: string, game: MatchGame): MatchResult {
+  invite(connectionId: string, userId: string, partnerId: string, game: MatchGame, clock: ClockSetting | null = null, points = WIN_SCORE): MatchResult {
     const old = this.matches.get(connectionId)
     if (old && old.status !== 'over') return fail('busy', this.snapshot(old))
     if (old) this.drop(old)
     const players: [string, string] = this.random() < 0.5 ? [userId, partnerId] : [partnerId, userId]
     const series = old && old.game === game ? old.series : { [userId]: 0, [partnerId]: 0 }
-    const m = this.create(connectionId, game, userId, players, series)
+    const m = this.create(connectionId, game, userId, players, series, game === 'pong' ? null : clock, points)
     return ok(this.emit(m))
   }
 
-  private create(connectionId: string, game: MatchGame, inviter: string, players: [string, string], series: Record<string, number>): Match {
+  private create(connectionId: string, game: MatchGame, inviter: string, players: [string, string], series: Record<string, number>, clock: ClockSetting | null, points = WIN_SCORE): Match {
     const now = this.now()
     const m: Match = {
       id: randomUUID(), connectionId, game, status: 'invited', inviter, players, rules: null, pong: null,
       seq: 0, log: [], outcome: null, drawOffer: 0, rematch: new Set(), series, away: new Map(),
       version: 0, createdAt: now, startedAt: now, updatedAt: now, loop: null,
+      clock, points, left: clock ? [clock.base, clock.base] : [0, 0], turnAt: now, flag: null,
     }
     this.matches.set(connectionId, m)
     return m
@@ -173,9 +238,14 @@ export class MatchManager {
     m.drawOffer = 0
     m.rematch.clear()
     if (m.game === 'pong') {
-      m.pong = new PongSim(this.random)
+      m.pong = new PongSim(this.random, m.points)
       this.startLoop(m)
-    } else m.rules = createRules(m.game as TurnGameKind)
+    } else {
+      m.rules = createRules(m.game as TurnGameKind)
+      if (m.clock) m.left = [m.clock.base, m.clock.base]
+      m.turnAt = this.now()
+      this.armFlag(m)
+    }
   }
 
   accept(connectionId: string, userId: string, matchId: unknown): MatchResult {
@@ -220,15 +290,23 @@ export class MatchManager {
       return fail('invalid_move')
     }
     const n = seq as number
+    // Out of time before this move arrived: the game is already lost on time.
+    if (n === m.seq && this.flagFall(m)) return fail('game_over', this.snapshot(m))
     // A retry of a move that was already applied (lost ack) is acknowledged, not replayed.
     if (n < m.seq) return m.log[n] === key ? ok(this.snapshot(m)) : fail('stale', this.snapshot(m))
     if (n > m.seq) return fail('out_of_order', this.snapshot(m))
     const error = m.rules.apply(seat, move)
     if (error) return fail(error, this.snapshot(m))
+    if (m.clock) {
+      const now = this.now()
+      m.left[seat - 1] = Math.max(0, m.left[seat - 1] - (now - m.turnAt)) + m.clock.inc
+      m.turnAt = now
+    }
     m.seq++
     m.log.push(key)
     m.drawOffer = 0 // moving declines a pending draw offer
     if (m.rules.outcome) return ok(this.finish(m, m.rules.outcome))
+    this.armFlag(m)
     return ok(this.emit(m))
   }
 
@@ -274,7 +352,7 @@ export class MatchManager {
     if (m.rematch.size < 2) return ok(this.emit(m))
     // Both asked: a fresh match with the seats swapped (colours / first move alternate).
     this.drop(m)
-    const next = this.create(connectionId, m.game, m.inviter, [m.players[1], m.players[0]], m.series)
+    const next = this.create(connectionId, m.game, m.inviter, [m.players[1], m.players[0]], m.series, m.clock, m.points)
     this.start(next)
     return ok(this.emit(next))
   }
@@ -343,6 +421,7 @@ export class MatchManager {
       if (m.status === 'invited' && now - m.createdAt >= INVITE_TTL_MS) this.finish(m, { winner: 0, reason: 'expired' })
       else if (m.status === 'over' && now - m.updatedAt >= OVER_TTL_MS) this.drop(m)
       else if (m.status === 'playing') {
+        if (this.flagFall(m)) continue
         const grace = m.pong ? PONG_AWAY_GRACE_MS : TURN_AWAY_GRACE_MS
         const gone = [...m.away.entries()].filter(([, since]) => now - since >= grace).map(([u]) => u)
         if (gone.length === 2) this.finish(m, { winner: 0, reason: 'abandoned' })
@@ -354,6 +433,8 @@ export class MatchManager {
 
   private finish(m: Match, outcome: Outcome): MatchSnapshot {
     this.stopLoop(m)
+    this.stopFlag(m)
+    if (m.status === 'playing' && m.clock) m.left = this.clockLeft(m) // the clocks stop where the game ended
     const wasPlaying = m.status === 'playing'
     m.status = 'over'
     m.outcome = outcome
@@ -375,6 +456,7 @@ export class MatchManager {
 
   private drop(m: Match): void {
     this.stopLoop(m)
+    this.stopFlag(m)
     if (this.matches.get(m.connectionId) === m) this.matches.delete(m.connectionId)
   }
 
@@ -414,8 +496,13 @@ export class MatchManager {
     m.loop = null
   }
 
+  private stopFlag(m: Match): void {
+    if (m.flag) clearTimeout(m.flag)
+    m.flag = null
+  }
+
   dispose(): void {
-    for (const m of this.matches.values()) this.stopLoop(m)
+    for (const m of this.matches.values()) { this.stopLoop(m); this.stopFlag(m) }
     this.matches.clear()
   }
 }

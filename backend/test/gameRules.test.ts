@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ChessRules, ConnectFourRules, DotsRules, ReversiRules, TicTacToeRules } from '../src/games/rules.js'
 import { COURT_H, RACKET_MIN } from '../src/games/pong.js'
-import { INVITE_TTL_MS, MatchManager, OVER_TTL_MS, PONG_AWAY_GRACE_MS, TURN_AWAY_GRACE_MS, type MatchSnapshot } from '../src/games/matches.js'
+import { INVITE_TTL_MS, MatchManager, parseClock, parsePoints, OVER_TTL_MS, PONG_AWAY_GRACE_MS, TURN_AWAY_GRACE_MS, type MatchSnapshot } from '../src/games/matches.js'
 
 const play = (game: ChessRules, ...ucis: string[]) => {
   for (const uci of ucis) assert.equal(game.apply(game.turn, { uci }), null, uci)
@@ -324,4 +324,58 @@ test('matches: pong runs only on the server, pauses for an absent player and end
   assert.equal(end.outcome!.reason, 'first_to_7')
   m.disconnected(A)
   assert.ok(PONG_AWAY_GRACE_MS < TURN_AWAY_GRACE_MS)
+})
+
+test('matches: a clock charges the side to move, adds the increment and ends on time', () => {
+  const { m, advance } = manager()
+  const id = m.invite(C, A, B, 'chess', { base: 10_000, inc: 2_000 }).match!.id
+  assert.equal(m.get(C)!.clock!.left[0], 10_000)
+  m.accept(C, B, id)
+  advance(3_000)
+  assert.deepEqual(m.get(C)!.clock!.left, [7_000, 10_000]) // white's clock runs
+  assert.ok(m.move(C, A, id, 0, { uci: 'e2e4' }).ok)
+  assert.deepEqual(m.get(C)!.clock!.left, [9_000, 10_000]) // + 2 s increment
+  advance(10_000)
+  m.sweep()
+  assert.deepEqual(m.get(C)!.outcome, { winner: A, reason: 'timeout' })
+  assert.deepEqual(m.get(C)!.clock!.left, [9_000, 0])
+  // A move that arrives after the flag fell does not count.
+  const late = m.invite(C, A, B, 'tictactoe', { base: 10_000, inc: 0 }).match!.id
+  m.accept(C, B, late)
+  advance(10_001)
+  const tooLate = m.move(C, A, late, 0, { cell: 4 })
+  assert.equal(!tooLate.ok && tooLate.error, 'game_over')
+  assert.deepEqual(m.get(C)!.outcome, { winner: B, reason: 'timeout' })
+  // Rematch keeps the time control; no limit is the default, and Ping Pong never has a clock.
+  m.rematch(C, A, late)
+  assert.deepEqual(m.rematch(C, B, late).match!.clock, { base: 10_000, inc: 0, left: [10_000, 10_000] })
+  m.leave(C, A, m.get(C)!.id, 'resigned')
+  assert.equal(m.invite(C, A, B, 'connect4').match!.clock, null)
+  m.decline(C, B, m.get(C)!.id)
+  assert.equal(m.invite(C, A, B, 'pong', { base: 60_000, inc: 0 }).match!.clock, null)
+})
+
+test('matches: invite clocks are validated', () => {
+  assert.equal(parseClock(undefined), null)
+  assert.equal(parseClock(null), null)
+  assert.deepEqual(parseClock({ base: 60_000, inc: 1_000 }), { base: 60_000, inc: 1_000 })
+  for (const bad of [5, 'x', [], { base: 9_999, inc: 0 }, { base: 3 * 3600_000 + 1, inc: 0 }, { base: 60_000, inc: -1 }, { base: 60_000, inc: 60_001 }, { base: 1.5e4, inc: 0.5 }]) {
+    assert.equal(parseClock(bad), 'invalid', JSON.stringify(bad))
+  }
+})
+
+test('matches: Ping Pong plays to the chosen score, kept for the rematch', () => {
+  assert.equal(parsePoints(undefined), 7)
+  assert.equal(parsePoints(21), 21)
+  for (const bad of [0, 100, 2.5, '11', -1]) assert.equal(parsePoints(bad), 'invalid')
+  const { m } = manager()
+  const id = m.invite(C, A, B, 'pong', null, 3).match!.id
+  assert.equal(m.get(C)!.points, 3)
+  m.accept(C, B, id)
+  assert.deepEqual(m.get(C)!.board, { score: [0, 0], target: 3 })
+  m.leave(C, A, id, 'resigned')
+  m.rematch(C, A, id)
+  assert.equal(m.rematch(C, B, id).match!.points, 3)
+  m.leave(C, A, m.get(C)!.id, 'resigned')
+  assert.equal(m.invite(C, A, B, 'chess').match!.points, null)
 })

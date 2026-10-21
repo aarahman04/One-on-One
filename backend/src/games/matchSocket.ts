@@ -4,7 +4,7 @@ import { otherMemberId, room } from '../utils/connections.js'
 import { supabaseAdmin } from '../database/supabaseAdmin.js'
 import { saveMessage } from '../services/messageService.js'
 import { sendNativeCallPush } from '../services/pushService.js'
-import { MATCH_GAMES, MatchManager, type MatchGame, type MatchLog, type MatchResult } from './matches.js'
+import { MATCH_GAMES, MatchManager, parseClock, parsePoints, type MatchGame, type MatchLog, type MatchResult } from './matches.js'
 
 // Socket.IO surface of the authoritative matches (API-CONTRACT §12).
 // Every event except match:paddle re-reads the caller's live connection from
@@ -183,9 +183,12 @@ async function handle(
   switch (event) {
     case 'match:invite': {
       if (typeof p.game !== 'string' || !(MATCH_GAMES as readonly string[]).includes(p.game)) return { ok: false, error: 'invalid_payload' }
+      const clock = parseClock(p.clock)
+      const points = parsePoints(p.points)
+      if (clock === 'invalid' || points === 'invalid') return { ok: false, error: 'invalid_payload' }
       const partner = otherMemberId(connection, me)
       if (!(await userOnline(io, id, partner))) return { ok: false, error: 'partner_offline' }
-      const result = m.invite(id, me, partner, p.game as MatchGame)
+      const result = m.invite(id, me, partner, p.game as MatchGame, clock, points)
       if (result.ok && result.match) void pushInvite(id, me, partner, result.match.id, p.game as MatchGame)
       return result
     }
