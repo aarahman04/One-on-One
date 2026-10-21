@@ -36,6 +36,24 @@ test('ping pong: a two-dimensional racket serves by contacting the waiting ball'
   assert.ok(p.z > 2 / 12.16 && p.y > 0.24)
 })
 
+test('ping pong: contact launches outside the racket instead of through its centre', () => {
+  for (const seat of [1, 2] as const) {
+    const p = new PongSim(() => seat === 1 ? 0 : .5)
+    p.paddle(seat, .2, seat === 1 ? 1.8 : 0)
+    p.step(FIRST_SERVE_MS)
+    p.paddle(seat, p.x, p.y, true)
+    p.step(8)
+    assert.equal(p.hits, 1)
+    const gap = Math.hypot(p.x - p.paddles[seat - 1], p.y - p.paddleY[seat - 1])
+    assert.ok(gap >= .205 - 1e-6, `clear contact, gap ${gap}`)
+    assert.ok((p.y - p.paddleY[seat - 1]) * (seat === 1 ? -1 : 1) > 0)
+    for (let i = 0; i < 10; i++) {
+      p.step(8)
+      assert.ok(Math.hypot(p.x - p.paddles[seat - 1], p.y - p.paddleY[seat - 1]) >= .2)
+    }
+  }
+})
+
 test('ping pong: the ball lands on the far half before an opponent can return it', () => {
   const p = new PongSim(() => 0.5)
   p.step(FIRST_SERVE_MS)
@@ -80,10 +98,10 @@ test('ping pong: a brushing stroke spins the ball after release, without later r
     return { p, target }
   }
   const active = brush(false), released = brush(true)
-  assert.ok(active.p.frame().a![9] > active.target + 0.015)
+  assert.ok(active.p.frame().a![9] > active.target + 0.004)
   near(released.p.frame().a![9], active.p.frame().a![9])
   near(active.p.x, released.p.x)
-  assert.ok(released.p.frame().spin > 0.9 && released.p.frame().spin < 1)
+  assert.ok(released.p.frame().spin > 0.4 && released.p.frame().spin < 0.45)
   const spin = released.p.frame().spin
   released.p.paddle(2, 0.2, 0.24)
   released.p.step(16)

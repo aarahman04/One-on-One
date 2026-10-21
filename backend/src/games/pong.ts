@@ -12,7 +12,7 @@ export const RACKET_NEAR = 1.3
 export const RACKET_FAR = 2.5
 export const ARC_H = 6 / 12.16
 export const FLOOR_H = -ARC_H
-export const SPIN_DRIFT = 0.35
+export const SPIN_DRIFT = 0.25
 export const SPIN_TAU = 1.8
 // Convert network velocity into the reference's per-frame world delta at 60 Hz.
 const STROKE_GAIN = 12.16 / 60
@@ -144,11 +144,17 @@ export class PongSim {
     const stroke = this.strokes[seat - 1]
     const target: Point = [0.5 + stroke.direction * 0.36 * (0.85 + 0.15 * stroke.forward),
       (seat === 1 ? 0.49 : COURT_H - 0.49) + forward(seat) * stroke.forward * (7 / 12.16), FLOOR_H]
+    const px = this.paddles[seat - 1], py = this.paddleY[seat - 1]
+    const dx = target[0] - px, dy = target[1] - py, length = Math.hypot(dx, dy)
+    // Launch out of the head along the shot, so a brushing return cannot cut through the racket.
+    const clearance = HEAD_R + BALL_R + 0.035 // Includes the drawn outlines and height-scaled ball.
+    this.x = px + dx / length * clearance
+    this.y = py + dy / length * clearance
     this.curve(target, 1 - 0.12 * stroke.forward)
     this.lastHit = seat
     this.landed = false
     const brush = Math.abs(stroke.direction) > 0.45 ? stroke.side : 0
-    this.spin = Math.sign(brush) * Math.min(1, Math.max(0, Math.abs(brush) - 0.08) * 2)
+    this.spin = Math.sign(brush) * Math.min(0.45, Math.max(0, Math.abs(brush) - 0.08) * 0.8)
     this.hits++
   }
 
@@ -172,7 +178,7 @@ export class PongSim {
         this.x = x; this.y = y; this.z = BALL_R
         this.landed = true
         this.bounces++
-        const kickX = this.vx + this.spin * 1.2
+        const kickX = this.vx + this.spin * 0.6
         const length = Math.hypot(kickX, this.vy, this.vz) || 1
         this.curve([x + kickX / length * (30 / 12.16), y + this.vy / length * (30 / 12.16), FLOOR_H], flight.duration)
       }
