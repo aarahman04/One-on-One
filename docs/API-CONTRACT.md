@@ -204,7 +204,7 @@ Every handler re-resolves the live connection from the DB; the client never name
 | `call:signal` | `{callId, data}` opaque SDP/ICE, relayed untouched to the other participant's sockets only | `{ok:true}`; errors `call is no longer active`, `not a participant in this call` |
 | `call:end` | `{callId}` | `{ok:true}` (no-op if the call already ended) |
 
-Call state is in memory (one call per connection). Outcomes: `end` by caller before accept = `cancelled`, by callee before accept = `declined`, after accept = `completed`; no answer in 45 s = `missed`. The server writes the `call` message row on every resolution. A "missed/cancelled" resolution sends the callee a text push (title = caller nickname, body `Missed voice call` / `Missed video call`).
+Call state is in memory (one call per connection). Outcomes: `end` by caller before accept = `cancelled`, by callee before accept = `declined`, after accept = `completed`; no answer in 45 s = `missed`. Disconnect rule (2026-10-21): when a participant's last socket in the room closes, a 30 s grace timer starts (cleared when any socket of theirs reconnects); if it expires with the call still active, the server emits `call:ended` and resolves it as `completed` (answered) or `cancelled` (caller left while ringing). A ringing callee's disconnect starts no timer (a push may still wake the app; the 45 s ring timeout applies). Clients should still send `call:end` on every exit, waiting for the socket if needed. The server writes the `call` message row on every resolution. A "missed/cancelled" resolution sends the callee a text push (title = caller nickname, body `Missed voice call` / `Missed video call`).
 
 ### Server -> client
 | Event | Payload | When |
