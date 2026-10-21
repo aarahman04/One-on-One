@@ -131,6 +131,21 @@ test('splitNarration: deterministic, bounded, lossless, paragraph-aware', () => 
   assert.deepEqual(splitNarration(narrationParagraphs({ from: 'A', to: 'B', body: 'Hi.\nBye.' })), ['Dear B.\n\nHi.\n\nBye.\n\nWith love, A.'])
 })
 
+test('the short first narration part preserves punctuation, long words and long signatures', () => {
+  for (const body of [
+    'Hello, my love! Are you well? Yes; I hope so.',
+    `${'word '.repeat(80)}end.`,
+    `${'x'.repeat(900)}. Next sentence.`,
+  ]) {
+    const paragraphs = narrationParagraphs({ from: 'A'.repeat(40), to: 'B'.repeat(40), body })
+    const parts = splitNarration(paragraphs)
+    assert.ok(parts[0].startsWith(`${paragraphs[0]}\n\n`))
+    assert.ok(parts[0].length <= NARRATION_FIRST_PART_CHARS)
+    assert.ok(parts.every((part) => part.length <= NARRATION_PART_CHARS))
+    assert.equal(parts.join('').replace(/\s/g, ''), paragraphs.join('').replace(/\s/g, ''))
+  }
+})
+
 test('narration: member gets DB text as ogg parts with headers', async (t) => {
   seed()
   const calls = await stub(t, () => ogg)

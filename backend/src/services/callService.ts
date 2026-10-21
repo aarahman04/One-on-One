@@ -195,15 +195,21 @@ export async function callSocketGone(io: Server, connectionId: string, userId: s
   const record = activeCalls.get(connectionId)
   if (!record || (record.callerId !== userId && record.calleeId !== userId)) return
   if (record.state === 'ringing' && record.calleeId === userId) return
-  if (record.graceTimers.has(userId) || (await hasSocket(io, connectionId, userId))) return
-  record.graceTimers.set(userId, setTimeout(() => {
+  if (await hasSocket(io, connectionId, userId)) return
+  if (activeCalls.get(connectionId) !== record || record.graceTimers.has(userId)) return
+  const timer = setTimeout(() => {
     void (async () => {
-      if (await hasSocket(io, connectionId, userId) || activeCalls.get(connectionId) !== record) return
+      const online = await hasSocket(io, connectionId, userId)
+      // A reconnect can cancel this timer while the socket lookup is pending.
+      if (record.graceTimers.get(userId) !== timer || activeCalls.get(connectionId) !== record) return
+      record.graceTimers.delete(userId)
+      if (online) return
       const outcome: CallOutcome = record.state === 'connected' ? 'completed' : 'cancelled'
       io.to(room(connectionId)).emit('call:ended', { callId: record.id, reason: outcome })
       resolveCall(io, record, outcome)
     })().catch((err) => console.error('callService: disconnect grace failed', err))
-  }, CALL_DISCONNECT_GRACE_MS))
+  }, CALL_DISCONNECT_GRACE_MS)
+  record.graceTimers.set(userId, timer)
 }
 
 async function hasSocket(io: Server, connectionId: string, userId: string): Promise<boolean> {
@@ -289,6 +295,7 @@ export function acceptCall(io: Server, connectionId: string, callId: string, use
   const record = activeCalls.get(connectionId)
   if (!record || record.id !== callId) throw new ConnectionError(409, 'call is no longer active')
   if (record.calleeId !== userId) throw new ConnectionError(403, 'not the callee')
+  if (record.state === 'connected') return
   clearTimeout(record.ringTimer)
   record.state = 'connected'
   record.connectedAt = Date.now()
@@ -296,6 +303,9 @@ export function acceptCall(io: Server, connectionId: string, callId: string, use
   // callee is also signed into drops its own incoming-call prompt — same
   // broadcast-and-let-the-client-filter pattern as message:new.
   io.to(room(connectionId)).emit('call:accepted', { callId })
+  // A disconnect can finish while the accept handler is awaiting membership.
+  void Promise.all([callSocketGone(io, connectionId, record.callerId), callSocketGone(io, connectionId, record.calleeId)])
+    .catch((err) => console.error('callService: accepted-call socket check failed', err))
 }
 
 export function declineCall(io: Server, connectionId: string, callId: string, userId: string): void {

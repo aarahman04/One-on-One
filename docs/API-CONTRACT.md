@@ -156,7 +156,7 @@ Socket.IO (in-memory, per socket unless stated):
 | `file` | `{path, mime, size, name}`; mime in file allowlist; `size<=25MiB`; `name` 1-255 | caption (optional) | |
 | `ask` | `{question 1-300, answerA 1-500, answerB? 1-500}` | the question (required) | |
 | `countdown` | `{label 1-100, targetIso: valid date}` (stored as ISO) | the label (required) | |
-| `checkin` | `{mood: great\|good\|okay\|down\|struggling, note 1-300}` | the note (required) | |
+| `checkin` | legacy `{mood: great\|good\|okay\|down\|struggling, note 1-300}` | the note | History/export only. New sends rejected: `check-ins are no longer supported`. Keep existing rows, payload decoding and the DB constraint. |
 | `thisorthat` | `{optionA 1-100, optionB 1-100, pickSender:"a"\|"b", pickRecipient?:"a"\|"b"}` | e.g. "A vs B" (required non-empty) | |
 | `alarm` | raise: none. ack: `{ack:<raise message id>}`. cancel: `{ack:<raise id>, cancelled:true}` | empty | see alarm rules below |
 | `location` | `{lat -90..90, lng -180..180, accuracy? >=0}` | non-empty display string, e.g. "lat, lng" | |
@@ -199,7 +199,7 @@ Every handler re-resolves the live connection from the DB; the client never name
 | `message:pin` | `{messageId}` or `{messageId: null}` to unpin | `{ok:true, pin}`. One pin per connection; either member pins, a new pin replaces the old one. Not deleted / system messages. Broadcasts `pin:update`. |
 | `typing` | `{typing: boolean}` | no ack. Relayed to the other member's sockets as `typing`, never stored. 20 per socket / 10 s. Clients send `true` at most every 3 s while composing and `false` when the draft empties or sends; receivers expire it ~6 s after the last `true`. |
 | `call:invite` | `{kind?: "audio"\|"video"}` (anything else = audio) | `{ok:true, callId, iceServers}`. Errors: `a call is already in progress on this connection` (409); if the callee has no live socket **and no `android-native` push token**: `They're not reachable right now — they'll see that you called` (an `unreachable` call row is written and a text push is sent; no ring). If the callee has a native token the call rings normally (state is held server-side; the woken app reconnects and gets `call:incoming` replayed) and a data-only `call` FCM is sent (section 6). |
-| `call:accept` | `{callId}` | `{ok:true, iceServers}`; errors `call is no longer active`, `not the callee` |
+| `call:accept` | `{callId}` | `{ok:true, iceServers}`; repeated accept by the callee is a no-op (preserves call duration); errors `call is no longer active`, `not the callee` |
 | `call:decline` | `{callId}` | `{ok:true}`; same errors |
 | `call:signal` | `{callId, data}` opaque SDP/ICE, relayed untouched to the other participant's sockets only | `{ok:true}`; errors `call is no longer active`, `not a participant in this call` |
 | `call:end` | `{callId}` | `{ok:true}` (no-op if the call already ended) |

@@ -475,9 +475,9 @@ export async function saveMessage(
 
   // Media messages carry an optional caption, and an alarm/call/system carry
   // no meaningful content of their own — all three can be empty. Every other
-  // type (text, letter, ask, countdown, checkin, thisorthat, location) still
+  // type (text, letter, ask, countdown, thisorthat, location) still
   // requires actual content — each one's primary display string
-  // (body / question / label / note / "optionA vs optionB" / "lat, lng").
+  // (body / question / label / "optionA vs optionB" / "lat, lng").
   const trimmed = content.trim()
   if (isMedia || type === 'alarm' || type === 'call' || type === 'system' || type === 'game') {
     if (trimmed.length > 4000) throw new ConnectionError(400, 'caption must be at most 4000 characters')
@@ -492,20 +492,20 @@ export async function saveMessage(
       : type === 'countdown'
         ? validateCountdownPayload(payload)
         : type === 'ask'
-            ? validateAskPayload(payload)
-            : type === 'thisorthat'
-              ? validateThisOrThatPayload(payload)
-              : type === 'alarm'
-                ? validateAlarmPayload(payload)
-                : type === 'call'
-                  ? validateCallPayload(payload)
-                  : type === 'location'
-                    ? validateLocationPayload(payload)
-                    : type === 'system'
-                      ? validateSystemPayload(payload)
-                      : type === 'game'
-                        ? validateGamePayload(payload)
-                        : null
+          ? validateAskPayload(payload)
+          : type === 'thisorthat'
+            ? validateThisOrThatPayload(payload)
+            : type === 'alarm'
+              ? validateAlarmPayload(payload)
+              : type === 'call'
+                ? validateCallPayload(payload)
+                : type === 'location'
+                  ? validateLocationPayload(payload)
+                  : type === 'system'
+                    ? validateSystemPayload(payload)
+                    : type === 'game'
+                      ? validateGamePayload(payload)
+                      : null
 
   if (replyTo) await assertReplyTargetInConnection(connection.id, replyTo)
 

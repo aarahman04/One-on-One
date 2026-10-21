@@ -277,10 +277,12 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
       const ringing = getRingingCallForCallee(connectionId, userId)
       if (ringing) socket.emit('call:incoming', ringing)
       callSocketBack(connectionId, userId)
-      socket.on('disconnect', () => {
-        void callSocketGone(io, connectionId, userId).catch((err) => console.error('call disconnect failed:', err))
-      })
     }
+    socket.on('disconnect', () => {
+      void getLiveConnectionForUser(userId)
+        .then((connection) => connection && callSocketGone(io, connection.id, userId))
+        .catch((err) => console.error('call disconnect failed:', err))
+    })
 
     // Per-socket flood guard: a legit client sends a handful of events a
     // minute. Anything past this is abuse.
