@@ -214,3 +214,17 @@ test('a callee who disconnects while accept is in flight still gets a grace time
     assert.equal(db.tables.messages.length, 1)
   } finally { mock.timers.reset() }
 })
+
+test('a late decline from another callee device cannot end an answered call', async () => {
+  const db = installFakeSupabase(supabaseAdmin)
+  const { io, emitted } = fakeIo(new Set([A, B]))
+  const { callId } = await call.inviteCall(io, conn('conn-late-decline'), A, 'video')
+  call.acceptCall(io, 'conn-late-decline', callId, B)
+  call.declineCall(io, 'conn-late-decline', callId, B)
+  await flush()
+  assert.equal(emitted.filter(([e]) => e === 'call:ended').length, 0, 'the answered call continues')
+  call.endCall(io, 'conn-late-decline', callId, A)
+  await flush()
+  assert.deepEqual(emitted.find(([e]) => e === 'call:ended')?.[1], { callId, reason: 'completed' })
+  assert.equal((db.tables.messages ?? []).filter((m: any) => m.type === 'call').length, 1)
+})
