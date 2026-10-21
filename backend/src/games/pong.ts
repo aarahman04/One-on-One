@@ -12,7 +12,7 @@ export const RACKET_NEAR = 1.3
 export const RACKET_FAR = 2.5
 export const ARC_H = 6 / 12.16
 export const FLOOR_H = -ARC_H
-export const SPIN_DRIFT = 0.25
+export const SPIN_DRIFT = 0.4
 export const SPIN_TAU = 1.8
 // Convert network velocity into the reference's per-frame world delta at 60 Hz.
 const STROKE_GAIN = 12.16 / 60
@@ -49,6 +49,7 @@ export interface PongFrame {
   spin: number
   serve: number
   j: number
+  l: boolean
 }
 
 export class PongSim {
@@ -129,7 +130,8 @@ export class PongSim {
   }
 
   private touches(seat: Seat): boolean {
-    return this.z >= -BALL_R && Math.hypot(this.x - this.paddles[seat - 1], this.y - this.paddleY[seat - 1]) <= HEAD_R + BALL_R + HIT_SLACK
+    return this.z >= -BALL_R && (this.y - this.paddleY[seat - 1]) * forward(seat) >= -0.001
+      && Math.hypot(this.x - this.paddles[seat - 1], this.y - this.paddleY[seat - 1]) <= HEAD_R + BALL_R + HIT_SLACK
   }
 
   private curve(target: Point, duration: number): void {
@@ -154,7 +156,7 @@ export class PongSim {
     this.lastHit = seat
     this.landed = false
     const brush = Math.abs(stroke.direction) > 0.45 ? stroke.side : 0
-    this.spin = Math.sign(brush) * Math.min(0.45, Math.max(0, Math.abs(brush) - 0.08) * 0.8)
+    this.spin = Math.abs(brush) <= 0.08 ? 0 : Math.sign(brush) * (0.1 + 0.1 * Math.min(1, (Math.abs(brush) - 0.08) / 0.6))
     this.hits++
   }
 
@@ -178,7 +180,7 @@ export class PongSim {
         this.x = x; this.y = y; this.z = BALL_R
         this.landed = true
         this.bounces++
-        const kickX = this.vx + this.spin * 0.6
+        const kickX = this.vx + this.spin * 0.8
         const length = Math.hypot(kickX, this.vy, this.vz) || 1
         this.curve([x + kickX / length * (30 / 12.16), y + this.vy / length * (30 / 12.16), FLOOR_H], flight.duration)
       }
@@ -215,7 +217,7 @@ export class PongSim {
       z: [r4(this.z), r4(this.vz)], r: this.paddleY.map(r4) as [number, number],
       a: this.flight ? [...this.flight.points.flat(), this.flight.elapsed, this.flight.duration].map(r4) : null,
       spin: r4(this.spin),
-      serve: this.flight || this.outcome ? 0 : this.server, j: this.bounces,
+      serve: this.flight || this.outcome ? 0 : this.server, j: this.bounces, l: this.landed,
     }
   }
 }

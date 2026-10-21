@@ -101,7 +101,7 @@ test('ping pong: a brushing stroke spins the ball after release, without later r
   assert.ok(active.p.frame().a![9] > active.target + 0.004)
   near(released.p.frame().a![9], active.p.frame().a![9])
   near(active.p.x, released.p.x)
-  assert.ok(released.p.frame().spin > 0.4 && released.p.frame().spin < 0.45)
+  assert.ok(released.p.frame().spin > 0.18 && released.p.frame().spin < 0.2)
   const spin = released.p.frame().spin
   released.p.paddle(2, 0.2, 0.24)
   released.p.step(16)
@@ -193,6 +193,30 @@ test('ping pong: a gentle angled placement aims without adding the brush kick', 
   p.paddle(2, .5, .24); p.step(8)
   assert.ok(p.frame().a![9] > .65, 'placement still aims to the right')
   assert.equal(p.frame().spin, 0, 'rotation alone at low speed does not make every shot spin')
+})
+
+test('ping pong: a hard brush has at most twice the spin of a light brush', () => {
+  const brush = (ms: number) => {
+    const p = manual()
+    p.paddle(2, .2, -.06); p.step(ms)
+    p.paddle(2, .5, .24); p.step(8)
+    return p.frame().spin
+  }
+  const light = brush(400), hard = brush(16)
+  assert.ok(light >= .1 && hard > light * 1.5)
+  assert.ok(hard <= light * 2 && hard <= .2)
+})
+
+test('ping pong: moving past the ball cannot return it with the back of the bat', () => {
+  for (const seat of [1, 2] as const) {
+    const p = new PongSim(() => seat === 1 ? 0 : .5)
+    const forward = seat === 1 ? -1 : 1
+    p.paddle(seat, p.x, p.y + forward * .1, true)
+    p.step(FIRST_SERVE_MS); p.step(500)
+    assert.equal(p.hits, 0)
+    p.paddle(seat, p.x, p.y - forward * .19, true); p.step(8)
+    assert.equal(p.hits, 1)
+  }
 })
 
 test('ping pong: rackets reach beyond the edges, stay on their own side, and rotate symmetrically', () => {
