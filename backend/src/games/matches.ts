@@ -270,8 +270,10 @@ export class MatchManager {
     if (!m) return fail('not_found', this.get(connectionId))
     if (m.status === 'invited') return this.decline(connectionId, userId, matchId)
     if (m.status === 'over') {
-      if (m.rematch.delete(userId)) return ok(this.emit(m))
-      return ok(this.snapshot(m))
+      // Left the results: withdraws a rematch request and tells the partner, so nobody waits for a rematch.
+      const changed = m.rematch.delete(userId) || !m.away.has(userId)
+      m.away.set(userId, m.away.get(userId) ?? this.now())
+      return ok(changed ? this.emit(m) : this.snapshot(m))
     }
     const seat = this.seat(m, userId) as Seat
     return ok(this.finish(m, { winner: seat === 1 ? 2 : 1, reason }))
@@ -348,6 +350,9 @@ export class MatchManager {
     const m = this.find(connectionId, userId, matchId)
     if (!m) return fail('not_found', this.get(connectionId))
     if (m.status !== 'over' || ['declined', 'cancelled', 'expired'].includes(m.outcome?.reason ?? '')) return fail('bad_state', this.snapshot(m))
+    m.away.delete(userId) // asking is being here
+    const partner = m.players[0] === userId ? m.players[1] : m.players[0]
+    if (m.away.has(partner)) return fail('partner_left', this.snapshot(m))
     m.rematch.add(userId)
     if (m.rematch.size < 2) return ok(this.emit(m))
     // Both asked: a fresh match with the seats swapped (colours / first move alternate).
@@ -396,7 +401,7 @@ export class MatchManager {
         this.finish(m, { winner: 0, reason: m.inviter === userId ? 'cancelled' : 'declined' })
         continue
       }
-      if (m.status !== 'playing') continue
+      if (m.status === 'over') m.rematch.delete(userId) // a finished game: the partner shouldn't wait for a rematch
       m.away.set(userId, this.now())
       this.emit(m)
     }

@@ -12,18 +12,18 @@ export const RACKET_NEAR = 1.3
 export const RACKET_FAR = 2.5
 export const ARC_H = 6 / 12.16
 export const FLOOR_H = -ARC_H
-export const SPIN_DRIFT = 0.4
+export const SPIN_DRIFT = 0.8
 export const SPIN_TAU = 1.8
-export const SPIN_LIGHT = 0.2 // A light brush; a hard brush doubles it.
-export const BOUNCE_TURN = 0.8 // radians of heading change per unit spin: light ~9 deg, hard ~18 deg
-export const BOUNCE_TURN_MAX = 0.35 // never more than ~20 deg
+export const SPIN_LIGHT = 0.25 // A light brush; a hard brush doubles it.
+export const BOUNCE_TURN = 1.1 // radians of heading change per unit spin: light ~16 deg, hard ~29 deg
+export const BOUNCE_TURN_MAX = 0.5 // never more than ~29 deg
 export const BOUNCE_CHECK = 0.4 // hard spin keeps ~84% of its pace after the bounce
 // Razor spin: a rare, sharp break. Only a near-maximal brush qualifies, and then only by chance, so it
 // cannot be repeated on demand; it also loses pace so a quick opponent can still reach it.
 export const RAZOR_BRUSH = 0.85
 export const RAZOR_CHANCE = 0.15
-export const RAZOR_SPIN = 0.6
-export const RAZOR_TURN = 0.6 // ~34 deg
+export const RAZOR_SPIN = 0.7
+export const RAZOR_TURN = 0.8 // ~46 deg
 // Forward racket speed (table widths/s) -> power. Saturates softly so a committed swipe is deep, not out;
 // pulling back gives a short, soft touch.
 export const strokePower = (speed: number) => speed >= 0 ? 1 - Math.exp(-speed / 5) : clamp(speed * STROKE_GAIN, -0.5, 0)
@@ -192,10 +192,12 @@ export class PongSim {
     this.curve(target, 1 - 0.22 * stroke.forward)
     this.lastHit = seat
     this.landed = false
-    const brush = Math.abs(stroke.direction) > 0.45 ? stroke.side : 0
-    this.spin = Math.abs(brush) <= 0.08 ? 0 : Math.sign(brush) * (SPIN_LIGHT + SPIN_LIGHT * Math.min(1, (Math.abs(brush) - 0.08) / 0.6))
+    const brush = Math.abs(stroke.direction) > 0.3 ? stroke.side : 0
+    // Sidespin hooks against the brush (Magnus): a stroke across the ball to the right curves it back left,
+    // so a wide brushed shot bends in toward the table instead of further out.
+    this.spin = Math.abs(brush) <= 0.08 ? 0 : -Math.sign(brush) * (SPIN_LIGHT + SPIN_LIGHT * Math.min(1, (Math.abs(brush) - 0.08) / 0.6))
     this.razor = Math.abs(brush) >= RAZOR_BRUSH && this.random() < RAZOR_CHANCE
-    if (this.razor) this.spin = Math.sign(brush) * RAZOR_SPIN
+    if (this.razor) this.spin = -Math.sign(brush) * RAZOR_SPIN
     this.hits++
   }
 
@@ -226,7 +228,7 @@ export class PongSim {
         const across = Math.hypot(this.vx, this.vy)
         const kickX = across * Math.sin(heading), kickY = across * Math.cos(heading)
         const length = Math.hypot(kickX, kickY, this.vz) || 1
-        const reach = (30 / 12.16) * (1 - BOUNCE_CHECK * Math.min(0.6, Math.abs(this.spin)))
+        const reach = (30 / 12.16) * (1 - BOUNCE_CHECK * Math.min(0.7, Math.abs(this.spin)))
         this.curve([x + kickX / length * reach, y + kickY / length * reach, FLOOR_H], flight.duration)
       }
     }

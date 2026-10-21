@@ -379,3 +379,21 @@ test('matches: Ping Pong plays to the chosen score, kept for the rematch', () =>
   m.leave(C, A, m.get(C)!.id, 'resigned')
   assert.equal(m.invite(C, A, B, 'chess').match!.points, null)
 })
+
+test('matches: leaving the results or disconnecting there tells the partner; rematch then fails until they return', () => {
+  const { m } = manager()
+  const id = m.invite(C, A, B, 'tictactoe').match!.id
+  m.accept(C, B, id)
+  m.leave(C, A, id, 'resigned')
+  assert.equal(m.rematch(C, B, id).match!.rematch.length, 1) // B asks
+  const left = m.leave(C, A, id, 'left') // A closes the results
+  assert.deepEqual(left.ok && left.match!.away, [A])
+  const refused = m.rematch(C, B, id)
+  assert.equal(!refused.ok && refused.error, 'partner_left')
+  assert.ok(m.sync(C, A).ok) // A comes back to the results
+  assert.deepEqual(m.get(C)!.away, [])
+  m.disconnected(B) // B's phone dies on the results screen
+  assert.deepEqual([m.get(C)!.away, m.get(C)!.rematch], [[B], []])
+  const again = m.rematch(C, A, id)
+  assert.equal(!again.ok && again.error, 'partner_left')
+})
