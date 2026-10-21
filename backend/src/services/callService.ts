@@ -312,6 +312,9 @@ export function declineCall(io: Server, connectionId: string, callId: string, us
   const record = activeCalls.get(connectionId)
   if (!record || record.id !== callId) throw new ConnectionError(409, 'call is no longer active')
   if (record.calleeId !== userId) throw new ConnectionError(403, 'not the callee')
+  // Another of the callee's devices already answered: a late Decline (e.g. from a
+  // ring notification that was never dismissed) must not end the answered call.
+  if (record.state === 'connected') return
   io.to(room(connectionId)).emit('call:ended', { callId, reason: 'declined' })
   resolveCall(io, record, 'declined')
 }

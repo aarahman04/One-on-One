@@ -27,6 +27,7 @@ const CREDENTIAL_TTL_SECONDS = 120
 // validity left, plenty for ICE gathering, and the Cloudflare round-trip
 // drops out of the call:accept path whenever a call happened recently.
 const CACHE_TTL_MS = 30_000
+const TURN_TIMEOUT_MS = 5_000
 let cached: { servers: IceServer[]; at: number } | null = null
 
 if (!TURN_KEY_ID || !TURN_API_TOKEN) {
@@ -47,6 +48,8 @@ export async function getIceServers(): Promise<IceServer[]> {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ ttl: CREDENTIAL_TTL_SECONDS }),
+        // call:invite/accept ack only after this; clients give up on an ack after 10 s.
+        signal: AbortSignal.timeout(TURN_TIMEOUT_MS),
       },
     )
     if (!res.ok) {
