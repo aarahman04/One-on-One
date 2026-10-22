@@ -59,7 +59,7 @@ function startDeviceVoiceTyping(
   const hidden = () => {
     if (document.hidden) cancel()
   }
-  const timer = setTimeout(() => recognition.stop(), 120_000)
+  const timer = setTimeout(() => recognition.stop(), 118_000)
   document.addEventListener('visibilitychange', hidden)
   bar.querySelector('[data-stop]')!.addEventListener('click', () => recognition.stop())
   bar.querySelector('[data-cancel]')!.addEventListener('click', cancel)
@@ -125,7 +125,7 @@ export function startVoiceTyping(
   composer.dataset.dictating = 'true'
   bar.className = 'voice-typing'
   bar.innerHTML =
-    '<span role="status">Starting microphone…</span><button type="button" data-stop>Transcribe</button><button type="button" data-cancel>Cancel</button>'
+    '<span role="status">Starting microphone…</span><button type="button" data-stop>Stop</button><button type="button" data-cancel>Cancel</button>'
   composer.before(bar)
   const finish = () => {
     active = false
@@ -219,7 +219,7 @@ export function startVoiceTyping(
         elapsed++
         bar.querySelector('span')!.textContent =
           `Listening… ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
-        if (elapsed >= 120) void submit()
+        if (elapsed >= 118) void submit()
       }, 1000)
     })
     .catch(() => {

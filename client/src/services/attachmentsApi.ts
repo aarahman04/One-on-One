@@ -34,6 +34,13 @@ export async function uploadAttachment(connectionId: string, kind: AttachmentKin
 // short of that so a URL already close to expiry is never handed back.
 const SIGNED_URL_TTL_MS = 55 * 60 * 1000
 const signedUrlCache = new Map<string, { url: string; expiresAt: number }>()
+export function cachedSignedUrl(path: string): string | undefined {
+  const value = signedUrlCache.get(path)
+  return value && value.expiresAt > Date.now() ? value.url : undefined
+}
+export function rememberSignedUrl(path: string, url: string): void {
+  signedUrlCache.set(path, { url, expiresAt: Date.now() + SIGNED_URL_TTL_MS })
+}
 
 export async function getSignedUrls(connectionId: string, paths: string[], opts: { fresh?: boolean; signal?: AbortSignal } = {}): Promise<Record<string, string>> {
   const now = Date.now()

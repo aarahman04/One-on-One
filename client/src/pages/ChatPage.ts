@@ -17,7 +17,9 @@ import { showToast } from '../components/Toast'
 import { applyAppearance, closeAppearance, openAppearance } from '../features/appearancePreview'
 import { openLetter, openLetterComposer, type LetterPayload } from '../features/letters'
 import { formatCountdown, openCountdownComposer, type CountdownPayload } from '../features/countdown'
-import { moodEmoji, openCheckinComposer, type CheckinPayload } from '../features/checkin'
+import { moodEmoji, type CheckinPayload } from '../features/checkin'
+import { normalizePhoto } from '../utils/photo'
+import { isSingleEmoji } from '../utils/emoji'
 import { openAskAnswerModal, openAskComposer, type AskPayload } from '../features/ask'
 import { openThisOrThatComposer, type ThisOrThatPayload } from '../features/thisorthat'
 import { AUTO_CLEAR_MS as ALARM_AUTO_CLEAR_MS, confirmSendAlarm, createAlarmController, type AlarmController } from '../features/alarm'
@@ -29,7 +31,8 @@ import {
 } from '../features/alarmNative'
 import { writeLocationFlow, type LocationPayload } from '../features/location'
 import { nextScreenFor } from '../state/nextScreen'
-import { mountGames } from '../features/games/ui'
+import { gameIcon, mountGames } from '../features/games/ui'
+import { gameTitles, type GameKind } from '../services/transport/MatchTransport'
 import { startVoiceTyping } from '../features/voiceTyping'
 import { swipeClaim, swipeOffset } from '../utils/swipeReply'
 import { commandHints, mountSlashCommands, runIfCommand } from '../features/slashCommands'
@@ -70,7 +73,7 @@ import {
   CALL_PHONE_ICON,
   CALL_VIDEO_ICON,
 } from '../features/call/icons'
-import { getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
+import { cachedSignedUrl, rememberSignedUrl, getSignedUrls, uploadAttachment } from '../services/attachmentsApi'
 import { startRecording, type VoiceRecorderHandle } from '../features/voiceRecorder'
 import { linkifyInto, messageLinks, safeWebUrl } from '../utils/linkify'
 import { animateOutAndRemove } from '../utils/animateOut'
@@ -79,7 +82,7 @@ import { openEmojiPicker } from '../features/emojiPicker'
 import { isSticker, metaSide } from '../utils/stickerMath'
 import { openMediaPicker } from '../features/mediaPicker'
 import { stickerBlob } from '../features/stickerMaker'
-import { privatePhoto } from '../features/stickerLibrary'
+import { privatePhoto, mediaEpoch } from '../features/stickerLibrary'
 import { openProfileSettings, renderAvatar } from '../features/profileSettings'
 import { getAvatars, prepareGif } from '../services/profileGifApi'
 import { CAMERA_ICON, STICKER_ICON } from '../features/chatIcons'
@@ -256,6 +259,8 @@ export const ChatPage: Page = (root, go) => {
     const otherName = current.otherNickname ?? 'them'
     const myUserId = current.myUserId
     const connectionId = current.id
+    const accountEpoch = mediaEpoch()
+    let myNickname = current.myNickname
 
     renderChat(root, otherName)
     const log = root.querySelector<HTMLDivElement>('#chat-log')!
@@ -281,14 +286,48 @@ export const ChatPage: Page = (root, go) => {
     // older messages instead of staying on the latest one (the view "jumps
     // up" when the composer is focused). Re-pin to bottom on resize, but only
     // if it was already there — never yank the view while reading history.
-    let stickToBottom = true
+    let stickToBottom = true, scrollingLatest = false, latestFrame = 0
+    const latest = document.createElement('button')
+    latest.type = 'button'; latest.className = 'chat__latest'; latest.textContent = '↓'; latest.hidden = true
+    latest.setAttribute('aria-label', 'Scroll to latest messages')
+    log.after(latest)
+    const latestResize = new ResizeObserver(() => {
+      if (!disposed && stickToBottom && !scrollingLatest) log.scrollTop = log.scrollHeight
+    })
+    overlays.add(() => latestResize.disconnect())
+    overlays.add(() => cancelAnimationFrame(latestFrame))
+    latest.onclick = () => {
+      scrollingLatest = true
+      stickToBottom = true
+      latest.hidden = true
+      log.scrollTo({ top: log.scrollHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+      let height = log.scrollHeight
+      cancelAnimationFrame(latestFrame)
+      const follow = () => {
+        if (disposed || !scrollingLatest) return
+        // Entering rows can still grow while the browser is scrolling to the previous bottom.
+        if (height !== log.scrollHeight) {
+          height = log.scrollHeight
+          log.scrollTo({ top: height, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+        }
+        if (log.scrollHeight - log.scrollTop - log.clientHeight < 2) scrollingLatest = false
+        else latestFrame = requestAnimationFrame(follow)
+      }
+      latestFrame = requestAnimationFrame(follow)
+    }
     log.addEventListener(
       'scroll',
       () => {
-        stickToBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80
+        const distance = log.scrollHeight - log.scrollTop - log.clientHeight
+        if (distance < 2) scrollingLatest = false
+        stickToBottom = scrollingLatest || distance < 80
+        latest.hidden = scrollingLatest || distance < log.clientHeight * 1.5
       },
       { passive: true },
     )
+    const releaseScrollPin = () => { scrollingLatest = false }
+    log.addEventListener('wheel', releaseScrollPin, { passive: true })
+    log.addEventListener('touchstart', releaseScrollPin, { passive: true })
     viewportResizeHandler = (): void => {
       if (viewportFrame) return
       viewportFrame = requestAnimationFrame(() => {
@@ -482,6 +521,7 @@ export const ChatPage: Page = (root, go) => {
       showToast(message)
     }
     let peerPhoto: string | null = null, privateUrl: string | null = null
+    let setGamePhoto = (_url: string | null) => {}
     let avatarIds = `${current.myAvatarId}:${current.otherAvatarId}`, avatarsLoadedAt = 0, avatarSequence = 0
     const loadPhotos = async (): Promise<void> => {
       const sequence = ++avatarSequence
@@ -492,6 +532,7 @@ export const ChatPage: Page = (root, go) => {
       peerPhoto = privateUrl ?? avatars.other
       renderAvatar(root.querySelector('#nav-avatar')!, peerPhoto, otherName)
       callBar?.setPhoto(peerPhoto)
+      setGamePhoto(peerPhoto)
       avatarsLoadedAt = Date.now()
     }
     void loadPhotos().catch(() => {})
@@ -1207,6 +1248,8 @@ export const ChatPage: Page = (root, go) => {
     // caches per path, so the bulk pre-fetch on history load (below) makes
     // each row's own call here an instant cache hit instead of a new request.
     const hydrateMedia = (path: string, onUrl: (url: string) => void, onError?: () => void): void => {
+      const cached = cachedSignedUrl(path)
+      if (cached) { onUrl(cached); return }
       getSignedUrls(connectionId, [path])
         .then((urls) => {
           if (disposed) return
@@ -1237,8 +1280,29 @@ export const ChatPage: Page = (root, go) => {
       })
       actions.append(dl)
       wrap.append(img, actions)
-      openModal(wrap)
+      const modal = openModal(wrap)
+      overlays.add(modal.close)
+      modal.panel.classList.add('photo-viewer-panel')
+      modal.panel.parentElement!.classList.add('photo-viewer-overlay')
+      let scale = 1, x = 0, y = 0
+      const apply = () => { img.style.transform = `translate(${x}px, ${y}px) scale(${scale})` }
+      const zoom = document.createElement('button'); zoom.type = 'button'; zoom.textContent = 'Zoom in'; zoom.setAttribute('aria-label', 'Zoom photo')
+      const toggle = () => { scale = scale === 1 ? 2 : 1; x = y = 0; zoom.textContent = scale === 1 ? 'Zoom in' : 'Zoom out'; apply() }
+      zoom.onclick = toggle; img.ondblclick = toggle; actions.append(zoom)
+      const pointers = new Map<number, PointerEvent>()
+      img.onpointerdown = (e) => { img.setPointerCapture(e.pointerId); pointers.set(e.pointerId, e) }
+      img.onpointermove = (e) => {
+        const before = pointers.get(e.pointerId)
+        if (!before) return
+        const other = [...pointers.values()].find((p) => p.pointerId !== e.pointerId)
+        if (other) scale = Math.max(1, Math.min(5, scale * Math.hypot(e.clientX - other.clientX, e.clientY - other.clientY) / Math.max(1, Math.hypot(before.clientX - other.clientX, before.clientY - other.clientY))))
+        else if (scale > 1) { x += e.clientX - before.clientX; y += e.clientY - before.clientY }
+        pointers.set(e.pointerId, e); apply()
+      }
+      img.onpointerup = img.onpointercancel = (e) => { pointers.delete(e.pointerId) }
     }
+
+    root.querySelector('#nav-avatar')!.addEventListener('click', () => { if (peerPhoto) openImageViewer(peerPhoto, 'profile-photo.jpg') })
 
     // An image renders as a thumbnail + optional caption; tap opens a full
     // view with a download action.
@@ -1252,6 +1316,10 @@ export const ChatPage: Page = (root, go) => {
       // caption below it.
       const media = document.createElement('div')
       media.className = 'image-bubble__media'
+      if (p.mime === 'image/gif' && p.width && p.height) {
+        media.style.width = `${200 * Math.min(1, p.width / p.height)}px`
+        media.classList.add('image-bubble__media--gif')
+      }
 
       const img = document.createElement('img')
       img.className = 'image-bubble__img'
@@ -1260,6 +1328,13 @@ export const ChatPage: Page = (root, go) => {
       if (p.width && p.height) {
         // Reserve the real final size up front — no layout jump, no blank box.
         img.style.aspectRatio = `${p.width} / ${p.height}`
+        if (!isSticker(message)) {
+          const maximum = p.mime === 'image/gif' ? 200 : 260
+          media.style.width = `${Math.min(maximum, (p.mime === 'image/gif' ? 200 : 320) * p.width / p.height)}px`
+          media.style.maxWidth = '100%'
+          media.style.aspectRatio = `${p.width} / ${p.height}`
+          img.style.height = '100%'
+        }
       } else {
         // Legacy message from before dimensions were captured: nothing to
         // reserve exactly, so fall back to a sane minimum instead of
@@ -1276,7 +1351,8 @@ export const ChatPage: Page = (root, go) => {
         img.classList.add('image-bubble__img--loaded') // fade in, no pop
         stopSpinner()
       })
-      img.addEventListener('error', stopSpinner)
+      const failed = () => { spinner.textContent = 'Photo unavailable'; spinner.setAttribute('role', 'status') }
+      img.addEventListener('error', failed)
 
       media.append(img, spinner)
       wrap.append(media)
@@ -1300,12 +1376,14 @@ export const ChatPage: Page = (root, go) => {
         // Signed at broadcast time — already viewable, no follow-up request.
         resolvedUrl = p.url
         img.src = p.url
+        if (path) rememberSignedUrl(path, p.url)
       } else if (path) {
         hydrateMedia(path, (url) => {
           resolvedUrl = url
           img.src = url
-        })
+        }, failed)
       }
+      if (img.complete && img.naturalWidth) { img.classList.add('image-bubble__img--loaded'); stopSpinner() }
 
       img.addEventListener('click', (e) => {
         if (isSticker(message)) return
@@ -1568,6 +1646,7 @@ export const ChatPage: Page = (root, go) => {
       if (message.id) row.dataset.id = message.id
       row.dataset.metaSide = metaSide(isMine)
       if (isSticker(message)) row.dataset.sticker = '1'
+      if (message.type === 'text' && !message.deletedAt && isSingleEmoji(message.content)) row.dataset.bigEmoji = '1'
 
       const body = document.createElement('div')
       body.className = 'chat__message-body'
@@ -1592,6 +1671,17 @@ export const ChatPage: Page = (root, go) => {
       bubbleTime.textContent = message.editedAt && !message.deletedAt ? `edited ${formatMessageTime(new Date(message.editedAt))}` : formatMessageTime(at)
       meta.append(bubbleTime)
 
+      const gameCard = () => {
+        const p = message.payload as { game?: GameKind; winner?: string | null; reason?: string } | null
+        if (!p?.game || !Object.hasOwn(gameTitles, p.game)) return text
+        const card = document.createElement('div'); card.className = 'game-log-card'
+        const icon = document.createElement('span'); icon.innerHTML = gameIcon(p.game)
+        const label = document.createElement('div'), title = document.createElement('strong'), detail = document.createElement('div')
+        title.textContent = gameTitles[p.game]
+        detail.textContent = p.reason === 'agreement' ? 'A draw · Draw by agreement' : p.winner === myUserId ? 'You won' : p.winner ? `${otherName} won` : 'A draw'
+        const duration = document.createElement('small'); duration.textContent = message.content
+        label.append(title, detail, duration); card.append(icon, label); return card
+      }
       const content =
         message.deletedAt ? text : message.type === 'letter'
           ? letterCard(message)
@@ -1613,6 +1703,8 @@ export const ChatPage: Page = (root, go) => {
                           ? alarmCard(message)
                           : message.type === 'call'
                             ? callLogCard(message)
+                            : message.type === 'game'
+                              ? gameCard()
                             : message.type === 'location'
                               ? locationCard(message)
                               : text
@@ -1639,7 +1731,7 @@ export const ChatPage: Page = (root, go) => {
         row.dataset.mine = '1' // keyed by the bubble-mode preview
         // Call rows carry no receipt (they're server-authored, not "sent") —
         // just the alignment.
-        if (message.type !== 'call') {
+        if (message.type !== 'call' && message.type !== 'game') {
           if (!pending) row.dataset.delivered = '1'
           const receipt = document.createElement('span')
           receipt.className = 'chat__receipt'
@@ -1779,7 +1871,10 @@ export const ChatPage: Page = (root, go) => {
       else log.appendChild(row)
       updateGroup(row)
       updateGroup(row.nextElementSibling)
-      if (atBottom || isMine) log.scrollTo({ top: log.scrollHeight, behavior: isMine && animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant' })
+      if (atBottom || isMine || scrollingLatest) {
+        latestResize.disconnect(); latestResize.observe(row)
+        log.scrollTo({ top: log.scrollHeight, behavior: (isMine && animate || scrollingLatest) && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant' })
+      }
       registerMessageRow(message, row)
       return row
     }
@@ -1886,7 +1981,7 @@ export const ChatPage: Page = (root, go) => {
         const original = messagesById.get(quote.dataset.replyTo ?? '')
         if (original) quote.querySelector('.chat__quote-snippet')!.textContent = snippetOf(original)
       }
-      log.scrollTop = prevTop + (log.scrollHeight - prevHeight)
+      if (!scrollingLatest) log.scrollTop = prevTop + (log.scrollHeight - prevHeight)
       if (!hasOlder) loadOlderBtn.remove()
       else {
         loadingOlder = false
@@ -2110,13 +2205,14 @@ export const ChatPage: Page = (root, go) => {
     }
 
     const uploadMedia = async (type: 'image' | 'voice', preview: unknown, upload: () => Promise<unknown>, replyTo: string | null): Promise<void> => {
+      if (disposed || mediaEpoch() !== accountEpoch) return
       const row = appendMessage({ senderId: myUserId, content: '', createdAt: new Date().toISOString(), type, payload: preview, replyTo }, true, true)
       row.dataset.uploading = '1'
       const status = document.createElement('span'); status.className = 'chat__upload-status'; status.textContent = 'Sending…'; status.setAttribute('role', 'status')
       row.querySelector('.chat__message-body')!.append(status)
       try {
         const payload = await upload()
-        if (disposed || !row.isConnected) return
+        if (disposed || mediaEpoch() !== accountEpoch || !row.isConnected) return
         const own = myRows.indexOf(row); if (own !== -1) myRows.splice(own, 1)
         row.remove()
         sendMessage('', type, payload, replyTo)
@@ -2251,7 +2347,6 @@ export const ChatPage: Page = (root, go) => {
     // immediately (no caption step, matching the plan) as a media message. --
     const imageInput = root.querySelector<HTMLInputElement>('#attach-image-input')!
     const fileInput = root.querySelector<HTMLInputElement>('#attach-file-input')!
-    const MAX_IMAGE_BYTES = 10 * 1024 * 1024
     const MAX_FILE_BYTES = 25 * 1024 * 1024
 
     const CAMERA_ICON =
@@ -2294,117 +2389,23 @@ export const ChatPage: Page = (root, go) => {
       imageObjectUrls.clear()
     })
 
-    const readImageDimensions = (file: File): Promise<{ width: number; height: number }> =>
-      new Promise((resolve, reject) => {
-        const url = URL.createObjectURL(file)
-        const img = new Image()
-        img.onload = () => {
-          URL.revokeObjectURL(url)
-          resolve({ width: img.naturalWidth, height: img.naturalHeight })
-        }
-        img.onerror = () => {
-          URL.revokeObjectURL(url)
-          reject(new Error('could not read image'))
-        }
-        img.src = url
-      })
-
-    // Re-encode a picked image through a <canvas> before upload — this drops
-    // any EXIF/GPS metadata the camera baked in (privacy). Also yields the
-    // dimensions for free. GIFs skip this (canvas would flatten the animation)
-    // and upload as-is; they rarely carry location data.
-    const reencodeImage = (file: File): Promise<{ blob: Blob; width: number; height: number }> =>
-      new Promise((resolve, reject) => {
-        const url = URL.createObjectURL(file)
-        const img = new Image()
-        img.onload = () => {
-          URL.revokeObjectURL(url)
-          const width = img.naturalWidth
-          const height = img.naturalHeight
-          const canvas = document.createElement('canvas')
-          canvas.width = width
-          canvas.height = height
-          const ctx = canvas.getContext('2d')
-          if (!ctx) {
-            reject(new Error('no canvas context'))
-            return
-          }
-          ctx.drawImage(img, 0, 0)
-          const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
-          canvas.toBlob(
-            (blob) => (blob ? resolve({ blob, width, height }) : reject(new Error('encode failed'))),
-            type,
-            0.9,
-          )
-        }
-        img.onerror = () => {
-          URL.revokeObjectURL(url)
-          reject(new Error('could not read image'))
-        }
-        img.src = url
-      })
-
     const sendImage = async (file: File): Promise<void> => {
-      if (file.size > MAX_IMAGE_BYTES) {
-        showNotice('That photo is too large (max 10MB).')
-        return
-      }
-      attachBtn.disabled = true
-      let row: HTMLElement | null = null
+      if (disposed) return
+      const reply = replyTarget?.id ?? null
+      cancelReply()
       try {
-        const isGif = file.type === 'image/gif'
-        let uploadBlob: Blob = file
-        let width: number
-        let height: number
-        if (isGif) {
-          ;({ width, height } = await readImageDimensions(file))
-        } else {
-          const encoded = await reencodeImage(file)
-          uploadBlob = encoded.blob
-          width = encoded.width
-          height = encoded.height
-        }
-        const uploadPromise = uploadAttachment(connectionId, 'image', uploadBlob)
-
-        // Render at the real final size straight from the local blob — no blank
-        // box, no waiting on the (much slower) upload to show anything.
-        const localUrl = URL.createObjectURL(uploadBlob)
+        const { blob, width, height } = await normalizePhoto(file)
+        if (disposed) return
+        const localUrl = URL.createObjectURL(blob)
         imageObjectUrls.add(localUrl)
-        row = appendMessage(
-          {
-            senderId: myUserId,
-            content: '',
-            createdAt: new Date().toISOString(),
-            type: 'image',
-            payload: { localUrl, width, height },
-            replyTo: null,
-          },
-          true,
-          true,
-        )
-
-        // Only enters the retry-tracked `pending` queue once there's a real
-        // payload to send — pushing it earlier (while the upload is still in
-        // flight) would let a poll/reconnect's flushPending() fire trySend
-        // with no path yet and send a broken image message.
-        const uploaded = await uploadPromise
-        if (disposed || !row.isConnected) return
-        const entry: Pending = {
-          tempId: crypto.randomUUID(),
-          content: '',
-          row,
-          sent: false,
-          type: 'image',
-          payload: { ...uploaded, width, height },
-          replyTo: null,
-        }
-        pending.push(entry)
-        trySend(entry)
-      } catch {
-        showNotice('Could not send that photo — try again.')
-        row?.classList.add('chat__message--failed')
-      } finally {
-        attachBtn.disabled = false
+        await uploadMedia('image', { localUrl, width, height, mime: blob.type }, async () => {
+          const uploaded = await uploadAttachment(connectionId, 'image', blob)
+          // The captured page owns this account/conversation; teardown retires its pending upload.
+          if (disposed) throw new Error('Conversation changed.')
+          return { ...uploaded, width, height, localUrl }
+        }, reply)
+      } catch (err) {
+        if (!disposed) showNotice(err instanceof Error ? err.message : 'Could not send that photo. Try again.')
       }
     }
 
@@ -2543,7 +2544,9 @@ export const ChatPage: Page = (root, go) => {
     const games = mountGames(chatEl, otherName, myUserId, (event, packet) => {
       if (!transport) return Promise.reject(new Error('not connected'))
       return transport.sendMatch(event, packet)
-    }, (id, x) => transport?.sendPaddle(id, x), showNotice)
+    }, (id, x, y, released) => transport?.sendPaddle(id, x, y, released), showNotice)
+    games.setPhoto(peerPhoto)
+    setGamePhoto = games.setPhoto
     overlays.add(games.dispose)
     let stopDictation = () => {}
     overlays.add(() => stopDictation())
@@ -2551,25 +2554,22 @@ export const ChatPage: Page = (root, go) => {
       playGames: games.open,
       writeAudio: () => { if (isRecording) { showNotice('Finish your voice note first.'); return }; stopDictation(); stopDictation = startVoiceTyping(composer, input, showNotice) },
       input,
-      writeLetter: () =>
-        openLetterComposer({
+      writeLetter: () => {
+        stopDictation()
+        overlays.add(openLetterComposer({
           toName: current.otherNickname ?? 'them',
+          myNickname,
+          notice: showNotice,
           onSend: (letterBody, letterPayload) => {
             sendMessage(letterBody, 'letter', letterPayload)
             cancelReply() // letters don't carry reply context; don't leave the bar stuck open
           },
-        }),
+        }))
+      },
       writeCountdown: () =>
         openCountdownComposer({
           onSend: (label, payload) => {
             sendMessage(label, 'countdown', payload)
-            cancelReply()
-          },
-        }),
-      writeCheckin: () =>
-        openCheckinComposer({
-          onSend: (note, payload) => {
-            sendMessage(note, 'checkin', payload)
             cancelReply()
           },
         }),
@@ -3453,6 +3453,7 @@ export const ChatPage: Page = (root, go) => {
       }))
       overlays.add(t.onMatch(games.receive))
       overlays.add(t.onPong(games.frame))
+      overlays.add(t.onMatchReaction(games.reaction))
       unsubscribeEnded = t.onConnectionEnded(() => {
         void getCurrentConnection().then((next) => { if (!disposed) go(next ? nextScreenFor(next) : 'connection-id') }).catch(() => { /* poll retries without losing the export opportunity */ })
       })
@@ -3543,11 +3544,12 @@ export const ChatPage: Page = (root, go) => {
         return
       }
       if (disposed) return
-      if (!next || next.status !== 'active' && next.status !== 'leave_pending' || next.id !== connectionId) {
+      if (!next || next.status !== 'active' && next.status !== 'leave_pending' || next.id !== connectionId || next.myUserId !== myUserId) {
         go(next ? nextScreenFor(next) : 'connection-id')
         return
       }
       const nextAvatarIds = `${next.myAvatarId}:${next.otherAvatarId}`
+      myNickname = next.myNickname
       if (nextAvatarIds !== avatarIds || Date.now() - avatarsLoadedAt > 55 * 60_000) { avatarIds = nextAvatarIds; void loadPhotos().catch(() => {}) }
       if (Date.now() - lastPinEvent >= 10_000) {
         pinState = { messageId: next.pinnedMessageId ?? null, pinnedBy: next.pinnedBy ?? null, pinnedAt: next.pinnedAt ?? null }
@@ -3629,7 +3631,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
     <div class="chat">
       <div class="chat__nav">
         <div class="chat__nav-peer">
-          <span class="chat__avatar" id="nav-avatar" aria-hidden="true"></span>
+          <button type="button" class="chat__avatar" id="nav-avatar" aria-label="View profile photo"></button>
           <div class="chat__nav-info">
           <div class="chat__nav-title" id="nav-title"></div>
           <div class="chat__nav-status chat__nav-status--connecting" id="nav-status">connecting…</div>

@@ -90,7 +90,9 @@ export class CallSession {
     }
 
     this.unsubSignal = transport.onSignal((callId, data) => {
-      if (callId === this.callId) void this.handleSignal(data)
+      if (!this.ended && callId === this.callId) void this.handleSignal(data).catch((err) => {
+        if (!this.ended) this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)))
+      })
     })
   }
 
@@ -102,7 +104,7 @@ export class CallSession {
       await this.pc.setLocalDescription(offer)
       await this.transport.sendSignal(this.callId, { sdp: offer })
     } catch (err) {
-      this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)))
+      if (!this.ended) this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)))
     }
   }
 
@@ -113,12 +115,14 @@ export class CallSession {
     try {
       await this.attachLocalTracks()
     } catch (err) {
-      this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)))
+      if (!this.ended) this.handlers.onError?.(err instanceof Error ? err : new Error(String(err)))
     }
   }
 
   private async attachLocalTracks(): Promise<void> {
-    this.localStream = await acquireLocalStream(this.kind === 'video' ? 'video' : 'audio', this.facing)
+    const stream = await acquireLocalStream(this.kind === 'video' ? 'video' : 'audio', this.facing)
+    if (this.ended) { stopStream(stream); throw new Error('Call ended') }
+    this.localStream = stream
     for (const track of this.localStream.getTracks()) this.pc.addTrack(track, this.localStream)
     this.handlers.onLocalStream?.(this.localStream)
   }
@@ -140,6 +144,7 @@ export class CallSession {
     const next: CameraFacing = this.facing === 'user' ? 'environment' : 'user'
     try {
       const fresh = await acquireLocalStream('video', next, false)
+      if (this.ended) { stopStream(fresh); return }
       const newTrack = fresh.getVideoTracks()[0]
       if (!newTrack) return
       const oldTrack = this.localStream.getVideoTracks()[0]

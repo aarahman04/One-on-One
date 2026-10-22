@@ -22,8 +22,7 @@ export function mountChess(grid: HTMLElement, seat: number, move: (uci: string) 
     previousPosition = ''
   let sprites = new Map<string, HTMLImageElement>(),
     promotion: HTMLElement | null = null,
-    cancelDrag = () => {},
-    dropped = ''
+    cancelDrag = () => {}
   const squareAt = (i: number) => {
     const n = seat === 1 ? i : 63 - i
     return 'abcdefgh'[n % 8] + (8 - Math.floor(n / 8))
@@ -189,14 +188,16 @@ export function mountChess(grid: HTMLElement, seat: number, move: (uci: string) 
     if (!img) return
     let dragging = false,
       target = ''
-    const end = () => {
+    const cancel = () => end()
+    const end = (restore = true) => {
       document.removeEventListener('pointermove', moving)
       document.removeEventListener('pointerup', up)
-      document.removeEventListener('pointercancel', end)
+      document.removeEventListener('pointercancel', cancel)
       img.classList.remove('dragging')
-      img.style.transform = ''
-      locate(img, sq)
+      img.style.transitionDuration = '220ms,220ms,260ms'
+      if (restore) locate(img, sq)
       cells.forEach((b) => b.classList.remove('hover'))
+      cancelDrag = () => {}
     }
     const moving = (e: PointerEvent) => {
       if (e.pointerId !== event.pointerId) return
@@ -217,7 +218,7 @@ export function mountChess(grid: HTMLElement, seat: number, move: (uci: string) 
     }
     const up = (e: PointerEvent) => {
       if (e.pointerId !== event.pointerId) return
-      end()
+      end(!dragging)
       if (dragging) {
         e.preventDefault()
         grid.addEventListener(
@@ -228,18 +229,19 @@ export function mountChess(grid: HTMLElement, seat: number, move: (uci: string) 
           },
           { once: true, capture: true },
         )
-        dropped = target
+        img.getBoundingClientRect()
         if (target) destination(target)
         else {
           selected = ''
           highlight()
         }
+        if (sprites.get(sq) === img) locate(img, sq)
       }
     }
-    cancelDrag = end
+    cancelDrag = cancel
     document.addEventListener('pointermove', moving, { passive: false })
     document.addEventListener('pointerup', up)
-    document.addEventListener('pointercancel', end)
+    document.addEventListener('pointercancel', cancel)
   }
   function update(board: ChessBoard, canMove: boolean) {
     current = board
@@ -269,7 +271,10 @@ export function mountChess(grid: HTMLElement, seat: number, move: (uci: string) 
         tracked.delete(last.from)
         const capture = tracked.get(last.to)
         tracked.delete(last.to)
+        const dx = last.to.charCodeAt(0) - last.from.charCodeAt(0), dy = Number(last.to[1]) - Number(last.from[1])
+        const duration = Math.min(280, Math.round(150 + 45 * Math.sqrt(Math.hypot(dx, dy))))
         if (capture) {
+          capture.style.animationDelay = `${duration * .65}ms`
           capture.classList.add('captured')
           capture.addEventListener('animationend', () => capture.remove(), { once: true })
         }
@@ -280,6 +285,7 @@ export function mountChess(grid: HTMLElement, seat: number, move: (uci: string) 
         if (previous[last.from].toLowerCase() === 'p' && last.from[0] !== last.to[0] && !previous[last.to]) {
           const ep = last.to[0] + last.from[1],
             img = tracked.get(ep)
+          if (img) img.style.animationDelay = `${duration * .65}ms`
           img?.classList.add('captured')
           img?.addEventListener('animationend', () => img.remove(), { once: true })
           tracked.delete(ep)
@@ -315,19 +321,16 @@ export function mountChess(grid: HTMLElement, seat: number, move: (uci: string) 
         }
         img.src = pieceUrl(p)
         img.dataset.piece = p
-        if (dropped === sq) {
-          img.style.transition = 'none'
-          locate(img, sq)
-          requestAnimationFrame(() => {
-            img!.style.transition = ''
-          })
-        } else locate(img, sq)
+        const bounds = grid.getBoundingClientRect(), from = img.getBoundingClientRect(), i = index(sq)
+        const distance = Math.hypot((bounds.left + (i % 8) * bounds.width / 8 - from.left) / (bounds.width / 8), (bounds.top + Math.floor(i / 8) * bounds.width / 8 - from.top) / (bounds.width / 8))
+        const duration = Math.min(280, Math.round(150 + 45 * Math.sqrt(distance)))
+        img.style.transitionDuration = `${duration}ms,${duration}ms,260ms`
+        locate(img, sq)
       }
       sprites = tracked
       previous = next
       previousPosition = key
       selected = ''
-      dropped = ''
     }
     highlight()
   }

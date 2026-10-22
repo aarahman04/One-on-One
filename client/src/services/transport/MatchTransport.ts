@@ -1,9 +1,10 @@
 export const gameTitles = {
   chess: 'Chess',
-  pong: 'Table Tennis',
+  pong: 'Ping Pong',
   connect4: 'Connect 4',
   tictactoe: 'Tic-Tac-Toe',
   dots: 'Dots & Boxes',
+  reversi: 'Reversi',
 } as const
 export type GameKind = keyof typeof gameTitles
 export type MatchAction =
@@ -17,6 +18,9 @@ export type MatchAction =
   | 'match:rematch'
   | 'match:sync'
   | 'match:away'
+  | 'match:react'
+export interface MatchReaction { id: string; matchId: string; from: string; text: string }
+export interface ReversiBoard { cells: number[]; last: number; flipped: number[]; passed: boolean; legal: number[] }
 export interface ChessBoard {
   fen: string
   last: { from: string; to: string; promotion?: string; captured?: string } | null
@@ -44,7 +48,7 @@ export interface MatchSnapshot {
   turn: string | null
   seq: number
   version: number
-  board: ChessBoard | GridBoard | DotsBoard | { score: number[] } | null
+  board: ChessBoard | GridBoard | DotsBoard | ReversiBoard | { score: number[]; target?: number } | null
   outcome: { winner: string | null; reason: string } | null
   drawOffer: string | null
   rematch: string[]
@@ -52,6 +56,8 @@ export interface MatchSnapshot {
   away: string[]
   paused: boolean
   expiresAt: number | null
+  clock?: { base: number; inc: number; left: [number, number] } | null
+  points?: number | null
 }
 export interface PongFrame {
   id: string
@@ -61,6 +67,14 @@ export interface PongFrame {
   s: [number, number]
   c: number
   h: number
+  w?: number
+  z?: [number, number]
+  r?: [number, number]
+  a?: number[] | null
+  spin?: number
+  serve?: number
+  j?: number
+  l?: boolean
 }
 export interface MatchAck {
   ok: boolean
@@ -69,9 +83,10 @@ export interface MatchAck {
 }
 export interface MatchTransport {
   sendMatch(event: MatchAction, payload?: Record<string, unknown>): Promise<MatchAck>
-  sendPaddle(matchId: string, x: number): void
+  sendPaddle(matchId: string, x: number, y?: number, released?: boolean): void
   onMatch(callback: (match: MatchSnapshot) => void): () => void
   onPong(callback: (frame: PongFrame) => void): () => void
+  onMatchReaction(callback: (reaction: MatchReaction) => void): () => void
 }
 
 // Socket input is untrusted. Reject malformed state before any renderer can use it.
@@ -109,6 +124,12 @@ export function decodeMatch(value: unknown): MatchSnapshot | null {
     )
   )
     return null
+  if (m.points != null && (!Number.isInteger(m.points) || m.points < 1 || m.points > 99)) return null
+  if (m.clock != null && (
+    !Number.isInteger(m.clock.base) || m.clock.base < 10_000 || m.clock.base > 10_800_000 ||
+    !Number.isInteger(m.clock.inc) || m.clock.inc < 0 || m.clock.inc > 60_000 ||
+    !Array.isArray(m.clock.left) || m.clock.left.length !== 2 || !m.clock.left.every(count)
+  )) return null
   if (m.status === 'invited' && m.board === null) return m
   const b = m.board as unknown as Record<string, unknown> | null
   if (!b) return m.status === 'over' ? m : null
@@ -133,6 +154,10 @@ export function decodeMatch(value: unknown): MatchSnapshot | null {
       (b.last as number) >= size
     )
       return null
+  } else if (m.game === 'reversi') {
+    const indices = (a: unknown) => Array.isArray(a) && a.every((n) => count(n) && n < 64)
+    if (!cells(b.cells, 64) || !indices(b.legal) || !indices(b.flipped) || typeof b.passed !== 'boolean' ||
+      !Number.isInteger(b.last) || (b.last as number) < -1 || (b.last as number) >= 64) return null
   } else if (m.game === 'dots') {
     const last = b.last as DotsBoard['last']
     if (

@@ -13,12 +13,15 @@ export class InternetCallTransport implements CallTransport {
     this.socket = socket
   }
 
-  private emitWithAck<T extends { error?: string }>(event: string, payload: unknown): Promise<T> {
+  private emitWithAck<T extends { error?: string }>(event: string, payload: unknown, late?: (response: T) => void): Promise<T> {
     const socket = this.socket
     if (!socket.connected) throw new Error('not connected')
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('call request timed out')), ACK_TIMEOUT_MS)
+      let settled = false
+      const timer = setTimeout(() => { settled = true; reject(new Error('call request timed out')) }, ACK_TIMEOUT_MS)
       socket.emit(event, payload, (res: T) => {
+        if (settled) { late?.(res); return }
+        settled = true
         clearTimeout(timer)
         if (res?.error) reject(new Error(res.error))
         else resolve(res)
@@ -27,7 +30,9 @@ export class InternetCallTransport implements CallTransport {
   }
 
   invite(kind: CallKind): Promise<{ callId: string; iceServers: IceServer[] }> {
-    return this.emitWithAck<{ error?: string; callId: string; iceServers: IceServer[] }>('call:invite', { kind })
+    return this.emitWithAck<{ error?: string; callId: string; iceServers: IceServer[] }>('call:invite', { kind }, (response) => {
+      if (typeof response?.callId === 'string') void this.end(response.callId).catch(() => {})
+    })
   }
 
   accept(callId: string): Promise<{ iceServers: IceServer[] }> {
@@ -39,6 +44,14 @@ export class InternetCallTransport implements CallTransport {
   }
 
   async end(callId: string): Promise<void> {
+    if (!this.socket.connected) {
+      await new Promise<void>((resolve, reject) => {
+        const connected = () => { clearTimeout(timer); this.socket.off('connect', connected); resolve() }
+        const timer = setTimeout(() => { this.socket.off('connect', connected); reject(new Error('call end connection timed out')) }, 30_000)
+        this.socket.on('connect', connected)
+        this.socket.connect()
+      })
+    }
     await this.emitWithAck('call:end', { callId })
   }
 

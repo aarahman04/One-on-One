@@ -1,5 +1,7 @@
 import { canUseDeviceSpeech, narrationPart, speechNotice } from '../services/speechService'
 
+let activeStop: (() => void) | null = null
+
 export function mountLetterNarrator(
   speaker: HTMLButtonElement,
   controls: HTMLElement,
@@ -43,6 +45,7 @@ export function mountLetterNarrator(
     }
   }
   const stop = () => {
+    if (activeStop === stop) activeStop = null
     generation++
     controller?.abort()
     controller = null
@@ -65,7 +68,7 @@ export function mountLetterNarrator(
       status.textContent = 'Reading aloud is not supported in this browser.'
       return
     }
-    status.textContent = 'Natural voice unavailable, using device voice.'
+    status.textContent = ids ? 'Natural voice unavailable, using device voice.' : 'Browser voice · unsent preview.'
     device = true
     state = 'playing'
     paused = false
@@ -84,7 +87,9 @@ export function mountLetterNarrator(
     update()
   }
   const start = async () => {
+    activeStop?.()
     stop()
+    activeStop = stop
     const run = generation
     controller = new AbortController()
     const signal = controller.signal
