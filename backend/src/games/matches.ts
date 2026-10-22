@@ -365,11 +365,12 @@ export class MatchManager {
     return ok(this.emit(next))
   }
 
-  paddle(connectionId: string, userId: string, matchId: unknown, x: unknown, y: unknown = undefined, released: unknown = false): boolean {
+  paddle(connectionId: string, userId: string, matchId: unknown, x: unknown, y: unknown = undefined, released: unknown = false, touch: unknown = undefined): boolean {
     const m = this.find(connectionId, userId, matchId)
     if (!m || m.status !== 'playing' || m.away.size > 0 || !m.pong || typeof x !== 'number' || !Number.isFinite(x) || typeof released !== 'boolean') return false
     if (y !== undefined && (typeof y !== 'number' || !Number.isFinite(y))) return false
-    m.pong.paddle(this.seat(m, userId) as Seat, x, y as number | undefined, released)
+    if (touch !== undefined && (!Array.isArray(touch) || touch.length !== 2 || !touch.every(v => typeof v === 'number' && Number.isFinite(v)))) return false
+    m.pong.paddle(this.seat(m, userId) as Seat, x, y as number | undefined, released, touch as [number, number] | undefined)
     return true
   }
 
