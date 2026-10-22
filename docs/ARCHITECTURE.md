@@ -838,3 +838,28 @@ flowchart LR
   LOAD --> RUN
   RUN --> IDLE[idle 120 s -> unload + malloc_trim<br/>~90 MB]
 ```
+
+## Web client parity 2.0.10 (2026-10-22)
+
+The existing MessageService/Transport boundary remains the only socket seam.
+Games decode authoritative clocks, Reversi data and rebuilt Pong flights; only
+local display previews count down/animate. Reactions are transient per-match,
+per-player slots. Browser narration permits one active preview/sent player.
+Pending photo uploads capture their page/conversation and sign-out epoch before
+joining the ordinary retry queue; manual sticker strokes never mutate Original.
+
+```mermaid
+flowchart LR
+    UI[Chat and game UI] --> T[Existing Transport boundary]
+    T --> S[Unchanged authenticated backend contract]
+    S --> R[Validated snapshots, clocks, flights and reactions]
+    R --> UI
+    P[Local photo bytes] --> N[One EXIF decode and bounded canvas encode]
+    N --> U[Page and account-owned pending preview]
+    U --> T
+    L[Unsent letter preview] --> B[Browser speech only]
+    E[Manual sticker strokes] --> W[Existing private WebP library]
+```
+
+No backend, database, speech-service, API or Android change is part of this round.
+Detailed feature/gap matrix and verification: `WEB-ANDROID-PARITY-2.0.10.md`.

@@ -2993,3 +2993,29 @@ Status: implemented and tested in this repo; **not deployed** (no Railway or sec
   (≤ 62°) plus racket swing, overlap-tested substeps (no tunnelling), side bounces, serve to the loser,
   first to 7. Contract §12 documents the geometry and the arcade rules chosen without a reference video.
 - Chess board view adds `history` (SAN). Tests 82/82, including real-socket bots playing a rally and a full game.
+
+## Web parity with Android 2.0.10 (2026-10-22)
+
+Implemented in `feat/web-parity-2.0.10`, starting at origin/main `3b5475a`.
+- Games: final cubic/height/spin Ping Pong protocol with relative 2D pointer input,
+  custom target, sound and capped prediction; Reversi replacing Dots in the hub
+  (legacy Dots still supported); clocks/options, move previews/motion, black/white
+  chess, reactions, universal draw/action bar, centered invites and away/rematch.
+- Letters: nickname/signature/me From default, editable To, local preview voice,
+  one active narrator, label-aligned microphone; kept server-first recorded
+  dictation and visible sent-letter narration fallback. 118 s cap submits once.
+- Chat/media/calls: check-in creation removed with history retained; bounded,
+  oriented JPEG/alpha PNG/GIF normalization; pending upload state and account/page
+  retirement guards; stable ratio/cache/viewer, single-grapheme emoji, latest arrow,
+  smaller reactions, and call acknowledgement/event/socket-end lifecycle guards.
+- Stickers: manual offset Erase/Restore with bounded undo/redo and Done baseline,
+  preserving original pixels/alpha and the existing crop/place/WebP save path.
+- Deliberate gap: no BiRefNet or new model/runtime on web. Existing Auto remains
+  DeepLab-based and is not advertised as equivalent to Android's cut-out quality.
+- Verification: client lint/typecheck, 47 node tests and production build pass;
+  local Chromium fixture checks use two isolated identities and read-only server
+  rules/simulation. No authenticated deployed two-account or physical-device run.
+  See `WEB-ANDROID-PARITY-2.0.10.md` and `ui-web-2.0.10/README.md` for scope/evidence
+  and the remaining manual checklist.
+- No backend/database/speech/contract/workflow/Android/env/dependency/lockfile or
+  deployment-setting changes; no migration or workflow dispatch.
