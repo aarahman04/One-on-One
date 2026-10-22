@@ -6,6 +6,7 @@ import {
   type MatchAck,
   type MatchAction,
   type MatchSnapshot,
+  type GridBoard,
 } from '../../services/transport/MatchTransport'
 import { PongClient } from './pong'
 
@@ -16,22 +17,24 @@ export class GameSession {
   online = false
   pong: PongClient | null = null
   predicted: ChessBoard | null = null
+  predictedGrid: GridBoard | null = null
+  receivedAt = 0
   private dismissed = ''
   private hubOpen = false
   private disposed = false
   private revision = 0
   private retired = new Set<string>()
-  private pendingPaddle: number | null = null
+  private pendingPaddle: [number, number, boolean] | null = null
   private paddleTimer: ReturnType<typeof setTimeout> | undefined
   readonly me: string
   private call: (event: MatchAction, payload?: Record<string, unknown>) => Promise<MatchAck>
-  private sendPaddle: (id: string, x: number) => void
+  private sendPaddle: (id: string, x: number, y?: number, released?: boolean) => void
   private changed: () => void
   private notice: (text: string) => void
   constructor(
     me: string,
     call: (event: MatchAction, payload?: Record<string, unknown>) => Promise<MatchAck>,
-    sendPaddle: (id: string, x: number) => void,
+    sendPaddle: (id: string, x: number, y?: number, released?: boolean) => void,
     changed: () => void,
     notice: (text: string) => void,
   ) {
@@ -67,8 +70,11 @@ export class GameSession {
       this.clearPaddle()
     }
     this.match = next
+    this.receivedAt = performance.now()
     this.revision++
-    if (current?.id !== next.id || next.seq !== current.seq || next.status !== 'playing') this.predicted = null
+    if (current?.id !== next.id || next.seq !== current.seq || next.status !== 'playing') { this.predicted = null; this.predictedGrid = null }
+    if (current?.id === next.id && current.drawOffer === this.me && !next.drawOffer && next.status === 'playing' && next.seq === current.seq)
+      this.notice('Your partner declined your draw offer.')
     if (next.status !== 'over') this.hubOpen = false
     if (
       next.status === 'over' &&
@@ -93,20 +99,21 @@ export class GameSession {
       return
     }
     if (this.stage !== 'playing') {
+      if (this.stage === 'result') void this.action('match:leave')
       this.hubOpen = true
       this.changed()
     }
   }
   done(): void {
-    if (this.match?.rematch.includes(this.me)) void this.action('match:leave')
+    if (this.match?.status === 'over') void this.action('match:leave')
     this.dismissed = this.match?.id || ''
     this.hubOpen = false
     this.changed()
   }
-  async invite(game: GameKind) {
+  async invite(game: GameKind, options: Record<string, unknown> = {}) {
     this.hubOpen = false
     this.changed()
-    await this.request('match:invite', { game })
+    await this.request('match:invite', { game, ...options })
   }
   async sync() {
     const revision = this.revision
@@ -144,6 +151,19 @@ export class GameSession {
         return
       }
     }
+    if ((m.game === 'tictactoe' || m.game === 'connect4') && m.board) {
+      const board = m.board as GridBoard, cells = [...board.cells]
+      let cell = Number(move.cell)
+      if (m.game === 'connect4') {
+        const col = Number(move.col)
+        if (!Number.isInteger(col) || col < 0 || col > 6) return
+        cell = -1
+        for (let r = 5; r >= 0; r--) if (!cells[r * 7 + col]) { cell = r * 7 + col; break }
+      }
+      if (!Number.isInteger(cell) || cell < 0 || cell >= cells.length || cells[cell]) return
+      cells[cell] = this.player
+      this.predictedGrid = { ...board, cells, last: cell }
+    }
     this.busy = true
     this.changed()
     try {
@@ -155,15 +175,17 @@ export class GameSession {
     } finally {
       if (!this.disposed) {
         this.predicted = null
+        this.predictedGrid = null
         this.busy = false
         this.changed()
       }
     }
   }
-  paddle(x: number) {
+  paddle(x: number, y = this.pong?.myY ?? 1.88, released = false) {
     const m = this.match
     if (!this.connected || this.disposed || m?.status !== 'playing' || m.paused || !this.pong) return
-    this.pendingPaddle = this.pong.paddle(x)
+    const position = this.pong.paddle(x, y, released)
+    this.pendingPaddle = [...position, released]
     if (this.paddleTimer) return
     const flush = () => {
       this.paddleTimer = undefined
@@ -177,7 +199,7 @@ export class GameSession {
         this.clearPaddle()
         return
       }
-      this.sendPaddle(m.id, this.pendingPaddle)
+      this.sendPaddle(m.id, ...this.pendingPaddle)
       this.pendingPaddle = null
       this.paddleTimer = setTimeout(flush, 34)
     }
@@ -194,7 +216,7 @@ export class GameSession {
       const ack = await this.call(event, payload)
       if (this.disposed) return null
       if (ack.match) this.receive(ack.match)
-      if (!ack.ok && report)
+      if (!ack.ok && report && !(event === 'match:react' && ack.error === 'rate_limited'))
         this.notice(
           ack.error === 'partner_offline'
             ? 'Games need your partner to be online.'

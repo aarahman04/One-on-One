@@ -154,7 +154,10 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   let session: CallSession | null = null
   let activeCallId: string | null = null
   let remoteAudio: HTMLAudioElement | null = null
-  let pendingAcceptedUnsub: (() => void) | null = null
+  let attempt = 0, disposed = false
+  let outgoingIce: IceServer[] | null = null
+  const earlyAccepted = new Set<string>(), ended = new Set<string>()
+  const rememberEnded = (id: string) => { ended.add(id); earlyAccepted.delete(id); if (ended.size > 64) ended.delete(ended.values().next().value!) }
   let muted = false
   let speakerOn = true
   let cameraOn = true
@@ -200,7 +203,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     if (state === 'ringing-in') {
       controlsEl.append(
         controlBtn('Decline', CALL_HANGUP_ICON, 'danger', () => {
-          if (activeCallId) void transport.decline(activeCallId)
+          if (activeCallId) void transport.decline(activeCallId).catch(() => {})
           reset()
         }),
         controlBtn(
@@ -266,6 +269,9 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   }
 
   const reset = (): void => {
+    attempt++
+    if (activeCallId) rememberEnded(activeCallId)
+    outgoingIce = null
     state = 'idle'
     activeKind = 'audio'
     activeCallId = null
@@ -277,9 +283,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     stopTimer()
     wakeLock.release()
     void stopCallService()
-    pendingAcceptedUnsub?.()
-    pendingAcceptedUnsub = null
-    session?.close()
+    try { session?.close() } catch { /* device cleanup must not prevent call:end */ }
     session = null
     remoteAudio?.remove()
     remoteAudio = null
@@ -339,6 +343,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   const startSession = (callId: string, kind: CallKind, iceServers: IceServer[], role: 'caller' | 'callee'): void => {
     session = new CallSession(transport, callId, kind, iceServers, {
       onRemoteStream: (stream) => {
+        if (disposed || activeCallId !== callId || ended.has(callId)) return
         if (kind === 'video') {
           // Android System WebView won't repaint a <video> when a track is
           // added to an already-attached MediaStream — desktop Chrome re-runs
@@ -380,6 +385,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
         }
       },
       onLocalStream: (stream) => {
+        if (disposed || activeCallId !== callId || ended.has(callId)) return
         if (kind !== 'video') return
         localVideo.srcObject = stream
         void localVideo.play().catch(() => {})
@@ -389,6 +395,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
         })
       },
       onStateChange: (s) => {
+        if (disposed || activeCallId !== callId || ended.has(callId)) return
         if (s === 'connected') {
           const wasReconnecting = state === 'reconnecting'
           state = 'in-call'
@@ -413,9 +420,10 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       // thinks this call is live at this point, so tell it to end rather than
       // just vanishing locally and leaving its registry stuck.
       onError: (err) => {
+        if (disposed || activeCallId !== callId || ended.has(callId)) return
         console.error('CallSession setup failed', err)
         show(callErrorMessage(err))
-        setTimeout(() => void hangup(), 2000)
+        setTimeout(() => { if (activeCallId === callId) void hangup() }, 2000)
       },
     })
     activeCallId = callId
@@ -429,7 +437,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     if (!callId) return
     if (!callingSupported()) {
       showToast("Calls aren't supported in this browser")
-      void transport.decline(callId)
+      void transport.decline(callId).catch(() => {})
       reset()
       return
     }
@@ -444,25 +452,30 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
       screen.hidden = true
       granted = await ensurePermissionRationale(kind === 'video' ? 'camera' : 'microphone')
     } finally {
-      accepting = false
+      if (activeCallId === callId) accepting = false
     }
     // The call may have ended, been declined, or moved on while the rationale
     // box was up — a stale continuation here must not resurrect it.
     if (activeCallId !== callId || state !== 'ringing-in') return
     if (!granted) {
-      void transport.decline(callId)
+      void transport.decline(callId).catch(() => {})
       reset()
       return
     }
     screen.hidden = false
+    accepting = true
     let accepted: { iceServers: IceServer[] }
     try {
       accepted = await transport.accept(callId)
     } catch {
-      // The server never registered the accept — a plain local reset is correct.
+      if (disposed || activeCallId !== callId) return
       reset()
+      // A lost acknowledgement may still have connected the call on the server.
+      void transport.end(callId).catch(() => {})
       return
     }
+    if (disposed || activeCallId !== callId || state !== 'ringing-in' || ended.has(callId)) { void transport.end(callId).catch(() => {}); return }
+    accepting = false
     state = 'in-call'
     void startCallService(kind, peerName)
     show('Connecting…')
@@ -471,12 +484,12 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     } catch (err) {
       // The accept DID register server-side — tell it to end, not just reset.
       show(err instanceof Error ? callErrorMessage(err) : 'Call failed')
-      setTimeout(() => void hangup(), 2000)
+      setTimeout(() => { if (activeCallId === callId) void hangup() }, 2000)
     }
   }
 
   const hangup = async (): Promise<void> => {
-    if (!activeCallId) return
+    if (!activeCallId) { reset(); return }
     const id = activeCallId
     reset()
     try {
@@ -486,41 +499,45 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     }
   }
 
-  const startCall = (kind: CallKind): void => {
-    if (state !== 'idle') return
-    if (!callingSupported()) {
-      showToast("Calls aren't supported in this browser")
-      return
+  const answered = (callId: string) => {
+    if (disposed || ended.has(callId)) return
+    if (activeCallId === callId && state === 'ringing-in' && !accepting) { reset(); return }
+    if (!activeCallId && state === 'ringing-out') { activeCallId = callId; earlyAccepted.add(callId); return }
+    if (activeCallId !== callId || state !== 'ringing-out' || !outgoingIce) return
+    state = 'in-call'; show('Connecting…')
+    try { startSession(callId, activeKind, outgoingIce, 'caller') }
+    catch (err) {
+      show(err instanceof Error ? callErrorMessage(err) : 'Call failed')
+      setTimeout(() => { if (activeCallId === callId) void hangup() }, 2000)
     }
+  }
+  const acceptedUnsub = transport.onAccepted(answered)
+  const startCall = (kind: CallKind): void => {
+    if (disposed || state !== 'idle') return
+    if (!callingSupported()) { showToast("Calls aren't supported in this browser"); return }
+    const run = ++attempt
+    state = 'ringing-out'; activeKind = kind
     void (async () => {
-      // In-app rationale before the browser's camera/mic prompt (Play policy).
-      if (!(await ensurePermissionRationale(kind === 'video' ? 'camera' : 'microphone'))) return
-      activeKind = kind
       try {
-        const { callId, iceServers } = await transport.invite(kind)
-        activeCallId = callId
-        state = 'ringing-out'
-        void startCallService(kind, peerName)
+        screen.hidden = true
+        const granted = await ensurePermissionRationale(kind === 'video' ? 'camera' : 'microphone')
+        if (disposed || run !== attempt) return
+        if (!granted) { reset(); return }
         show(kind === 'video' ? 'Video call…' : 'Calling…')
-        // The offer is only created once they actually answer — see session.ts.
-        pendingAcceptedUnsub = transport.onAccepted((acceptedId) => {
-          if (acceptedId !== callId) return
-          pendingAcceptedUnsub?.()
-          pendingAcceptedUnsub = null
-          state = 'in-call'
-          show('Connecting…')
-          try {
-            startSession(acceptedId, kind, iceServers, 'caller')
-          } catch (err) {
-            show(err instanceof Error ? callErrorMessage(err) : 'Call failed')
-            setTimeout(() => void hangup(), 2000)
-          }
-        })
-      } catch (err) {
-        state = 'ringing-out'
+        const { callId, iceServers } = await transport.invite(kind)
+        if (disposed || run !== attempt || ended.has(callId)) {
+          void transport.end(callId).catch(() => {})
+          if (run === attempt) reset()
+          return
+        }
+        activeCallId = callId; outgoingIce = iceServers
         void startCallService(kind, peerName)
-        show(err instanceof Error ? err.message : 'Call failed')
-        setTimeout(reset, 2500)
+        if (earlyAccepted.delete(callId)) answered(callId)
+      } catch (err) {
+        if (disposed || run !== attempt) return
+        showToast(err instanceof Error ? err.message : 'Call failed')
+        if (activeCallId) void hangup()
+        else reset()
       }
     })()
   }
@@ -532,7 +549,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   videoBtn.onclick = startVideoCall
 
   const incomingUnsub = transport.onIncoming((call: IncomingCall) => {
-    if (state !== 'idle') return // one call at a time — server also enforces this
+    if (disposed || ended.has(call.callId) || state !== 'idle') return // one call at a time — server also enforces this
     activeCallId = call.callId
     activeKind = call.kind
     state = 'ringing-in'
@@ -541,6 +558,7 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
   })
 
   const endedUnsub = transport.onEnded((callId) => {
+    rememberEnded(callId)
     if (callId !== activeCallId) return
     reset()
   })
@@ -559,11 +577,12 @@ export function mountCallBar(nav: HTMLElement, transport: CallTransport, peerNam
     startAudioCall,
     startVideoCall,
     dispose: () => {
+      disposed = true; attempt++
       unregisterBack()
       incomingUnsub()
       endedUnsub()
       document.removeEventListener('visibilitychange', visibilityHandler)
-      pendingAcceptedUnsub?.()
+      acceptedUnsub()
       stopTimer()
       wakeLock.release()
       void stopCallService()

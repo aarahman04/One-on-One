@@ -9,32 +9,37 @@ import {
   type MatchAck,
   type MatchAction,
   type PongFrame,
+  type ReversiBoard,
+  type MatchReaction,
 } from '../../services/transport/MatchTransport'
 import { mountChess, playerBar } from './chess'
 import { mountPongCanvas } from './pongCanvas'
 import { GameSession } from './session'
+import { clockFace, clockLabel, clockPresets, clockPresetLabels, defaultClock, validClock, reactionLength, limitReaction } from './options'
+import { renderAvatar } from '../profileSettings'
 
 const svg = (shape: string) =>
   `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shape}</svg>`
 const icons: Record<GameKind, string> = {
   chess: svg('<path d="M24 5v12M19 10h10M24 18c-15-9-18 5-8 11l2 8h12l2-8c10-6 7-20-8-11zM14 42h20"/>'),
-  pong: svg(
-    '<path d="M12 32l-7 9M15 9c15-14 38 9 24 24-10 10-34-14-24-24zM15 10l23 23"/><circle cx="9" cy="10" r="4"/>',
-  ),
+  pong: '<svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M9 5C17 0 27 9 22 18C19 24 12 25 7 20C2 15 3 9 9 5ZM11.5 21H16.5V31H11.5ZM28 3C33 3 33 10 28 10C23 10 23 3 28 3Z"/></svg>',
   connect4: svg(
     '<rect x="6" y="8" width="36" height="32" rx="4"/><circle cx="16" cy="18" r="3"/><circle cx="32" cy="18" r="3"/><circle cx="16" cy="30" r="3"/><circle cx="32" cy="30" r="3"/>',
   ),
-  tictactoe: svg('<path d="M18 5v38M30 5v38M5 18h38M5 30h38M7 7l7 7M14 7l-7 7"/><circle cx="36" cy="36" r="4"/>'),
+  tictactoe: '<svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M4 4H6L14 12V14H12L4 6ZM12 4H14V6L6 14H4V12ZM22 17A6.5 6.5 0 0 1 22 30A6.5 6.5 0 0 1 22 17ZM22 20A3.5 3.5 0 0 0 22 27A3.5 3.5 0 0 0 22 20Z"/></svg>',
   dots: svg(
     '<path d="M8 8h32v32H8zM24 8v32M8 24h32"/><circle cx="8" cy="8" r="2"/><circle cx="24" cy="24" r="2"/><circle cx="40" cy="40" r="2"/>',
   ),
+  reversi: svg('<circle cx="17" cy="17" r="11" fill="currentColor"/><circle cx="31" cy="31" r="11"/>'),
 }
+export const gameIcon = (kind: GameKind): string => icons[kind]
 const descriptions: Record<GameKind, string> = {
   chess: 'A little strategy, a worthy opponent',
-  pong: 'Keep the rally going · first to 7',
+  pong: 'Swipe, spin and rally',
   connect4: 'Drop a disc, connect four',
   tictactoe: 'Three in a row, one good move',
   dots: 'Close a box, take another turn',
+  reversi: 'Outflank and flip · most discs wins',
 }
 const reasons: Record<string, string> = {
   checkmate: 'Checkmate',
@@ -44,7 +49,11 @@ const reasons: Record<string, string> = {
   seventy_five_moves: '75-move rule',
   threefold_repetition: 'Threefold repetition',
   fifty_moves: '50-move rule',
-  agreement: 'Draw agreed',
+  agreement: 'Draw by agreement',
+  equal_discs: 'Equal discs',
+  most_discs: 'Most discs',
+  timeout: 'Time ran out',
+  first_to_points: 'Target score reached',
   three_in_a_row: 'Three in a row',
   four_connected: 'Four connected',
   most_boxes: 'Most boxes',
@@ -62,7 +71,7 @@ export function mountGames(
   nickname: string,
   me: string,
   call: (event: MatchAction, payload?: Record<string, unknown>) => Promise<MatchAck>,
-  paddle: (id: string, x: number) => void,
+  paddle: (id: string, x: number, y?: number, released?: boolean) => void,
   notice: (text: string) => void,
 ) {
   const banner = document.createElement('div'),
@@ -78,6 +87,8 @@ export function mountGames(
   chat.querySelector('.chat__log')?.before(banner)
   chat.append(surface)
   let hub: Modal | null = null,
+    incoming: Modal | null = null,
+    incomingId = '',
     confirm: Modal | null = null,
     disposed = false,
     boardId = '',
@@ -90,6 +101,25 @@ export function mountGames(
     above: HTMLElement,
     below: HTMLElement,
     footer: HTMLElement
+  let subtitle: HTMLElement, tray: HTMLElement, info: HTMLElement
+  let photo: string | null = null, gridKey = '', gridEnabled = false, trayOpen = false
+  let gridMoveKey = '', gridMoveAt = 0
+  const reactions = new Map<string, MatchReaction>()
+  const reactionTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  let gameNotice = '', noticeTimer: ReturnType<typeof setTimeout> | undefined
+  const clocks: { node: HTMLElement; seat: number }[] = []
+  const optionLabel = (m: NonNullable<typeof session.match>) => m.game === 'pong' ? `First to ${m.points || 7}` : m.clock ? clockLabel(m.clock.base, m.clock.inc) : 'No time limit'
+  const updateClocks = () => {
+    const m = session.match
+    if (!m?.clock) return
+    clocks.forEach(({ node, seat }) => {
+      const running = m.status === 'playing' && m.turn === m.players[seat]
+      const ms = Math.max(0, m.clock!.left[seat] - (running ? performance.now() - session.receivedAt : 0))
+      node.textContent = clockFace(ms); node.classList.toggle('running', running); node.classList.toggle('low', running && ms < 10_000)
+      node.setAttribute('aria-label', `${m.players[seat] === me ? 'Your' : nickname + "’s"} clock ${clockFace(ms)}`)
+    })
+  }
+  const clockTimer = setInterval(updateClocks, 100)
   let soundPosition = '',
     soundMatch = '',
     soundOutcome = '',
@@ -108,7 +138,12 @@ export function mountGames(
     audio.currentTime = 0
     void audio.play().catch(() => {})
   }
-  const session = new GameSession(me, call, paddle, render, notice)
+  const session = new GameSession(me, call, paddle, render, (message) => {
+    if (message === 'Your partner declined your draw offer.') {
+      gameNotice = `${nickname} declined your draw offer.`
+      clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { gameNotice = ''; render() }, 3500)
+    } else notice(message)
+  })
   const button = (label: string, click: () => void, primary = false) => {
     const b = document.createElement('button')
     b.type = 'button'
@@ -121,6 +156,64 @@ export function mountGames(
     const p = document.createElement(tag)
     p.textContent = value
     return p
+  }
+  const inviteOptions = (box: HTMLElement, kind: GameKind) => {
+    box.replaceChildren(text(gameTitles[kind], 'h2'))
+    const label = document.createElement('label'), select = document.createElement('select')
+    const custom = document.createElement('div'), base = document.createElement('input'), inc = document.createElement('input')
+    base.type = inc.type = 'number'; base.value = '180'; base.min = '10'; base.max = '10800'; base.step = '1'
+    inc.value = '2'; inc.min = '0'; inc.max = '60'; inc.step = '1'
+    base.setAttribute('aria-label', 'Time each in seconds'); inc.setAttribute('aria-label', 'Bonus per move in seconds')
+    const baseLabel = document.createElement('label'), incLabel = document.createElement('label')
+    baseLabel.append('Time each (10–10800 s)', base); incLabel.append('Added per move (0–60 s)', inc); custom.append(baseLabel, incLabel)
+    let points: HTMLInputElement | null = null
+    if (kind === 'pong') {
+      label.append('Play to how many points? ', select)
+      for (const n of ['7', '11', '21', 'Custom']) select.add(new Option(n, n))
+      points = document.createElement('input'); points.type = 'number'; points.min = '1'; points.max = '99'; points.step = '1'; points.value = '7'; points.setAttribute('aria-label', 'Target score, 1 to 99')
+      custom.replaceChildren(points)
+    } else {
+      label.append('How much time each? ', select)
+      clockPresets.forEach((n, i) => select.add(new Option(clockPresetLabels[i], n === null ? '' : String(n))))
+      select.add(new Option('Custom', 'Custom')); select.value = String(defaultClock(kind) ?? '')
+      box.append(text('Run out of time and you lose.'))
+    }
+    custom.hidden = true; select.onchange = () => { custom.hidden = select.value !== 'Custom' }
+    const error = text(''); error.setAttribute('role', 'status')
+    box.append(label, custom, error, button(`Invite ${nickname}`, () => {
+      let options: Record<string, unknown>
+      if (kind === 'pong') {
+        const n = Number(select.value === 'Custom' ? points!.value : select.value)
+        if (!Number.isInteger(n) || n < 1 || n > 99) { error.textContent = 'Choose a score from 1 to 99.'; return }
+        options = { points: n }
+      } else {
+        const b = Number(select.value === 'Custom' ? base.value : select.value), i = select.value === 'Custom' ? Number(inc.value) * 1000 : 0
+        const ms = select.value === 'Custom' ? b * 1000 : b
+        if (select.value !== '' && (!validClock(ms, i) || !base.value || !inc.value)) { error.textContent = 'Choose 10 seconds to 3 hours and a bonus from 0 to 60 seconds.'; return }
+        options = { clock: select.value === '' ? null : { base: ms, inc: i } }
+      }
+      void session.invite(kind, options)
+    }, true), button('Back', () => { closeHub(); session.hub() }))
+    select.focus()
+  }
+  const reactionTray = () => {
+    tray.replaceChildren()
+    const send = (value: string) => {
+      const content = limitReaction(value).trim()
+      if (!content) return
+      trayOpen = false; tray.hidden = true
+      void session.action('match:react', { text: content })
+    }
+    const emojis = document.createElement('div'), lines = document.createElement('div'), form = document.createElement('form')
+    for (const value of ['😂', '🔥', '😮', '👏', '😅', '😤', '❤️', '🎉']) emojis.append(button(value, () => send(value)))
+    for (const value of ['Nice move!', 'Good game', 'Your turn 😄', 'Oops', 'So close!', 'Well played', 'Hurry up!', 'Rematch?']) lines.append(button(value, () => send(value)))
+    const input = document.createElement('input'), counter = text('0/60', 'span')
+    input.setAttribute('aria-label', 'Comment'); input.placeholder = 'Say something…'
+    input.oninput = () => { input.value = limitReaction(input.value); counter.textContent = `${reactionLength(input.value)}/60` }
+    const submit = button('Send comment', () => send(input.value)); submit.type = 'submit'; submit.onclick = null
+    form.onsubmit = (e) => { e.preventDefault(); send(input.value) }
+    form.append(input, submit, counter); tray.append(emojis, lines, form)
+    input.focus()
   }
   const closeHub = () => {
     const old = hub
@@ -146,6 +239,7 @@ export function mountGames(
   }
   const back = pushBackHandler(() => {
     if (surface.hidden) return false
+    if (trayOpen) { trayOpen = false; tray.hidden = true; return true }
     if (session.stage === 'playing') confirmLeave()
     else session.done()
     return true
@@ -153,6 +247,7 @@ export function mountGames(
   surface.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       e.preventDefault()
+      if (trayOpen) { trayOpen = false; tray.hidden = true; return }
       if (session.stage === 'playing') confirmLeave()
       else session.done()
     }
@@ -197,8 +292,20 @@ export function mountGames(
       })
     }
     if (stage !== 'hub') closeHub()
+    if (incomingId && (stage !== 'incoming' || incomingId !== m?.id)) {
+      incomingId = ''; incoming?.close(); incoming = null
+    }
+    if (stage === 'incoming' && m && !incoming) {
+      incomingId = m.id
+      const id = m.id, box = document.createElement('div'), icon = document.createElement('div')
+      box.className = 'game-incoming'; icon.innerHTML = icons[m.game]
+      box.append(icon, text(`${nickname} invites you to play`, 'h2'), text(gameTitles[m.game], 'h3'), text(optionLabel(m)))
+      const decide = (accept: boolean) => { incomingId = ''; incoming?.close(); incoming = null; void session.action(accept ? 'match:accept' : 'match:decline') }
+      box.append(button('Play', () => decide(true), true), button('Not now', () => decide(false)))
+      incoming = openModal(box, { onClose: () => { incoming = null; if (incomingId === id) { incomingId = ''; void session.action('match:decline') } } })
+    }
     banner.replaceChildren()
-    banner.hidden = !['incoming', 'outgoing'].includes(stage)
+    banner.hidden = stage !== 'outgoing'
     if (!banner.hidden && m) {
       banner.append(
         text(
@@ -233,8 +340,9 @@ export function mountGames(
       box.className = 'game-hub'
       box.append(text('A little time together', 'h2'), text('Choose a game'))
       for (const [kind, title] of Object.entries(gameTitles)) {
+        if (kind === 'dots') continue
         const b = button(title, () => {
-            void session.invite(kind as GameKind)
+            inviteOptions(box, kind as GameKind)
           }),
           icon = document.createElement('span')
         icon.innerHTML = icons[kind as GameKind]
@@ -297,6 +405,8 @@ export function mountGames(
       stopBoard()
       chess = null
       boardId = m.id
+      gridKey = ''; gridMoveKey = ''; gameNotice = ''; reactions.clear(); clocks.length = 0; trayOpen = false
+      reactionTimers.forEach(clearTimeout); reactionTimers.clear()
       surface.replaceChildren()
       header = document.createElement('header')
       status = text('')
@@ -310,16 +420,26 @@ export function mountGames(
       below.className = 'game-below'
       footer = document.createElement('div')
       footer.className = 'game-footer'
+      info = text(''); info.className = 'game-info'; info.setAttribute('aria-live', 'polite')
+      subtitle = text('', 'small'); subtitle.setAttribute('aria-live', 'polite')
+      tray = document.createElement('div'); tray.className = 'game-reaction-tray'; tray.hidden = true
       grid = document.createElement('div')
       grid.className = `game-board game-board--${m.game}`
       grid.setAttribute('role', 'group')
       grid.setAttribute('aria-label', `${gameTitles[m.game]} board`)
+      const avatar = document.createElement('span'); avatar.className = 'game-avatar'; renderAvatar(avatar, photo, nickname)
+      const name = document.createElement('div'); name.className = 'game-name'; name.append(text(nickname, 'h2'), subtitle)
+      const react = button('☺', () => { trayOpen = !trayOpen; tray.hidden = !trayOpen; if (trayOpen) reactionTray() })
+      react.setAttribute('aria-label', 'React to game')
       header.append(
         button('Back', () => (session.stage === 'playing' ? confirmLeave() : session.done())),
-        text(nickname, 'h2'),
-        text(gameTitles[m.game], 'span'),
+        avatar, name, react,
       )
-      surface.append(header, identity, status, above, grid, below, footer)
+      const clockRow = document.createElement('div'); clockRow.className = 'game-clocks'
+      if (m.clock) for (const seat of [0, 1]) {
+        const node = text('', 'span'); node.className = 'game-clock'; clockRow.append(node); clocks.push({ node, seat })
+      }
+      surface.append(header, tray, identity, clockRow, above, grid, below, footer)
       if (m.game === 'chess') {
         chess = mountChess(grid, session.player, (uci) => {
           void session.move({ uci })
@@ -334,13 +454,16 @@ export function mountGames(
           session.pong,
           nickname,
           () => !session.connected || !!session.match?.paused || document.hidden || session.stage !== 'playing',
-          (x) => session.paddle(x),
+          (x, y, released) => session.paddle(x, y, released),
         )
       } else stopBoard = () => {}
       if (opening) header.querySelector('button')?.focus()
     }
     const myTurn = m.turn === me,
       enabled = stage === 'playing' && session.connected && !m.paused && !session.busy && myTurn
+    subtitle.textContent = reactions.get(m.players.find((u) => u !== me)!)?.text || `${gameTitles[m.game]} · ${optionLabel(m)}`
+    updateClocks()
+    if (session.pong) session.pong.target = m.points || 7
     identity.hidden = m.game === 'pong'
     status.hidden = m.game === 'pong' && session.connected && !m.paused && !m.away.some((u) => u !== me)
     status.textContent = !session.connected
@@ -350,7 +473,7 @@ export function mountGames(
         : stage === 'result'
           ? ''
           : m.game === 'pong'
-            ? 'First to 7'
+            ? `First to ${m.points || 7}`
             : session.busy
               ? 'Sending your move…'
               : myTurn
@@ -365,7 +488,9 @@ export function mountGames(
             ? `${session.player === 1 ? 'You drop' : nickname + ' drops'} first · connect four in any direction`
             : m.game === 'dots'
               ? 'Close a box to go again'
-              : 'Drag left and right to move your racket'
+              : m.game === 'reversi'
+                ? `You are ${session.player === 1 ? 'Black' : 'White'} · You ${(m.board as ReversiBoard).cells.filter((v) => v === session.player).length} · ${nickname} ${(m.board as ReversiBoard).cells.filter((v) => v === 3 - session.player).length} discs`
+                : 'Move around your half; swipe through the ball'
     if (m.game === 'chess' && m.board && chess) {
       const board = session.predicted || (m.board as ChessBoard)
       chess.update(board, enabled)
@@ -395,7 +520,7 @@ export function mountGames(
       if (!session.predicted) soundSeq = m.seq
       soundMatch = m.id
       soundPosition = pos
-    } else if (m.game !== 'pong') renderGrid(m.game, m.board as GridBoard | DotsBoard, enabled)
+    } else if (m.game !== 'pong') renderGrid(m.game, (session.predictedGrid || m.board) as GridBoard | DotsBoard | ReversiBoard, enabled)
     const focusedAction = footer.contains(document.activeElement) ? document.activeElement?.textContent : null
     footer.replaceChildren()
     if (stage === 'result') {
@@ -414,16 +539,22 @@ export function mountGames(
         sound('game_end')
       }
       footer.classList.add('game-result')
+      const resultIcon = document.createElement('div'); resultIcon.className = 'game-result-icon'; resultIcon.innerHTML = icons[m.game]
+      footer.append(resultIcon)
+      info.textContent = reactions.get(me)?.text || ''
+      if (info.textContent) footer.append(info)
       footer.append(
         text(outcome?.winner === me ? 'You won' : outcome?.winner ? `${nickname} won` : 'A draw', 'h3'),
-        text(reasons[outcome?.reason || ''] || 'The game has ended'),
+        text(outcome?.reason === 'most_discs' ? `${(m.board as ReversiBoard).cells.filter((v) => v === session.player).length}–${(m.board as ReversiBoard).cells.filter((v) => v === 3 - session.player).length} discs` : reasons[outcome?.reason || ''] || 'The game has ended'),
       )
       const partner = m.players.find((u) => u !== me)!,
         mine = m.rematch.includes(me),
         theirs = m.rematch.includes(partner)
       footer.append(text(`Series · You ${m.series[me] || 0} · ${nickname} ${m.series[partner] || 0}`))
-      if (theirs) footer.append(text(`${nickname} wants a rematch`))
-      if (outcome?.reason !== 'connection_ended') {
+      const partnerLeft = m.away.includes(partner)
+      if (partnerLeft) footer.append(text(`${nickname} has left the game`))
+      else if (theirs) footer.append(text(`${nickname} wants a rematch`))
+      if (outcome?.reason !== 'connection_ended' && !partnerLeft) {
         const rematch = button(
           mine ? `Waiting for ${nickname}…` : theirs ? 'Accept rematch' : 'Rematch',
           () => {
@@ -440,56 +571,58 @@ export function mountGames(
       footer.append(button('Done', () => session.done()))
     } else {
       footer.classList.remove('game-result')
-      if (m.game === 'pong') footer.append(text('Drag left and right to move your racket'))
-      if (m.game === 'chess') {
-        if (m.drawOffer && m.drawOffer !== me)
-          footer.append(
-            text(`${nickname} offers a draw`),
-            button('Accept', () => {
-              void session.action('match:draw', { action: 'accept' })
-            }),
-            button('Decline', () => {
-              void session.action('match:draw', { action: 'decline' })
-            }),
-          )
-        else {
-          const offer = button(m.drawOffer ? 'Draw offered' : 'Offer draw', () => {
-            void session.action('match:draw', { action: 'offer' })
-          })
-          offer.disabled = !!m.drawOffer
-          footer.append(offer)
-        }
-        if ((m.board as ChessBoard)?.claim && myTurn)
-          footer.append(
-            button(
-              (m.board as ChessBoard).claim === 'fifty_moves' ? 'Claim draw (50 moves)' : 'Claim draw (repetition)',
-              () => {
-                void session.action('match:draw', { action: 'claim' })
-              },
-            ),
-          )
+      const how = m.game === 'pong' ? 'Move around your half; swipe through the ball. A sideways brush adds spin.'
+        : m.game === 'reversi' ? 'Tap a dotted square to outflank'
+        : m.game === 'chess' ? 'Tap or drag a piece to move' : m.game === 'connect4' ? 'Drop a disc to connect four' : 'Take your turn'
+      info.replaceChildren()
+      info.classList.toggle('game-info--draw', !!m.drawOffer && m.drawOffer !== me)
+      if (m.drawOffer && m.drawOffer !== me) {
+        info.append(text(`${nickname} offers a draw`, 'span'), button('Decline', () => { void session.action('match:draw', { action: 'decline' }) }), button('Accept', () => { void session.action('match:draw', { action: 'accept' }) }))
+      } else {
+        const passed = m.game === 'reversi' && (m.board as ReversiBoard).passed
+        info.textContent = gameNotice || reactions.get(me)?.text || (passed ? (myTurn ? `${nickname} has no move · your turn again` : `You have no move · ${nickname} plays again`) : !session.connected || m.paused || m.away.some((u) => u !== me) ? status.textContent : m.drawOffer ? 'Draw offered' : how)
       }
-      footer.append(
-        button('Resign', () => confirmLeave(true)),
-        button('Leave game', () => confirmLeave()),
-      )
+      footer.append(info)
+      if (m.game === 'chess' && (m.board as ChessBoard)?.claim && myTurn) {
+        const claim = button((m.board as ChessBoard).claim === 'fifty_moves' ? 'Claim draw (50 moves)' : 'Claim draw (repetition)', () => { void session.action('match:draw', { action: 'claim' }) }, true)
+        claim.classList.add('game-claim'); footer.append(claim)
+      }
+      const actions = document.createElement('div'); actions.className = 'game-actions'
+      const offer = button('Offer draw', () => { void session.action('match:draw', { action: 'offer' }) })
+      offer.disabled = !!m.drawOffer || !session.connected
+      actions.append(offer, button('Resign', () => confirmLeave(true)), button('Leave', () => confirmLeave()))
+      footer.append(actions)
     }
     if (focusedAction) {
       const actions = [...footer.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
       ;(actions.find((b) => b.textContent === focusedAction) || actions[0])?.focus()
     }
   }
-  function renderGrid(kind: GameKind, board: GridBoard | DotsBoard, enabled: boolean) {
+  function renderGrid(kind: GameKind, board: GridBoard | DotsBoard | ReversiBoard, enabled: boolean) {
     if (!board) return
+    gridEnabled = enabled
+    const key = JSON.stringify(board)
+    if (gridKey === key) {
+      for (const b of grid.querySelectorAll<HTMLElement>('button')) {
+        b.setAttribute('aria-disabled', String(!enabled || b.dataset.available !== 'true'))
+        if (kind === 'reversi') b.classList.toggle('reversi-legal', enabled && b.dataset.available === 'true')
+      }
+      return
+    }
+    gridKey = key
+    const moveKey = JSON.stringify('cells' in board ? [board.cells, board.last] : board)
+    if (moveKey !== gridMoveKey) { gridMoveKey = moveKey; gridMoveAt = performance.now() }
+    const elapsed = performance.now() - gridMoveAt
     const focus = surface.contains(document.activeElement)
       ? (document.activeElement as HTMLElement).dataset.key
       : undefined
     grid.replaceChildren()
     const cell = (label: string, key: string, content: string, click: () => void, available: boolean) => {
       const b = button('', () => {
-        if (enabled && available) click()
+        if (gridEnabled && available) click()
       })
       b.dataset.key = key
+      b.dataset.available = String(available)
       b.setAttribute('aria-label', label)
       b.setAttribute('aria-disabled', String(!enabled || !available))
       b.innerHTML = content
@@ -517,19 +650,48 @@ export function mountGames(
         c.classList.toggle('game-cell--other', !!value && value !== session.player)
         c.classList.toggle('game-cell--winning', b.line.includes(i))
         c.classList.toggle('game-cell--last', b.last === i)
+        const duration = kind === 'connect4' && b.last >= 0 ? Math.round(90 + 110 * Math.sqrt(Math.floor(b.last / 7) + 1)) : kind === 'tictactoe' ? 200 : 0
+        grid.style.setProperty('--drop-ms', `${duration}ms`)
+        if (b.last === i && kind === 'connect4') {
+          c.style.setProperty('--drop-height', `${(Math.floor(i / 7) + 1) * -100}%`)
+          c.style.setProperty('--drop-duration', `${duration}ms`)
+          c.querySelector('svg')!.style.animationDelay = `-${elapsed}ms,${Math.max(0, duration - elapsed)}ms`
+        }
+        if (b.last === i && kind === 'tictactoe') for (const shape of c.querySelectorAll<SVGElement>('svg > *')) {
+          shape.setAttribute('pathLength', '100'); shape.style.animationDelay = `-${elapsed}ms`
+        }
         if (kind === 'connect4' && b.line.includes(i))
           c.querySelector('svg')?.insertAdjacentHTML('beforeend', '<circle class="win-ring" cx="24" cy="24" r="14"/>')
       })
-      if (kind === 'tictactoe' && b.line.length) {
+      if (b.line.length) {
+        grid.style.setProperty('--drop-ms', `${Math.max(0, Number.parseFloat(grid.style.getPropertyValue('--drop-ms')) - elapsed)}ms`)
         const first = b.line[0],
           last = b.line.at(-1)!,
           line = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
         line.setAttribute('viewBox', '0 0 100 100')
+        line.setAttribute('preserveAspectRatio', 'none')
         line.classList.add('game-win-line')
         line.style.color = b.cells[first] === session.player ? 'var(--accent-you)' : 'var(--accent-other)'
-        line.innerHTML = `<path d="M${(((first % 3) + 0.5) * 100) / 3} ${((Math.floor(first / 3) + 0.5) * 100) / 3} L${(((last % 3) + 0.5) * 100) / 3} ${((Math.floor(last / 3) + 0.5) * 100) / 3}" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>`
+        line.innerHTML = `<path d="M${(((first % cols) + 0.5) * 100) / cols} ${((Math.floor(first / cols) + 0.5) * 100) / (kind === 'connect4' ? 6 : 3)} L${(((last % cols) + 0.5) * 100) / cols} ${((Math.floor(last / cols) + 0.5) * 100) / (kind === 'connect4' ? 6 : 3)}" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>`
         grid.append(line)
       }
+    } else if (kind === 'reversi') {
+      const b = board as ReversiBoard
+      b.cells.forEach((value, i) => {
+        const c = cell(`Row ${Math.floor(i / 8) + 1}, column ${i % 8 + 1}, ${value ? value === 1 ? 'black disc' : 'white disc' : b.legal.includes(i) ? 'legal move' : 'empty'}`, String(i), '', () => { void session.move({ cell: i }) }, b.legal.includes(i))
+        if (value) {
+          const disc = document.createElement('span'); disc.className = `reversi-disc reversi-disc--${value}`
+          if (b.last === i) disc.classList.add('reversi-drop')
+          else if (b.flipped.includes(i)) {
+            disc.classList.add('reversi-flip')
+            const distance = Math.max(Math.abs(i % 8 - b.last % 8), Math.abs(Math.floor(i / 8) - Math.floor(b.last / 8)))
+            disc.style.animationDelay = `${120 + distance * 70}ms`
+            disc.style.setProperty('--previous-disc', value === 1 ? '#f6f6f2' : '#111')
+          }
+          c.append(disc)
+        } else if (enabled && b.legal.includes(i)) c.classList.add('reversi-legal')
+        c.classList.toggle('reversi-last', b.last === i)
+      })
     } else if (kind === 'dots') {
       const b = board as DotsBoard
       for (let r = 0; r < 11; r++)
@@ -568,7 +730,7 @@ export function mountGames(
     grid.onkeydown = (event) => {
       const buttons = [...grid.querySelectorAll<HTMLButtonElement>('button')],
         i = buttons.indexOf(document.activeElement as HTMLButtonElement),
-        cols = kind === 'connect4' ? 7 : kind === 'dots' ? 5 : 3,
+        cols = kind === 'connect4' ? 7 : kind === 'dots' ? 5 : kind === 'reversi' ? 8 : 3,
         delta = ({ ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols } as Record<string, number>)[event.key]
       if (delta && i >= 0) {
         event.preventDefault()
@@ -580,12 +742,22 @@ export function mountGames(
   return {
     open: () => session.hub(),
     receive: (match: unknown) => session.receive(match),
+    setPhoto: (url: string | null) => { photo = url; const avatar = surface.querySelector<HTMLElement>('.game-avatar'); if (avatar) renderAvatar(avatar, photo, nickname) },
+    reaction: (value: unknown) => {
+      const r = value as MatchReaction, m = session.match
+      if (!r || !m || !['playing', 'over'].includes(m.status) || r.matchId !== m.id || !m.players.includes(r.from) || typeof r.id !== 'string' || !r.id || r.id.length > 64 || typeof r.text !== 'string' || !r.text.trim() || reactionLength(r.text) > 60 || /[\r\n]/.test(r.text)) return
+      if (reactions.get(r.from)?.id === r.id) return
+      clearTimeout(reactionTimers.get(r.from)); reactions.set(r.from, r)
+      reactionTimers.set(r.from, setTimeout(() => { reactions.delete(r.from); render() }, 3500)); render()
+    },
     frame: (f: PongFrame) => {
       if (session.match?.status === 'playing') session.pong?.receive(f, session.match.id)
     },
     availability: (connected: boolean, online: boolean) => session.availability(connected, online),
     dispose: () => {
       disposed = true
+      clearInterval(clockTimer); clearTimeout(noticeTimer); reactionTimers.forEach(clearTimeout)
+      incomingId = ''; incoming?.close()
       session.dispose()
       stopBoard()
       back()

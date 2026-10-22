@@ -4,7 +4,7 @@ import type { IncomingMessage, LinkPreview, MessageType, PinState, PresenceUpdat
 import { authedFetch } from '../apiClient'
 import type { CallTransport } from './CallTransport'
 import { InternetCallTransport } from './InternetCallTransport'
-import { decodeMatch, type MatchAck, type MatchAction, type MatchSnapshot, type PongFrame } from './MatchTransport'
+import { decodeMatch, type MatchAck, type MatchAction, type MatchSnapshot, type PongFrame, type MatchReaction } from './MatchTransport'
 
 const API_URL = import.meta.env.VITE_API_URL
 const CONNECT_TIMEOUT_MS = 15000
@@ -247,8 +247,16 @@ export class InternetTransport implements Transport {
     })
   }
 
-  sendPaddle(matchId: string, x: number): void {
-    if (this.socket?.connected && Number.isFinite(x)) this.socket.volatile.emit('match:paddle', { matchId, x })
+  sendPaddle(matchId: string, x: number, y?: number, released?: boolean): void {
+    if (this.socket?.connected && Number.isFinite(x) && (y === undefined || Number.isFinite(y)))
+      this.socket.volatile.emit('match:paddle', { matchId, x, ...(y === undefined ? {} : { y }), ...(released ? { released: true } : {}) })
+  }
+
+  onMatchReaction(callback: (reaction: MatchReaction) => void): () => void {
+    const socket = this.socket
+    if (!socket) throw new Error('not connected')
+    socket.on('match:reaction', callback)
+    return () => { socket.off('match:reaction', callback) }
   }
 
   onMatch(callback: (match: MatchSnapshot) => void): () => void {

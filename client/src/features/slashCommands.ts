@@ -7,7 +7,6 @@ export interface SlashContext {
   input: HTMLTextAreaElement
   writeLetter: () => void
   writeCountdown: () => void
-  writeCheckin: () => void
   writeAsk: () => void
   writeThisOrThat: () => void
   writeAlarm: () => void
@@ -27,7 +26,6 @@ const COMMANDS: SlashCommand[] = [
   { name: 'audio', description: 'Speak and turn it into text', run: (ctx) => { ctx.input.value = ''; ctx.writeAudio() } },
   { name: 'letter', description: 'Write a letter', run: (ctx) => { ctx.input.value = ''; ctx.writeLetter() } },
   { name: 'countdown', description: 'Start a shared countdown', run: (ctx) => { ctx.input.value = ''; ctx.writeCountdown() } },
-  { name: 'checkin', description: 'How are you, really?', run: (ctx) => { ctx.input.value = ''; ctx.writeCheckin() } },
   { name: 'ask', description: 'A sealed question, revealed together', run: (ctx) => { ctx.input.value = ''; ctx.writeAsk() } },
   { name: 'thisorthat', description: 'A playful pick, revealed together', run: (ctx) => { ctx.input.value = ''; ctx.writeThisOrThat() } },
   { name: 'alarm', description: 'Emergency — alert them right now', run: (ctx) => { ctx.input.value = ''; ctx.writeAlarm() } },

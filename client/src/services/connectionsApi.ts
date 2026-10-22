@@ -17,6 +17,7 @@ export interface CurrentConnection {
   myUserId: string
   isRequester: boolean
   otherNickname: string | null
+  myNickname: string | null
   otherConnectionCode: string
   endedAt?: string | null
   endedBy?: string | null

@@ -1,8 +1,10 @@
 import { openModal } from '../components/Modal'
 import { escapeHtml } from '../utils/download'
 import { layoutLetter } from './letterLayout'
-import { SPEAKER_ICON } from './chatIcons'
+import { SPEAKER_ICON, MIC_ICON } from './chatIcons'
 import { mountLetterNarrator } from './letterNarrator'
+import { letterFromDefault } from './letterDefaults'
+import { startVoiceTyping } from './voiceTyping'
 
 type LetterAppearance = 'dawn' | 'botanical'
 
@@ -108,25 +110,31 @@ export function openLetter(body: string, payload: Partial<LetterPayload> | null,
 }
 
 // Composer: write, preview, then send using the existing wire format.
-export function openLetterComposer(opts: { toName: string; onSend: (body: string, payload: LetterPayload) => void }): void {
+export function openLetterComposer(opts: { toName: string; myNickname?: string | null; notice?: (text: string) => void; onSend: (body: string, payload: LetterPayload) => void }): () => void {
   const { toName, onSend } = opts
   const container = document.createElement('div')
   container.className = 'letter-compose'
 
   let body = ''
+  let to = toName
   let from = ''
   try {
     from = localStorage.getItem('letterFrom') ?? ''
   } catch {
     /* ignore */
   }
-  const modal = openModal(container)
+  from = letterFromDefault(opts.myNickname, from)
+  let stopReading = () => {}, stopDictation = () => {}
+  const stop = () => { stopReading(); stopDictation() }
+  const modal = openModal(container, { onClose: stop })
   modal.panel.classList.add('letter-modal')
 
   const renderWrite = (): void => {
+    stop()
     container.innerHTML = `
       <div class="letter-compose__title">Write a letter</div>
-      <div class="letter-compose__to">To <strong>${escapeHtml(toName)}</strong></div>
+      <label class="letter-compose__to">To <input id="letter-to" maxlength="40" aria-label="Letter recipient" /></label>
+      <div class="letter-compose__label"><label for="letter-body">Your letter</label><button type="button" id="letter-mic" aria-label="Dictate your letter">${MIC_ICON}</button></div>
       <textarea id="letter-body" class="letter-compose__body" rows="8" maxlength="4000" aria-label="Letter" placeholder="Dear ${escapeHtml(toName)},"></textarea>
       <input id="letter-from" class="letter-compose__from" maxlength="40" aria-label="Your signature" placeholder="From — your name / signature" />
       <div class="letter-compose__actions">
@@ -136,10 +144,17 @@ export function openLetterComposer(opts: { toName: string; onSend: (body: string
     `
     const bodyEl = container.querySelector<HTMLTextAreaElement>('#letter-body')!
     const fromEl = container.querySelector<HTMLInputElement>('#letter-from')!
+    const toEl = container.querySelector<HTMLInputElement>('#letter-to')!
+    toEl.value = to
+    toEl.addEventListener('input', () => (to = toEl.value))
     bodyEl.value = body
     fromEl.value = from
     bodyEl.addEventListener('input', () => (body = bodyEl.value))
     fromEl.addEventListener('input', () => (from = fromEl.value))
+    container.querySelector('#letter-mic')!.addEventListener('click', () => {
+      stopDictation()
+      stopDictation = startVoiceTyping(container.querySelector('.letter-compose__label')!, bodyEl, opts.notice || (() => {}))
+    })
     container.querySelector('#letter-cancel')!.addEventListener('click', () => modal.close())
     container.querySelector('#letter-next')!.addEventListener('click', () => {
       if (!body.trim()) {
@@ -152,7 +167,8 @@ export function openLetterComposer(opts: { toName: string; onSend: (body: string
   }
 
   const renderPreview = (): void => {
-    const p: LetterPayload = { appearance: 'dawn', from: from.trim() || 'me', to: toName }
+    stop()
+    const p: LetterPayload = { appearance: 'dawn', from: from.trim() || 'me', to: to.trim() || toName }
     container.innerHTML = ''
 
     const title = document.createElement('div')
@@ -165,13 +181,14 @@ export function openLetterComposer(opts: { toName: string; onSend: (body: string
     actions.className = 'letter-compose__actions'
     const back = document.createElement('button')
     back.type = 'button'
-    back.textContent = 'Back'
+    back.textContent = 'Edit'
     back.addEventListener('click', renderWrite)
     const send = document.createElement('button')
     send.type = 'button'
     send.className = 'primary'
     send.textContent = 'Send letter'
     send.addEventListener('click', () => {
+      stop()
       try {
         localStorage.setItem('letterFrom', from.trim())
       } catch {
@@ -181,9 +198,14 @@ export function openLetterComposer(opts: { toName: string; onSend: (body: string
       modal.close()
     })
     actions.append(back, send)
-
-    container.append(title, themeStyle(), holder, actions)
+    const speaker = document.createElement('button'); speaker.type = 'button'; speaker.innerHTML = SPEAKER_ICON
+    const controls = document.createElement('div'); controls.className = 'letter-speech-controls'
+    const status = document.createElement('p'); status.setAttribute('role', 'status')
+    stopReading = mountLetterNarrator(speaker, controls, status, `Dear ${p.to}. ${body}. With love, ${p.from}.`)
+    title.append(speaker)
+    container.append(title, themeStyle(), holder, controls, status, actions)
   }
 
   renderWrite()
+  return modal.close
 }
