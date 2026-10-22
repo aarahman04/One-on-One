@@ -295,17 +295,17 @@ export function mountGames(
     if (incomingId && (stage !== 'incoming' || incomingId !== m?.id)) {
       incomingId = ''; incoming?.close(); incoming = null
     }
-    if (stage === 'incoming' && m && !incoming) {
+    if (stage === 'incoming' && m && !incoming && incomingId !== m.id) {
       incomingId = m.id
-      const id = m.id, box = document.createElement('div'), icon = document.createElement('div')
+      const box = document.createElement('div'), icon = document.createElement('div')
       box.className = 'game-incoming'; icon.innerHTML = icons[m.game]
       box.append(icon, text(`${nickname} invites you to play`, 'h2'), text(gameTitles[m.game], 'h3'), text(optionLabel(m)))
-      const decide = (accept: boolean) => { incomingId = ''; incoming?.close(); incoming = null; void session.action(accept ? 'match:accept' : 'match:decline') }
+      const decide = (accept: boolean) => { incoming?.close(); incoming = null; void session.action(accept ? 'match:accept' : 'match:decline') }
       box.append(button('Play', () => decide(true), true), button('Not now', () => decide(false)))
-      incoming = openModal(box, { onClose: () => { incoming = null; if (incomingId === id) { incomingId = ''; void session.action('match:decline') } } })
+      incoming = openModal(box, { onClose: () => { incoming = null } })
     }
     banner.replaceChildren()
-    banner.hidden = stage !== 'outgoing'
+    banner.hidden = stage !== 'outgoing' && stage !== 'incoming'
     if (!banner.hidden && m) {
       banner.append(
         text(

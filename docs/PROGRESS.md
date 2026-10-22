@@ -3019,3 +3019,15 @@ Implemented in `feat/web-parity-2.0.10`, starting at origin/main `3b5475a`.
   and the remaining manual checklist.
 - No backend/database/speech/contract/workflow/Android/env/dependency/lockfile or
   deployment-setting changes; no migration or workflow dispatch.
+
+
+## 2026-10-22 ? Android letter preview narration parity
+
+Added authenticated, live-member-only draft narration POST using the same splitting, voice, speed, quotas and audio stream as saved letters. Draft fields are bounded to letter limits; no chat message or draft is stored. Existing GET narration is unchanged. Validation: npm test passed 121/121 and npx tsc --noEmit passed. Tests compare synthesis requests for preview and saved letters, reject outsiders/ended connections/invalid drafts/parts, and verify no message creation. No deployment performed; Android companion changes are in ../One-on-One-Android. Web preview is unchanged.
+
+
+## 2026-10-22 ? Offline game invitations and safe dismissal
+
+Removed the backend's recipient-socket requirement for match:invite. Offline recipients can receive the existing high-priority native invite push and recover/accept the pending match on reconnect. Android and web allow inviting with the sender online; outside/Escape/X dismissal preserves the incoming invite and chat banner. Explicit decline, authorization, busy checks and the 30-second TTL remain. Ping Pong stays score-based per owner instruction.
+
+Validation: backend npm test passed 126/126 and npx tsc --noEmit passed. Added real-socket offline invite/reconnect acceptance, native invite FCM shape, and per-game clock tests for increments/sync/away/draw/expiry/late moves/rematches/no-limit rules. Web npm test passed 48/48, strict lint and production build passed. The full web210 browser fixture passed at 1280px and 360px, including all five games and incoming invite dismissal while typing. No deployment or live FCM delivery performed. Browser screenshots were copied into the Android checkout's ignored app/build/reports/quality-review/web directory; tracked store/review captures were restored.

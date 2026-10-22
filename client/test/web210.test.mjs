@@ -58,6 +58,17 @@ test('clock presets/defaults and custom bounds match the contract', () => {
 })
 const snapshot = (extra = {}) => ({ id: 'm', game: 'tictactoe', status: 'playing', inviter: 'me', players: ['me', 'other'], turn: 'me', seq: 0, version: 1,
   board: { cells: Array(9).fill(0), last: -1, line: [] }, outcome: null, drawOffer: null, rematch: [], series: {}, away: [], paused: false, expiresAt: null, clock: null, points: null, ...extra })
+test('game hub allows inviting an offline partner while the sender is connected', async () => {
+  const calls = [], notices = []
+  const s = new GameSession('me', async (event, payload) => { calls.push([event, payload]); return { ok: true } }, () => {}, () => {}, (text) => notices.push(text))
+  s.connected = true; s.online = false
+  s.hub(); assert.equal(s.stage, 'hub'); assert.equal(notices.length, 0)
+  await s.invite('chess', { clock: { base: 60000, inc: 0 } })
+  assert.equal(calls[0][0], 'match:invite')
+  s.connected = false; s.hub()
+  assert.equal(notices.length, 1)
+  s.dispose()
+})
 test('Reversi consumes server legal moves/flips and rejects malformed board/clock/score data', () => {
   const cells = Array(64).fill(0); cells[27] = cells[36] = 1; cells[28] = cells[35] = 2
   const m = snapshot({ game: 'reversi', board: { cells, last: -1, flipped: [], passed: false, legal: [20, 29, 34, 43] } })

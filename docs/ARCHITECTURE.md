@@ -863,3 +863,13 @@ flowchart LR
 
 No backend, database, speech-service, API or Android change is part of this round.
 Detailed feature/gap matrix and verification: `WEB-ANDROID-PARITY-2.0.10.md`.
+
+
+## Android draft narration parity (2026-10-22)
+
+POST /api/connections/:connectionId/narration-preview accepts an authenticated live member's bounded letter draft and part index. It reuses saved-letter paragraph splitting and synthesis (af_heart, speed 1), shared rate/daily quotas, no-store Ogg streaming and response headers. It never writes a message or stores the draft. Android preview uses the same player and fallback as sent letters. The web preview remains browser-voice-only.
+
+
+## Invitation delivery and dismissal repair (2026-10-22)
+
+An invite no longer requires the recipient to have a live socket. The authenticated caller must still have a live connection; the manager creates one pending match, then the existing high-priority native push path runs. A recipient opening/reconnecting recovers that match through match:sync before accepting. Membership, one-match-at-a-time and 30-second expiry rules remain unchanged. Web and Android modal dismissal leaves an invitation pending with accept/decline actions in a chat banner; explicit decline still ends it. Ping Pong remains score-based; countdown tests cover Chess, Tic-Tac-Toe, Connect 4 and Reversi.

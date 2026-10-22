@@ -219,13 +219,19 @@ test('ping pong over real sockets: two-dimensional rackets rally, missing return
   assert.equal(re.match.series[A], 1)
 })
 
-test('invites need the partner online; leaving the connection ends the match', async (t) => {
+test('an offline partner receives a pending invite on reconnect; leaving the connection ends the match', async (t) => {
   seed()
   const { socket, api } = await server(t)
   const a = await socket(A)
-  assert.deepEqual(await a.emit('match:invite', { game: 'chess' }), { ok: false, error: 'partner_offline' })
+  const offline = await a.emit('match:invite', { game: 'chess' })
+  assert.equal(offline.ok, true)
+  assert.equal(offline.match.status, 'invited')
+  assert.equal((await a.emit('match:invite', { game: 'chess' })).error, 'busy')
   assert.equal((await a.emit('match:invite', { game: 'poker' })).error, 'invalid_payload')
   const b = await socket(B)
+  assert.equal((await b.emit('match:sync')).match.id, offline.match.id)
+  assert.equal((await b.emit('match:accept', { matchId: offline.match.id })).ok, true)
+  await a.emit('match:resign', { matchId: offline.match.id })
   const id = (await a.emit('match:invite', { game: 'dots' })).match.id
   await b.emit('match:accept', { matchId: id })
   assert.equal((await api(A, 'POST', `/connections/${CONN}/leave`)).status, 200)

@@ -355,6 +355,48 @@ test('matches: a clock charges the side to move, adds the increment and ends on 
   assert.equal(m.invite(C, A, B, 'pong', { base: 60_000, inc: 0 }).match!.clock, null)
 })
 
+for (const game of ['chess', 'tictactoe', 'connect4', 'reversi'] as const) {
+  test(`${game}: clocks survive sync/away/draw, expire, and reset on rematch`, () => {
+    const { m, advance } = manager()
+    try {
+      const id = m.invite(C, A, B, game, { base: 10_000, inc: 2_000 }).match!.id
+      advance(2_000)
+      assert.deepEqual(m.get(C)!.clock!.left, [10_000, 10_000], 'invites do not spend playing time')
+      m.accept(C, B, id)
+      advance(1_000)
+      assert.deepEqual(m.sync(C, A).match!.clock!.left, [9_000, 10_000])
+      const move = game === 'chess' ? { uci: 'e2e4' } : game === 'connect4' ? { col: 3 } :
+        { cell: game === 'reversi' ? (m.get(C)!.board!.legal as number[])[0] : 4 }
+      assert.equal(m.move(C, A, id, 0, move).ok, true)
+      assert.deepEqual(m.get(C)!.clock!.left, [11_000, 10_000], 'increment belongs to the mover')
+      advance(2_000)
+      m.away(C, B, id, true)
+      advance(1_000)
+      assert.deepEqual(m.sync(C, B).match!.clock!.left, [11_000, 7_000], 'turn clocks keep running while away')
+      m.draw(C, A, id, 'offer')
+      advance(1_000)
+      m.draw(C, B, id, 'decline')
+      assert.deepEqual(m.get(C)!.clock!.left, [11_000, 6_000])
+      advance(6_001)
+      m.sweep()
+      assert.deepEqual(m.get(C)!.outcome, { winner: A, reason: 'timeout' })
+      assert.deepEqual(m.get(C)!.clock!.left, [11_000, 0])
+      m.rematch(C, A, id)
+      const next = m.rematch(C, B, id).match!
+      assert.deepEqual(next.players, [B, A])
+      assert.deepEqual(next.clock, { base: 10_000, inc: 2_000, left: [10_000, 10_000] })
+      advance(10_001)
+      assert.equal(m.move(C, B, next.id, 0, move).ok, false, 'late moves cannot rescue an expired clock')
+      assert.deepEqual(m.get(C)!.outcome, { winner: A, reason: 'timeout' })
+      const unlimited = m.invite(C, A, B, game).match!.id
+      m.accept(C, B, unlimited)
+      advance(20_000); m.sweep()
+      assert.equal(m.get(C)!.clock, null)
+      assert.equal(m.get(C)!.status, 'playing')
+    } finally { m.dispose() }
+  })
+}
+
 test('matches: invite clocks are validated', () => {
   assert.equal(parseClock(undefined), null)
   assert.equal(parseClock(null), null)

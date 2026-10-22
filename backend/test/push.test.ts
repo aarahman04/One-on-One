@@ -74,3 +74,12 @@ test('call pushes: data-only, high priority, 30s ttl', () => {
   assert.equal(call.android.ttl, '30s')
   assert.deepEqual(call.data, { type: 'call', callId: 'k1', kind: 'video', callerName: 'Mo' })
 })
+
+test('game invites preserve match identity in high-priority native notifications', () => {
+  const native = { type: 'game_invite', matchId: 'm1', connectionId: 'c1', game: 'chess', inviterName: 'Mo' }
+  const invite = buildFcmMessage('t', 'android-native', { title: '', body: '', native, nativeTtl: '30s' }) as Record<string, any>
+  assert.equal(invite.notification, undefined)
+  assert.equal(invite.android.priority, 'high')
+  assert.equal(invite.android.ttl, '30s')
+  assert.deepEqual(invite.data, native)
+})
