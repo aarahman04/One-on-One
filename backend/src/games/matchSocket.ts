@@ -159,7 +159,7 @@ export function registerMatchHandlers(
     if (!p || typeof p.matchId !== 'string') return
     const joined = [...socket.rooms].find((r) => r.startsWith('conn:'))
     if (!joined) return
-    manager.paddle(joined.slice('conn:'.length), userId(), p.matchId, p.x, p.y, p.released)
+    manager.paddle(joined.slice('conn:'.length), userId(), p.matchId, p.x, p.y, p.released, p.touch)
   })
 
   socket.on('disconnect', () => {
