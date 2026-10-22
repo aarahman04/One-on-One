@@ -213,7 +213,7 @@ test('paddle sends the latest rotated x at no more than 30/s and stops after dis
   t.mock.timers.tick(1000)
   assert.equal(sent.length, 2)
 })
-test('pong rotates seat 2, rejects old/foreign frames and holds the extrapolated ball on a racket', () => {
+test('pong rotates seat 2, rejects old/foreign frames and follows the server without artificial racket holds', () => {
   const f = { id: 'm', t: 1, b: [0.5, 1.6, 0, 2], p: [0.5, 0.5], s: [2, 3], c: 0, h: 4 },
     p = new PongClient(1),
     q = new PongClient(2)
@@ -234,7 +234,7 @@ test('pong rotates seat 2, rejects old/foreign frames and holds the extrapolated
   assert(!p.receive({ ...f, t: 2, b: [NaN, 0, 0, 0] }, 'm', 120))
   p.advance(100)
   p.advance(250)
-  assert(p.y <= 1.64)
+  assert(p.y <= 1.9)
   assert(p.y >= 1.6)
   p.receive({ ...f, t: 3, b: [0.5, 0.9, 0, 0], c: 3000 }, 'm', 300)
   p.advance(1000)
