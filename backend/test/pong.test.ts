@@ -14,7 +14,8 @@ const manual = () => {
   return p
 }
 const stroke = (dx: number, dy: number, gap = 16) => {
-  const p = manual()
+  const p = new PongSim(() => .5)
+  p.paddle(2, .5 - dx, .24 - dy); p.step(FIRST_SERVE_MS)
   p.paddle(2, .5 - dx, .24 - dy); p.step(gap)
   p.paddle(2, .5, .24); p.step(8)
   assert.equal(p.hits, 1)
@@ -72,7 +73,7 @@ test('ping pong: the recovered cubic has real height and eased progress', () => 
   assert.ok(middle[0] > .5 && middle[2] > 0)
 })
 
-test('ping pong: a 2D serve waits for contact and starts at the ball, without teleporting it', () => {
+test('ping pong: a 2D serve waits for contact and launches from the moving bat rim', () => {
   for (const seat of [1, 2] as const) {
     const p = new PongSim(() => seat === 1 ? 0 : .5)
     p.paddle(seat, .2, seat === 1 ? 1.8 : 0)
@@ -84,7 +85,8 @@ test('ping pong: a 2D serve waits for contact and starts at the ball, without te
     assert.equal(p.hits, 1)
     assert.equal(p.frame().serve, 0)
     assert.equal(p.frame().a?.length, 14)
-    near(p.x, x); near(p.y, y); near(p.z, z)
+    near(Math.hypot(p.x - p.paddles[seat - 1], p.y - p.paddleY[seat - 1]), contactRadius(p.z))
+    near(p.z, z)
     p.step(100)
     assert.ok(p.z > z && (p.y - y) * (seat === 1 ? -1 : 1) > 0)
   }
@@ -101,16 +103,16 @@ test('ping pong: a table landing separates racket returns; neutral baselines can
   assert.deepEqual(p.score, [0, 0])
 })
 
-test('ping pong: recovered swipe power spans .7 to 1 second without per-hit acceleration', () => {
+test('ping pong: swipe strength spans .7 to 1.15 seconds without per-hit acceleration', () => {
   const hard = stroke(0, .3).frame().a!
   near(hard[13], .7, .0001)
   near(hard[10], 1.8868, .0001)
   const soft = stroke(0, -.3).frame().a!
-  near(soft[13], 1)
+  near(soft[13], 1.15)
   near(soft[10], 1.0234, .0001)
-  const neutral = manual()
-  neutral.paddle(2, .5, .24, true); neutral.step(8)
-  near(neutral.frame().a![13], .9)
+  const neutral = new PongSim(() => .5)
+  neutral.step(FIRST_SERVE_MS)
+  near(neutral.frame().a![13], 1.15)
 })
 
 test('ping pong: stroke direction aims to either side, including the native unclamped soft remap', () => {
@@ -155,7 +157,7 @@ test('ping pong: raw touch controls the stroke while the racket eases toward it'
   // Same held finger, racket still catching up: the finger's stroke has stopped.
   p.paddle(2, .425, .2325, false, [.5, .24])
   near(p.frame().spin, 0)
-  near(duration, .827, .0001)
+  near(duration, 1.069, .0001)
 })
 
 test('ping pong: 30 and 60 Hz input preserve equal swipe strength', () => {
@@ -216,7 +218,7 @@ test('ping pong: returning with the back of the racket is rejected for both seat
 })
 
 test('ping pong: each player reaches beyond the sides but remains on their own half', () => {
-  const p = manual()
+  const p = new PongSim(() => .5)
   p.paddle(1, -4, -4); p.paddle(2, 4, 4)
   assert.deepEqual(p.paddles, [RACKET_MIN, RACKET_MAX])
   near(p.paddleY[0], 1.3); near(p.paddleY[1], COURT_H - 1.3)
@@ -246,7 +248,7 @@ test('ping pong: backend fixture stays aligned with the Android demo and rendere
   p.step(64)
   const f = p.frame()
   // The same input/clock sequence is asserted by DemoPongTest.
-  assert.deepEqual(f.b.slice(0, 2), [.5431, .344])
-  near(f.z[0], .2564)
+  assert.deepEqual(f.b.slice(0, 2), [.723, .3359])
+  near(f.z[0], .2378)
   near(f.drift, SPIN_DRIFT, .0001)
 })

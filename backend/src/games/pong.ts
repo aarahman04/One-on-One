@@ -1,4 +1,5 @@
 import type { Outcome, Seat } from './rules.js'
+import { sweepContact, rimPosition } from './pongPhysics.js'
 
 // Ping Pong: server-owned strokes and cubic flights over an open table.
 // Coordinates are table widths: x across, y along, z above the surface.
@@ -23,7 +24,7 @@ export const FIRST_SERVE_MS = 3000
 export const NEXT_SERVE_MS = 1000
 
 type Point = [number, number, number]
-type Stroke = { side: number; forward: number; direction: number }
+type Stroke = { side: number; forward: number; direction: number; power: number }
 type Flight = { points: [Point, Point, Point, Point]; elapsed: number; duration: number }
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 const r4 = (v: number) => Math.round(v * 10_000) / 10_000
@@ -75,6 +76,7 @@ export class PongSim {
   private samples: [[number, number, number][], [number, number, number][]] = [[], []]
   private modern: [boolean, boolean] = [false, false]
   private strokes: [Stroke, Stroke] = [this.emptyStroke(), this.emptyStroke()]
+  private contactStrokes: [Stroke | null, Stroke | null] = [null, null]
   private flight: Flight | null = null
   private lastHit: Seat | null = null
   private landed = false
@@ -88,25 +90,31 @@ export class PongSim {
     this.y = serveY(this.server)
   }
 
-  private emptyStroke(): Stroke { return { side: 0, forward: 0, direction: 0 } }
+  private emptyStroke(): Stroke { return { side: 0, forward: 0, direction: 0, power: 0 } }
   private get spin(): number { return this.lastHit ? this.strokes[this.lastHit - 1].side : 0 }
 
   paddle(seat: Seat, x: number, y?: number, released = false, touch?: [number, number]): void {
+    if (this.outcome || !Number.isFinite(x) || y !== undefined && !Number.isFinite(y)) return
     const i = seat - 1
+    const oldX = this.paddles[i], oldY = this.paddleY[i]
     const nextX = clamp(x, RACKET_MIN, RACKET_MAX)
-    let nextY = y === undefined ? this.paddleY[i] : seat === 1
+    const nextY = y === undefined ? this.paddleY[i] : seat === 1
       ? clamp(y, RACKET_NEAR, RACKET_FAR)
       : COURT_H - clamp(COURT_H - y, RACKET_NEAR, RACKET_FAR)
-    const inputY = nextY
-    const ready = this.flight ? this.landed && this.lastHit === other(seat) : this.server === seat && this.countdownMs === 0
+    const inputX = nextX, inputY = nextY
     const radius = contactRadius(this.z)
-    const across = nextX - this.x
-    if (ready && this.z >= -BALL_R && Math.abs(across) < radius) {
-      const front = this.y - forward(seat) * Math.sqrt(radius * radius - across * across)
-      if ((this.paddleY[i] - front) * forward(seat) <= 0 && (nextY - front) * forward(seat) > 0) nextY = front
+    const ready = this.flight ? this.landed && this.lastHit === other(seat) : this.server === seat && this.countdownMs === 0
+    let contacted = false
+    if (ready && !this.contactStrokes[i] && this.z >= -BALL_R) {
+      const contact = sweepContact([this.x, this.y], [this.x, this.y], [oldX, oldY], [nextX, nextY], radius, forward(seat))
+      if (contact && contact.ny * forward(seat) >= -1e-6 &&
+          (nextX - oldX) * contact.nx + (nextY - oldY) * contact.ny > 1e-6) {
+        ;[this.x, this.y] = rimPosition(contact, [nextX, nextY], radius)
+        contacted = ready
+      }
     }
     if (y !== undefined) this.modern[i] = true
-    const sampleX = touch ? clamp(touch[0], RACKET_MIN, RACKET_MAX) : nextX
+    const sampleX = touch ? clamp(touch[0], RACKET_MIN, RACKET_MAX) : inputX
     const sampleY = touch ? (seat === 1 ? clamp(touch[1], RACKET_NEAR, RACKET_FAR)
       : COURT_H - clamp(COURT_H - touch[1], RACKET_NEAR, RACKET_FAR)) : inputY
     // Stroke velocity over a ~50 ms window, not packet to packet: network jitter bunches paddle updates,
@@ -114,17 +122,14 @@ export class PongSim {
     const samples = this.samples[i]
     const previous = samples.at(-1)
     const still = Math.hypot(sampleX - (previous?.[1] ?? this.paddles[i]), sampleY - (previous?.[2] ?? this.paddleY[i])) < 1e-5
-    if (released) samples.length = 0
-    else {
-      samples.push([this.clock, sampleX, sampleY])
-      while (samples.length > 2 && samples[1][0] <= this.clock - STROKE_WINDOW_MS) samples.shift()
-      // A bat resting before the swipe: measure from its last rest, not from long ago.
-      while (samples.length > 2 && samples[0][0] < this.clock - 2 * STROKE_WINDOW_MS) samples.shift()
-    }
+    samples.push([this.clock, sampleX, sampleY])
+    while (samples.length > 2 && samples[1][0] <= this.clock - STROKE_WINDOW_MS) samples.shift()
+    // A bat resting before the swipe: measure from its last rest, not from long ago.
+    while (samples.length > 2 && samples[0][0] < this.clock - 2 * STROKE_WINDOW_MS) samples.shift()
     const ref = samples[0]
     const dx = ref ? sampleX - ref[1] : 0, dy = ref ? sampleY - ref[2] : 0
     const dt = ref ? (this.clock - ref[0]) / 1000 : 0
-    if (released || still || Math.hypot(dx, dy) < 1e-5) this.strokes[i] = this.emptyStroke()
+    if (still || Math.hypot(dx, dy) < 1e-5) this.strokes[i] = this.emptyStroke()
     else if (dt > 0) {
       const speedX = dx / Math.max(dt, 1 / 60)
       const speedY = dy / Math.max(dt, 1 / 60)
@@ -132,8 +137,12 @@ export class PongSim {
         side: clamp(speedX * STROKE_GAIN, -1, 1),
         forward: clamp(speedY * forward(seat) * STROKE_GAIN, -0.5, 1),
         direction: y === undefined ? clamp(speedX * STROKE_GAIN, -1, 1) : dx / Math.hypot(dx, dy),
+        power: clamp(speedY * forward(seat) / 10, 0, 1), // Full power at ten table widths/second, separate from aim and spin.
       }
     }
+    // Release clears live spin, but must not erase the strength already measured at impact.
+    if (contacted && !this.contactStrokes[i]) this.contactStrokes[i] = { ...this.strokes[i] }
+    if (released) { samples.length = 0; this.strokes[i] = this.emptyStroke() }
     this.paddles[i] = nextX
     this.paddleY[i] = nextY
     this.moved[i] = released ? -1 : this.clock
@@ -146,7 +155,7 @@ export class PongSim {
   }
 
   step(ms: number): void {
-    if (this.outcome || ms <= 0) return
+    if (this.outcome || !Number.isFinite(ms) || ms <= 0) return
     this.clock += ms
     for (const i of [0, 1]) if (this.clock - this.moved[i] > 120) this.strokes[i] = this.emptyStroke()
     if (this.countdownMs > 0) {
@@ -155,10 +164,10 @@ export class PongSim {
       return
     }
     if (!this.flight) {
-      if (this.touches(this.server)) this.strike(this.server)
+      if (this.contactStrokes[this.server - 1] || this.touches(this.server)) this.strike(this.server)
       return
     }
-    if (this.landed && this.lastHit && this.touches(other(this.lastHit))) this.strike(other(this.lastHit))
+    if (this.landed && this.lastHit && (this.contactStrokes[other(this.lastHit) - 1] || this.touches(other(this.lastHit)))) this.strike(other(this.lastHit))
     for (let left = ms / 1000; left > 1e-8 && this.flight && !this.outcome; left -= 0.008) this.advance(Math.min(left, 0.008))
   }
 
@@ -176,10 +185,11 @@ export class PongSim {
   }
 
   private strike(seat: Seat): void {
-    const stroke = this.strokes[seat - 1]
+    const stroke = this.contactStrokes[seat - 1] ?? this.strokes[seat - 1]
+    this.contactStrokes[seat - 1] = null
     const target: Point = [0.5 + stroke.direction * AIM_GAIN * (0.7 + 0.3 * stroke.forward),
       COURT_H / 2 + forward(seat) * (5 + 7 * stroke.forward) / 12.16, FLOOR_H]
-    this.curve(target, 0.9 - 0.2 * stroke.forward)
+    this.curve(target, 1.15 - 0.45 * stroke.power)
     this.lastHit = seat
     this.landed = false
     this.hits++
@@ -224,6 +234,7 @@ export class PongSim {
     this.x = 0.5; this.y = serveY(this.server); this.z = 2 / 12.16
     this.vx = 0; this.vy = 0; this.vz = 0
     this.strokes = [this.emptyStroke(), this.emptyStroke()]
+    this.contactStrokes = [null, null]
     this.moved = [-1, -1]
     this.samples = [[], []]
   }
