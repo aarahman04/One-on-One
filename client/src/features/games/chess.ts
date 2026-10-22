@@ -271,9 +271,9 @@ export function mountChess(grid: HTMLElement, seat: number, move: (uci: string) 
         tracked.delete(last.from)
         const capture = tracked.get(last.to)
         tracked.delete(last.to)
+        const dx = last.to.charCodeAt(0) - last.from.charCodeAt(0), dy = Number(last.to[1]) - Number(last.from[1])
+        const duration = Math.min(280, Math.round(150 + 45 * Math.sqrt(Math.hypot(dx, dy))))
         if (capture) {
-          const dx = last.to.charCodeAt(0) - last.from.charCodeAt(0), dy = Number(last.to[1]) - Number(last.from[1])
-          const duration = Math.min(280, Math.round(150 + 45 * Math.sqrt(Math.hypot(dx, dy))))
           capture.style.animationDelay = `${duration * .65}ms`
           capture.classList.add('captured')
           capture.addEventListener('animationend', () => capture.remove(), { once: true })
@@ -285,6 +285,7 @@ export function mountChess(grid: HTMLElement, seat: number, move: (uci: string) 
         if (previous[last.from].toLowerCase() === 'p' && last.from[0] !== last.to[0] && !previous[last.to]) {
           const ep = last.to[0] + last.from[1],
             img = tracked.get(ep)
+          if (img) img.style.animationDelay = `${duration * .65}ms`
           img?.classList.add('captured')
           img?.addEventListener('animationend', () => img.remove(), { once: true })
           tracked.delete(ep)
