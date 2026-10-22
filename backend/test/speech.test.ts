@@ -102,10 +102,48 @@ async function server(t: TestContext) {
       fetch(`${base}/connections/${conn}/messages/${msg}/narration${part === undefined ? '' : `?part=${part}`}`, { headers: auth(user) }),
     transcribe: (user: string, type: string, body: Buffer) =>
       fetch(`${base}/transcribe`, { method: 'POST', headers: { ...auth(user), 'Content-Type': type }, body: new Uint8Array(body) }),
+    preview: (user: string, conn: string, draft: unknown, part = '0') =>
+      fetch(`${base}/connections/${conn}/narration-preview?part=${part}`, { method: 'POST', headers: { ...auth(user), 'Content-Type': 'application/json' }, body: JSON.stringify(draft) }),
   }
 }
 
 const ogg = { status: 200, type: 'audio/ogg', body: Buffer.from('OggS-fake-audio') }
+
+test('preview narrates the same parts and voice as a saved letter without saving a message', async (t) => {
+  const db = seed()
+  const calls = await stub(t, () => ogg)
+  const api = await server(t)
+  const draft = { from: 'Ay', to: 'Bee', body: BODY }
+  const count = db.tables.messages.length
+  for (const part of ['0', '1']) {
+    const saved = await api.narrate(A, CONN, LETTER, part)
+    assert.equal(saved.status, 200)
+    await saved.arrayBuffer()
+    const preview = await api.preview(A, CONN, draft, part)
+    assert.equal(preview.status, 200)
+    assert.equal(preview.headers.get('x-narration-parts'), saved.headers.get('x-narration-parts'))
+    assert.equal(preview.headers.get('x-narration-part'), part)
+    assert.equal(preview.headers.get('cache-control'), 'private, no-store')
+    await preview.arrayBuffer()
+    assert.deepEqual(JSON.parse(calls.at(-1)!.body.toString()), JSON.parse(calls.at(-2)!.body.toString()))
+  }
+  assert.equal(db.tables.messages.length, count)
+})
+
+test('preview rejects outsiders, ended connections, invalid drafts and invalid parts before synthesis', async (t) => {
+  const db = seed()
+  const calls = await stub(t, () => ogg)
+  const api = await server(t)
+  const draft = { from: 'Ay', to: 'Bee', body: 'Hello!' }
+  assert.equal((await api.preview(C, CONN, draft)).status, 404)
+  assert.equal((await api.preview(A, 'bad-id', draft)).status, 404)
+  for (const invalid of [[], {}, { ...draft, body: '' }, { ...draft, body: 'x'.repeat(4001) }, { ...draft, from: 'x'.repeat(41) }, { ...draft, to: 123 }])
+    assert.equal((await api.preview(B, CONN, invalid)).status, 400)
+  for (const part of ['-1', '9999', 'oops']) assert.equal((await api.preview(B, CONN, draft, part)).status, 404)
+  db.tables.connections[0].status = 'ended'
+  assert.equal((await api.preview(B, CONN, draft)).status, 404)
+  assert.equal(calls.length, 0)
+})
 
 test('splitNarration: deterministic, bounded, lossless, paragraph-aware', () => {
   const paragraphs = narrationParagraphs({ from: ' Ay ', to: 'Bee', body: `${BODY}\n\n${'x'.repeat(900)}` })

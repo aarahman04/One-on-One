@@ -390,6 +390,9 @@ Backend proxies to a private `speech` service (Kokoro-82M TTS, Whisper base.en S
 - `503 {code:"speech_unavailable"}`, `504 {code:"speech_timeout"}` (90 s per part since 2.0.7, was 60 s).
 - Nothing is cached to disk or storage (no in-memory cache either).
 
+### Draft narration
+Draft narration: `POST /api/connections/:connectionId/narration-preview?part=<n>` accepts JSON `{from,to,body}` (from/to 1–40 characters, body 1–4000). Requires authentication and membership of a live connection. Uses exactly the saved-letter paragraph splitting, voice, speed, audio headers, no-store streaming and narration quotas. It creates no message and stores no draft. Invalid draft → `400 invalid_payload`; inaccessible connection or invalid part → `404 not_found`. Android uses this only when `SERVER_SPEECH=true`; otherwise both preview and sent letters use device voice.
+
 ### Transcription
 `POST /api/transcribe`, authenticated, caller must have a live connection (else `409 {error:"connection is not active"}`). Raw body, up to 3 MB, `Content-Type` one of `audio/mp4`, `audio/m4a`, `audio/aac`, `audio/ogg`, `audio/webm`, `audio/wav` (parameters such as `; codecs=` are ignored). Android sends AAC in MP4/.m4a, 16–44.1 kHz mono, ≤ 120 s. The speech service decodes with ffmpeg and checks it is real audio regardless of the declared type.
 - `200 {text, language, durationMs}`. The client inserts `text` into the composer; nothing is sent automatically. `language` is `"en"` since 2.0.7 (was `""`).
@@ -430,7 +433,7 @@ Seats: the first match's seats are random; a rematch swaps them (colours and fir
 ### Client -> server (all acked; every one re-reads the caller's live connection from the DB and joins its room)
 | Event | Payload | Notes |
 |---|---|---|
-| `match:invite` | `{game, clock?: {base, inc}, points?}` | partner must have a socket (`partner_offline`); `busy` (+`match`) if a match is invited/playing. `clock` (turn games; ignored for pong): integer ms, `base` 10 000..10 800 000, `inc` 0..60 000; absent/null = no time limit. `points` (pong): integer 1..99, default 7. Out-of-range values → `invalid_payload`. Both carry into rematches. |
+| `match:invite` | `{game, clock?: {base, inc}, points?}` | partner may be offline; a native push is sent and the pending invite is recovered by `match:sync`; `busy` (+`match`) if a match is invited/playing. `clock` (turn games; ignored for pong): integer ms, `base` 10 000..10 800 000, `inc` 0..60 000; absent/null = no time limit. `points` (pong): integer 1..99, default 7. Out-of-range values → `invalid_payload`. Both carry into rematches. |
 | `match:accept` | `{matchId}` | invitee only → `playing` |
 | `match:decline` | `{matchId}` | invitee → over `declined`; inviter → over `cancelled` |
 | `match:leave` | `{matchId}` | invited → as decline; playing → opponent wins `left`; over → the caller left the results: withdraws its rematch request and lists it in `away` |
@@ -443,7 +446,7 @@ Seats: the first match's seats are random; a rematch swaps them (colours and fir
 | `match:react` | `{matchId, text}` | in-game reaction/comment (2026-10-21). Members of the connection's current match while `playing` or `over` (`bad_state` while invited; `not_found` for another match id). `text`: whitespace collapsed to one line, trimmed, 1..60 code points (`invalid_payload`). At most one per 700 ms per user (`rate_limited`). Ack `{ok:true, match:null}`; broadcasts `match:reaction` to the room. Not stored, not pushed. |
 | `match:paddle` | `{matchId, x, y?: number, released?: bool}` | **no ack**, fire-and-forget; finite coordinates in server space. `x` clamps to -0.26..1.26. Optional `y` enables 2D control: seat 1 clamps to 1.3..2.5; seat 2 to -0.7..0.5. `released: true` applies the final position and clears the active stroke. Paused/foreign/invalid input is ignored. 40/s per socket, including releases; checked against the in-memory match. |
 
-Errors: `invalid_payload`, `partner_left`, `rate_limited`, `not_member`, `connection_inactive`, `partner_offline`, `busy`, `not_found`, `bad_state`, `game_over`, `not_your_turn`, `invalid_move`, `illegal_move`, `stale`, `out_of_order`, `no_offer`, `no_claim`, `internal`. Illegal moves never change state. Rate limits: `match:paddle` 40/s/socket; all other `match:*` share the generic 60/10 s guard.
+Errors: `invalid_payload`, `partner_left`, `rate_limited`, `not_member`, `connection_inactive`, `busy`, `not_found`, `bad_state`, `game_over`, `not_your_turn`, `invalid_move`, `illegal_move`, `stale`, `out_of_order`, `no_offer`, `no_claim`, `internal`. Illegal moves never change state. Rate limits: `match:paddle` 40/s/socket; all other `match:*` share the generic 60/10 s guard.
 
 ### Server -> client
 - `match:state` MatchSnapshot, to the connection room on every change.

@@ -192,7 +192,6 @@ async function handle(
       const points = parsePoints(p.points)
       if (clock === 'invalid' || points === 'invalid') return { ok: false, error: 'invalid_payload' }
       const partner = otherMemberId(connection, me)
-      if (!(await userOnline(io, id, partner))) return { ok: false, error: 'partner_offline' }
       const result = m.invite(id, me, partner, p.game as MatchGame, clock, points)
       if (result.ok && result.match) void pushInvite(id, me, partner, result.match.id, p.game as MatchGame)
       return result

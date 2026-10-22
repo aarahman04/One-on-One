@@ -94,8 +94,8 @@ export class GameSession {
     this.changed()
   }
   hub(): void {
-    if (!this.connected || !this.online) {
-      this.notice('Games need your partner to be online.')
+    if (!this.connected) {
+      this.notice('Connect to the internet to invite your partner.')
       return
     }
     if (this.stage !== 'playing') {

@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream'
 import type { ReadableStream as WebReadableStream } from 'node:stream/web'
-import { Router, raw, type RequestHandler } from 'express'
+import { Router, raw, json, type RequestHandler, type Response } from 'express'
 import { requireAuth } from '../middleware/requireAuth.js'
 import {
   narrationDailyLimiter,
@@ -27,6 +27,23 @@ const notFound = () => new ConnectionError(404, 'not found', 'not_found')
 // A malformed id would be a Postgres cast error (500) instead of the uniform 404.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+async function streamNarration(res: Response, parts: string[], rawPart: unknown) {
+  const part = typeof rawPart === 'string' && /^\d{1,4}$/.test(rawPart) ? Number(rawPart) : -1
+  if (part < 0 || part >= parts.length) throw notFound()
+  const { upstream, ctrl, done } = await synthesize(parts[part])
+  res.status(200).set({
+    'Content-Type': 'audio/ogg',
+    'X-Narration-Part': String(part),
+    'X-Narration-Parts': String(parts.length),
+    'Access-Control-Expose-Headers': 'X-Narration-Part, X-Narration-Parts',
+    'Cache-Control': 'private, no-store',
+  })
+  const len = upstream.headers.get('content-length')
+  if (len) res.set('Content-Length', len)
+  res.on('close', () => { done(); ctrl.abort() })
+  Readable.fromWeb(upstream.body as WebReadableStream).on('error', () => res.destroy()).pipe(res)
+}
+
 // Narration of one part of a letter. Text comes only from the DB. Any reason the
 // caller can't have it (not a member, other connection, not a letter, deleted,
 // bad part) is the same 404 so existence never leaks.
@@ -48,29 +65,22 @@ speechRouter.get(
     const letter = await getLetterForNarration(connectionId, String(req.params.messageId))
     if (!letter) throw notFound()
 
-    const rawPart = req.query.part ?? '0'
-    const part = typeof rawPart === 'string' && /^\d{1,4}$/.test(rawPart) ? Number(rawPart) : -1
-    const parts = splitNarration(narrationParagraphs(letter))
-    if (part < 0 || part >= parts.length) throw notFound()
-
-    const { upstream, ctrl, done } = await synthesize(parts[part])
-    res.status(200).set({
-      'Content-Type': 'audio/ogg',
-      'X-Narration-Part': String(part),
-      'X-Narration-Parts': String(parts.length),
-      'Access-Control-Expose-Headers': 'X-Narration-Part, X-Narration-Parts',
-      'Cache-Control': 'private, no-store',
-    })
-    const len = upstream.headers.get('content-length')
-    if (len) res.set('Content-Length', len)
-    res.on('close', () => {
-      done()
-      ctrl.abort()
-    })
-    // Stream through; a mid-body upstream failure just ends the response.
-    Readable.fromWeb(upstream.body as WebReadableStream).on('error', () => res.destroy()).pipe(res)
+    await streamNarration(res, splitNarration(narrationParagraphs(letter)), req.query.part ?? '0')
   },
 )
+
+// Unsent text uses the saved-letter voice and splitting without creating a message.
+speechRouter.post('/connections/:connectionId/narration-preview', requireAuth, narrationLimiter,
+  narrationDailyLimiter, speechGlobalDailyLimiter, json({ limit: '32kb' }), async (req, res) => {
+    const connectionId = String(req.params.connectionId)
+    if (!UUID_RE.test(connectionId)) throw notFound()
+    try { await getConnectionForMember(connectionId, req.appUser!.id, { requireLive: true }) }
+    catch (err) { if (err instanceof ConnectionError) throw notFound(); throw err }
+    const draft = req.body
+    if (!draft || !['from', 'to', 'body'].every((key) => typeof draft[key] === 'string' && draft[key].trim().length >= 1 && draft[key].length <= (key === 'body' ? 4000 : 40)))
+      throw new ConnectionError(400, 'invalid letter', 'invalid_payload')
+    await streamNarration(res, splitNarration(narrationParagraphs(draft)), req.query.part ?? '0')
+  })
 
 // Raw body scoped to this route; an oversize body becomes 413 too_large.
 const audioBody: RequestHandler = (req, res, next) =>
