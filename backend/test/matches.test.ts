@@ -173,6 +173,40 @@ test('ping pong between two clients: one server simulation, identical frames, pa
   await waitFor(() => b.last()?.status === 'over')
 })
 
+test('timed paddle windows are validated atomically and acked on the server clock over real sockets', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A), b = await socket(B), outsider = await socket(C)
+  const id = (await a.emit('match:invite', { game: 'pong' })).match.id
+  await b.emit('match:accept', { matchId: id })
+  await waitFor(() => a.frames.length > 0)
+  const seat = a.last().players[0] === A ? 0 : 1
+  const y = seat === 0 ? 2.4 : -.6, v = a.frames.at(-1).t
+  const packet = { matchId: id, x: .4, y, ct: 1032, v, n: 3,
+    samples: [[1, 1000, v, .2, y, .2, y, 0], [2, 1016, v, .3, y, .3, y, 1]] }
+  const malformed = [
+    { ...packet, samples: Array(33).fill(packet.samples[0]) },
+    { ...packet, samples: [[...packet.samples[0]], [2, 1016, v, .3, y, .3, y, 2]] },
+    { ...packet, samples: [packet.samples[1], packet.samples[0]] },
+    { ...packet, samples: [[1, 1000, v + 1, .2, y, .2, y, 0]] },
+    { ...packet, ct: undefined },
+    { ...packet, samples: [[1, -1, v, .2, y, .2, y, 0]] },
+  ]
+  for (const bad of malformed) a.client.emit('match:paddle', bad)
+  outsider.client.emit('match:paddle', packet)
+  await delay(80)
+  assert.equal(a.frames.at(-1).ack[seat], 0, 'malformed windows and outsiders do not mutate a match')
+  a.client.emit('match:paddle', packet)
+  await waitFor(() => a.frames.at(-1).ack[seat] === 3)
+  assert.equal(a.frames.at(-1).p[seat], .4)
+  a.client.emit('match:paddle', { ...packet, x: .9, ct: 1031, n: 4, samples: [] })
+  a.client.emit('match:paddle', { ...packet, x: .9, ct: 1040, n: 2, samples: [] })
+  await delay(80)
+  assert.equal(a.frames.at(-1).ack[seat], 3)
+  assert.equal(a.frames.at(-1).p[seat], .4)
+  assert.ok(a.frames.every((f, i) => !i || f.t >= a.frames[i - 1].t))
+})
+
 test('ping pong over real sockets: two-dimensional rackets rally, missing returns loses, rematch resets', async (t) => {
   seed()
   const { socket } = await server(t)
@@ -297,4 +331,77 @@ test('in-game reactions reach both players, are bounded and throttled, and need 
   assert.equal((await carol.emit('match:react', { matchId: id, text: 'hi' })).error, 'not_member')
   await delay(50)
   assert.equal(seen.carol.length, 0)
+})
+
+
+test('all turn games keep chosen clocks, increments and comments through real Socket.IO', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A), b = await socket(B)
+  const comments: any[] = []
+  b.client.on('match:reaction', (value: unknown) => comments.push(value))
+  for (const game of ['chess', 'tictactoe', 'connect4', 'reversi']) {
+    const invited = await a.emit('match:invite', { game, clock: { base: 60000, inc: 2000 } })
+    assert.deepEqual(invited.match.clock, { base: 60000, inc: 2000, left: [60000, 60000] }, game)
+    const id = invited.match.id
+    await waitFor(() => b.last()?.id === id)
+    assert.deepEqual(b.last().clock, invited.match.clock)
+    await b.emit('match:accept', { matchId: id })
+    await delay(150)
+    const synced = (await a.emit('match:sync')).match
+    assert.ok(synced.clock.left[0] < 60000 && synced.clock.left[0] > 57000, game)
+    assert.equal(synced.clock.left[1], 60000)
+    const mover = synced.players[0] === A ? a : b
+    const move = game === 'chess' ? { uci: 'e2e4' } : game === 'connect4' ? { col: 3 } :
+      { cell: game === 'reversi' ? synced.board.legal[0] : 4 }
+    const moved = await mover.emit('match:move', { matchId: id, seq: 0, move })
+    assert.equal(moved.ok, true, game)
+    assert.ok(moved.match.clock.left[0] > 60000, 'mover receives the 2 s increment')
+    await waitFor(() => b.last()?.seq === 1)
+    assert.equal(b.last().turn, synced.players[1])
+    await delay(710)
+    assert.equal((await a.emit('match:react', { matchId: id, text: `Checked ${game}` })).ok, true)
+    await waitFor(() => comments.some(c => c.matchId === id && c.text === `Checked ${game}`))
+    await a.emit('match:resign', { matchId: id })
+  }
+})
+
+test('a real server clock expires without either client making another move', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A), b = await socket(B)
+  const invited = await a.emit('match:invite', { game: 'tictactoe', clock: { base: 10000, inc: 0 } })
+  const id = invited.match.id
+  await b.emit('match:accept', { matchId: id })
+  await waitFor(() => a.last()?.status === 'over' && b.last()?.status === 'over', 13000)
+  assert.deepEqual(a.last().outcome, { winner: invited.match.players[1], reason: 'timeout' })
+  assert.equal(a.last().clock.left[0], 0)
+  assert.deepEqual(a.last(), b.last())
+})
+
+test('Pong 11, 21 and custom targets survive the real socket contract and allow comments', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A), b = await socket(B)
+  const comments: any[] = []
+  b.client.on('match:reaction', (value: unknown) => comments.push(value))
+  for (const points of [11, 21, 13]) {
+    const invited = await a.emit('match:invite', { game: 'pong', points })
+    assert.equal(invited.match.points, points)
+    const id = invited.match.id
+    const accepted = await b.emit('match:accept', { matchId: id })
+    assert.equal(accepted.match.points, points)
+    assert.equal(accepted.match.board.target, points)
+    assert.equal(accepted.match.clock, null, 'Pong is score-based')
+    assert.equal((await a.emit('match:sync')).match.points, points)
+    await delay(710)
+    assert.equal((await a.emit('match:react', { matchId: id, text: `First to ${points}` })).ok, true)
+    await waitFor(() => comments.some(c => c.matchId === id && c.text === `First to ${points}`))
+    await a.emit('match:resign', { matchId: id })
+    await a.emit('match:rematch', { matchId: id })
+    const rematch = await b.emit('match:rematch', { matchId: id })
+    assert.equal(rematch.match.points, points)
+    assert.equal(rematch.match.board.target, points)
+    await a.emit('match:resign', { matchId: rematch.match.id })
+  }
 })

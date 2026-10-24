@@ -444,15 +444,15 @@ Seats: the first match's seats are random; a rematch swaps them (colours and fir
 | `match:sync` | none | returns the current match (or `null`); marks the caller present again (resumes a paused table-tennis match after a 3 s serve countdown) |
 | `match:away` | `{matchId, away: bool}` | playing only: `true` lists the caller in `away` like a disconnect (pauses table tennis; starts the abandonment grace), `false` is `match:sync`. Clients send it when the app is backgrounded during table tennis |
 | `match:react` | `{matchId, text}` | in-game reaction/comment (2026-10-21). Members of the connection's current match while `playing` or `over` (`bad_state` while invited; `not_found` for another match id). `text`: whitespace collapsed to one line, trimmed, 1..60 code points (`invalid_payload`). At most one per 700 ms per user (`rate_limited`). Ack `{ok:true, match:null}`; broadcasts `match:reaction` to the room. Not stored, not pushed. |
-| `match:paddle` | `{matchId, x, y?: number, released?: bool, touch?: [x,y]}` | **no ack**, fire-and-forget; finite coordinates in server space. `x` clamps to -0.26..1.26. Optional `y` enables 2D control: seat 1 clamps to 1.3..2.5; seat 2 to -0.7..0.5. `released: true` applies the final position, captures any eligible impact strength, then clears the live stroke. An already captured impact survives release. Optional `touch` carries the finite, two-coordinate finger target in server space, independently of the eased racket position; it is clamped to the same court limits. Without it the racket position supplies the stroke samples. Paused/foreign/invalid input is ignored. 40/s per socket, including releases; checked against the in-memory match. |
+| `match:paddle` | `{matchId, x, y?: number, released?: bool, touch?: [x,y], ct?: int, v?: number, n?: int, samples?: tuple[] }` | **no ack**, fire-and-forget; finite coordinates in server space. `x` clamps to -0.26..1.26. Optional `y` enables 2D control: seat 1 clamps to 1.3..2.5; seat 2 to -0.7..0.5. `released: true` applies the final position, captures any eligible impact strength, then clears the live stroke. An already captured impact survives release. Optional `touch` carries the finite, two-coordinate finger target in server space, independently of the eased racket position; it is clamped to the same court limits. Without it the racket position supplies the stroke samples. Paused/foreign/invalid input is ignored. 64/s token bucket per socket, capacity 96 including releases; 8192-byte paddle payload cap. Optional timed/window fields are specified below; checked against the in-memory match. |
 
-Errors: `invalid_payload`, `partner_left`, `rate_limited`, `not_member`, `connection_inactive`, `busy`, `not_found`, `bad_state`, `game_over`, `not_your_turn`, `invalid_move`, `illegal_move`, `stale`, `out_of_order`, `no_offer`, `no_claim`, `internal`. Illegal moves never change state. Rate limits: `match:paddle` 40/s/socket; all other `match:*` share the generic 60/10 s guard.
+Errors: `invalid_payload`, `partner_left`, `rate_limited`, `not_member`, `connection_inactive`, `busy`, `not_found`, `bad_state`, `game_over`, `not_your_turn`, `invalid_move`, `illegal_move`, `stale`, `out_of_order`, `no_offer`, `no_claim`, `internal`. Illegal moves never change state. Rate limits: `match:paddle` 64/s/socket, burst capacity 96; all other `match:*` share the generic 60/10 s guard.
 
 ### Server -> client
 - `match:state` MatchSnapshot, to the connection room on every change.
 - `match:reaction` `{id, matchId, from, text}` to the connection room (including the sender's own sockets) for each accepted `match:react`. Clients show it briefly over the game; it is not chat history.
 - `match:pong` at ~30/s while Ping Pong is playing, **volatile** (dropped for a congested socket):
-  `{id, t, b:[x,y,vx,vy], p:[seat1X,seat2X], s:[seat1Score,seat2Score], c:countdownMs, h:hits, w:0,
+  `{id, t, ack:[seat1LastN,seat2LastN], b:[x,y,vx,vy], p:[seat1X,seat2X], s:[seat1Score,seat2Score], c:countdownMs, h:hits, w:0,
     z:[height,verticalVelocity], r:[seat1Y,seat2Y], a:[p0x,p0y,p0z,p1x,p1y,p1z,p2x,p2y,p2z,p3x,p3y,p3z,elapsedSeconds,durationSeconds]|null,
     spin:lastHitterLiveStroke, drift:endpointWidthsPerSecond, serve:0|1|2, j:totalTableBounces, l:landedSinceLastHit}`.
 - The 2026-10-21 rebuild adds `z,r,a,spin,serve,j,l`; existing fields retain their types. `w` remains present as zero for older renderers. Older x-only clients retain automatic serves and baseline rackets. Existing clients can decode frames, but need the updated renderer/2D controls to reproduce the rebuilt game. The web client is unchanged.
@@ -462,15 +462,65 @@ Errors: `invalid_payload`, `partner_left`, `rate_limited`, `not_member`, `connec
 The owner requested a remake from the supplied APK and `Downloads/Ref/ping pong ref video.mp4`. The recovered ARM64 methods, scene settings and readable algorithm reconstruction are recorded in Android `docs/games/PONG-REFERENCE-REMAKE.md`. The implementation is independent Kotlin/TypeScript with original Canvas drawings. The existing `pong` match, authorization, scores, custom points, pause and rematch protocol remains.
 
 - Coordinates are table widths: x across 0..1, y along 0..1.8, z above the table. Seat 1 is south; seat 2 rotates x/y and horizontal vectors 180 degrees, leaving height unchanged. Head radius .137, centered black stroke .025; white ball radius is `.033*(1+.7*clamp(height/(6/12.16),0,1))`, with black outer radius 1.35 times that. Collision is the sum of both painted outer radii. The net is visual; sides and corners are open.
-- Android follows a held finger halfway per 60 Hz frame, converted to elapsed time for 90/120 Hz. It sends the eased racket position and separate optional raw `touch` target at at most 30/s; release flushes the last held sample and final position immediately. The server samples the finger target over approximately 50 ms to tolerate packet jitter. World delta conversion is `12.16/60`; direction is normalized movement x, spin is clamped sideways world delta [-1,1], and the recovered forward aiming parameter `f` is clamped forward world delta [-.5,1]. Speed power `p` is separately `clamp(forwardFingerSpeed/10,0,1)`. A still target, release, or 120 ms without updates clears the live stroke. An impact captures its strength once before release clears that stroke. Old clients without `touch` use racket-position samples.
-- A valid swept bat contact resolves the ball to the painted rim and records one impact position and stroke. The bat follows through without being clamped. Further input cannot relocate the pending impact; the next physics tick consumes it even if the bat has moved past. Once launched, the last hitter cannot recapture, reposition or restart that flight. Target x remains `.5 + direction*(8/12.16)*(.7+.3*f)`; target y remains `.9 + forwardSign*(5+7*f)/12.16`; target z is `-6/12.16`. Duration is `1.15-.45*p` seconds (0.7..1.15 s), giving light touches a slower shot while keeping the hard-hit maximum. There is no per-hit speed escalation, random heading kick or new bounce formula.
+- Android follows a held finger halfway per 60 Hz frame, converted to elapsed time for 90/120 Hz. It samples pointer history and sends the eased racket position and separate optional raw `touch` target every 33 ms, or 16 ms within twice the eligible contact radius; release flushes the last held sample and final position immediately. The 50 ms stroke window uses client `ct` for timed input, and arrival time for legacy input. World delta conversion is `12.16/60`; direction is normalized movement x, spin is clamped sideways world delta [-1,1], and the recovered forward aiming parameter `f` is clamped forward world delta [-.5,1]. Speed power `p` is separately `clamp(forwardFingerSpeed/10,0,1)`. A still target, release, or 120 ms without updates clears the live stroke. An impact captures its strength once before release clears that stroke. Old clients without `touch` use racket-position samples.
+- A valid swept bat contact resolves the ball to the painted rim and records one impact position and stroke. The bat follows through without being clamped. Further input cannot relocate the captured impact. Timed contact launches at historical impact and catches up to now; legacy pending contact is consumed by the next physics tick even if the bat has moved past. Once launched, the last hitter cannot recapture, reposition or restart that flight. Target x remains `.5 + direction*(8/12.16)*(.7+.3*f)`; target y remains `.9 + forwardSign*(5+7*f)/12.16`; target z is `-6/12.16`. Duration is `1.15-.45*p` seconds (0.7..1.15 s), giving light touches a slower shot while keeping the hard-hit maximum. There is no per-hit speed escalation, random heading kick or new bounce formula.
 - Flight is a cubic with a first handle 20% toward the endpoint and a second directly above it; both handles have height `6/12.16`. The recovered Hermite time easing has endpoint slopes 1.363 and .3368. `a` carries the current curve and its clock.
 - The last hitter's **live** sideways parameter shifts the endpoint: `.3` native world units per 20 ms, converted to `(0.3/12.16/0.02)*spin` table widths/s. Release or a stationary finger stops this drift; subsequent movement can steer the existing flight. There is no exponential spin decay or separate table-bounce kick in this remake. `spin` reports the current live parameter; additive `drift` reports the current normalized endpoint velocity. Android uses `drift*age` for prediction. Older frames without `drift` retain the prior exponential prediction for compatibility.
-- A descending table crossing inside the surface bounces along the incoming 3D direction, with length `30/12.16`; its endpoint height is contact height minus `6/12.16`. A table landing must separate valid racket returns. Back-face returns remain rejected. A table miss loses for the last hitter; after landing, escape or a second bounce wins for the last hitter. Relative swept-circle tests catch fast/diagonal input before back-face rejection; incoming simulated contacts resolve to the painted front surface. Only an eligible server/receiver can capture the next impact. Android shows one fixed pending world-space contact for at most 150 ms, clears it on authoritative hit confirmation or round reset, and never attaches an outgoing ball to a moving bat or projects its display around the bat. This awards no local hits or scores.
-- Android uses server `t` to compensate excess packet delay and rejects older snapshots; prediction stops after 150 ms without a new frame. It evaluates the native flight each display frame and keeps a 0.3 s trail across contacts. It predicts no scores or local hits. The green court, bold outlines, red/cyan rackets, white ball and height-following shadow match the supplied video's visual language.
+- A descending table crossing inside the surface bounces along the incoming 3D direction, with length `30/12.16`; its endpoint height is contact height minus `6/12.16`. A table landing must separate valid racket returns. Front, back and side head contacts all launch forward. A table miss loses for the last hitter; after landing, escape or a second bounce wins for the last hitter. Shared relative swept-circle tests move both ball and bat and catch fast/diagonal input. Contacts resolve along the normal at the impact-time bat position. Only an eligible server/receiver can capture the next impact. Android predicts the return curve immediately, then blends authoritative confirmation/rejection over 60 ms; an acked rejection allows retry. It never attaches an outgoing ball to a moving bat or projects its display around the bat. This awards no local hits or scores.
+- Android uses a bounded recent clock-offset estimate, 50 ms interpolation and at most 50 ms authoritative extrapolation; an active local launch follows the drawn time axis until confirmation. Older snapshots are rejected. If all pre-bounce return frames are lost, confirmation waits for the return curve to be valid at the drawn time instead of blending to the old incoming curve. It evaluates the native flight each display frame and keeps a 0.3 s trail across contacts. It predicts no scores or local hits. The green court, bold outlines, red/cyan rackets, white ball and height-following shadow match the supplied video's visual language.
 - First countdown 3 s, next point 1 s; 2D clients serve by contact. Server changes every two total points. The invite's `points` wins (default 7), without deuce. Initial server is random. Pause/resume resets flight into a serve and preserves score.
 
 `touch` and `drift` are additive (2026-10-22); older field types and x-only automatic serving remain. Matching Android and backend changes are needed for faithful touch/flight behavior. No web-client code is changed in this round.
+
+### Timed Pong contact (2026-10-24, additive)
+
+RTT is measured only by the server: OPEN→namespace CONNECT and the existing
+Engine.IO PING→PONG elapsed time. Use the maximum of eight recent samples; until
+measured, the cap is 250 ms. Never accept an RTT field from a client. This adds
+no event or endpoint. Beyond the cap inputs are clamped and may miss; never
+silently expand it.
+
+`ct`, `v`, `n` are optional together. `ct` is a nonnegative safe integer in
+client-monotonic milliseconds, strictly increasing per socket; a new socket may
+start a new clock. `n` is a positive safe integer increasing per match/seat,
+seeded from frame `ack` on reconnect. `v` is finite and is the exact server-axis
+time of the drawn ball; clamp it to `[now-cap, now]`, where each seat gets `cap=clamp(serverMeasuredRttMs+100,250,500)`, then prevent per-seat time
+from decreasing. Duplicated/decreasing n and decreasing ct are ignored. Omitting
+all three retains the existing untimed 2D/x-only control path; partial timing is
+invalid. `t` now uses the simulation's monotonic, millisecond-precision epoch
+axis (`performance.timeOrigin + performance.now()`); interpolation may produce
+fractional impact times. `ack` is the highest accepted n for each seat, initially
+zero, sent with the authoritative h and curve, not a separate socket ack.
+
+Optional `samples` contains at most 32 **prior** samples, each exactly
+`[n,ct,v,x,y,touchX,touchY,released01]`. Values must be finite; n/ct are safe
+integers, nonnegative ct and positive n, strictly increasing and lower than the
+outer n/ct; v is nondecreasing and ≤outer v; released01 is 0 or 1. Requires timed
+2D input. The entire window is validated before any match mutation. Coordinates
+clamp to the same seat bounds as outer input. Process only unseen sequences in
+order, then the outer sample. This recovers an out-and-back swipe and a release
+whose individual packet was lost without trusting a claimed hit. Socket identity
+is supplied internally, never from payload. Match membership, playing/away checks,
+byte cap, token bucket and validation apply before replay.
+
+PongSim retains 800 ms of sub-step ball history in a bounded 160-entry ring and
+interpolates ball(v_prev)→ball(v) against the bat segment with the same contact
+helper as Kotlin. Rewind uses that per-seat cap, including clipping an old segment endpoint. Impact eligibility checks height, landed/serving, opponent last hitter,
+current flight identity/h count, and no outcome. A scored/reset flight cannot be
+replayed or rolled back. Strike at the impact-time rim, then catch up the unchanged
+curve in ≤8 ms steps; recovered samples retain release/drift boundaries during
+that catch-up. A still timed bat uses the existing 120 ms idle rule when new
+input stops. Legacy sub-step contacts use the same full-head rim math.
+
+The task originally specified 250 ms; the owner approved 500 ms because the
+150 ms one-way profile needs 350 ms before jitter/coalescing. The owner also
+approved the bounded sample window after measured stroke mismatch with lost
+predecessors. Paint stays exactly the same: black ball edge .35 of white radius,
+`CONTACT_FORGIVENESS=0`; no hitbox growth. See
+[PONG-CONTACT-PROFILES.md](PONG-CONTACT-PROFILES.md) for all 72 before/after rows
+and the Android companion's `docs/games/PONG-CONTACT-EVIDENCE.md` for methodology,
+commands and Xiaomi checklist. Deploy backend first, then Android; existing web
+continues on the untimed path. No browser UI change or migration is needed.
 
 ### Lifecycle
 

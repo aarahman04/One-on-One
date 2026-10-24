@@ -37,6 +37,8 @@ import { getIceServers } from '../services/turnService.js'
 import { registerPresence } from './presence.js'
 import { registerGameHandlers } from './games.js'
 import { endMatchesForConnection, initMatches, registerMatchHandlers } from '../games/matchSocket.js'
+import { trackPongRtt } from '../games/pongRtt.js'
+import { paddleLimit } from '../games/paddleLimit.js'
 
 interface SocketData {
   userId: string
@@ -225,6 +227,8 @@ async function syncDelivery(io: Server, connection: MemberConnection, senderId: 
 
 export function createSocketServer(httpServer: HttpServer, allowedOrigins: string[]): Server {
   const io = new Server(httpServer, { cors: { origin: allowedOrigins } })
+  const pongRtt = new WeakMap<Socket['conn'], () => number | undefined>()
+  io.engine.on('connection', connection => pongRtt.set(connection, trackPongRtt(connection)))
   ioRef = io
   setIo(io) // lets callService.forceEndCall run from outside the socket layer
   setMessageServiceIo(io) // lets messageService.emitAppearanceNotice run from the REST route
@@ -518,16 +522,9 @@ export function createSocketServer(httpServer: HttpServer, allowedOrigins: strin
     registerGameHandlers(io, socket, { withinRateLimit, getConnection: getLiveConnectionForUser, hasInactiveConnection })
 
     // match:* authoritative games (games/matchSocket.ts). Paddle updates get
-    // their own 40/s bucket; everything else shares the flood guard above.
-    const recentPaddles: number[] = []
-    const withinPaddleLimit = (): boolean => {
-      const now = Date.now()
-      while (recentPaddles.length && now - recentPaddles[0] > 1000) recentPaddles.shift()
-      if (recentPaddles.length >= 40) return false
-      recentPaddles.push(now)
-      return true
-    }
-    registerMatchHandlers(io, socket, { withinRateLimit, withinPaddleLimit, getConnection: getLiveConnectionForUser, hasInactiveConnection })
+    // their own 64/s bucket with room for release/jitter bursts.
+    const withinPaddleLimit = paddleLimit()
+    registerMatchHandlers(io, socket, { withinRateLimit, withinPaddleLimit, measuredRtt: pongRtt.get(socket.conn), getConnection: getLiveConnectionForUser, hasInactiveConnection })
 
     socket.on(
       'reaction:add',

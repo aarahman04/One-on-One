@@ -462,3 +462,35 @@ test('matches: every game can be drawn by agreement or declined; table tennis in
   const tied = m.draw(C, A, pong, 'accept')
   assert.deepEqual(tied.ok && tied.match!.outcome, { winner: null, reason: 'agreement' })
 })
+
+
+test('Pong continues past seven and ends at the selected 11, 21 or custom target', () => {
+  for (const target of [11, 21, 13]) {
+    const { m, frames } = manager(.5)
+    try {
+      const id = m.invite(C, A, B, 'pong', null, target).match!.id
+      m.accept(C, B, id)
+      let passedSeven = false
+      for (let i = 0; i < 20000 && m.get(C)!.status === 'playing'; i++) {
+        const f = frames.at(-1) as { b: number[]; serve: number; c: number; s: number[] } | undefined
+        if (f) {
+          for (const seat of [1, 2]) {
+            const serving = f.serve === seat && f.c === 0
+            m.paddle(C, m.get(C)!.players[seat - 1], id, serving ? f.b[0] : RACKET_MIN,
+              serving ? f.b[1] : seat === 1 ? 2.5 : COURT_H - 2.5, true)
+          }
+          if (Math.max(...f.s) === 7) {
+            passedSeven = true
+            assert.equal(m.get(C)!.status, 'playing')
+          }
+        }
+        m.advancePong(C, 32)
+      }
+      assert.equal(passedSeven, true)
+      assert.equal(m.get(C)!.status, 'over')
+      const end = frames.at(-1) as { s: number[] }
+      assert.equal(Math.max(...end.s), target)
+      assert.equal(m.get(C)!.outcome!.reason, 'first_to_points')
+    } finally { m.dispose() }
+  }
+})

@@ -873,3 +873,60 @@ POST /api/connections/:connectionId/narration-preview accepts an authenticated l
 ## Invitation delivery and dismissal repair (2026-10-22)
 
 An invite no longer requires the recipient to have a live socket. The authenticated caller must still have a live connection; the manager creates one pending match, then the existing high-priority native push path runs. A recipient opening/reconnecting recovers that match through match:sync before accepting. Membership, one-match-at-a-time and 30-second expiry rules remain unchanged. Web and Android modal dismissal leaves an invitation pending with accept/decline actions in a chat banner; explicit decline still ends it. Ping Pong remains score-based; countdown tests cover Chess, Tic-Tac-Toe, Connect 4 and Reversi.
+
+
+## Pong historical contact judgement (2026-10-24)
+
+The server stays authoritative for flight and score. The additive timed path
+retains 800 ms of 8 ms ball state, bounded to 160 entries. Socket payload/window
+validation precedes mutation; sequence and socket-clock checks prevent replay.
+The owner approved the 500 ms hard limit and up to 32 redundant prior samples because
+the worst network profile exceeds 250 ms and packet loss can erase a stroke.
+Legacy clients keep their control/serve path using the same full-head rim rule.
+
+```mermaid
+sequenceDiagram
+    participant A as Android pointer / displayed frame
+    participant V as Match socket validation
+    participant P as PongSim history
+    A->>A: Sample ct, exact drawn v, n; predict shared launch
+    A-->>V: match:paddle + recent sample window
+    V->>V: Membership, playing, finite bounds, ct/n, 8192 bytes, 64/s bucket
+    V->>P: Replay unseen samples; clamp v to now-cap..now
+    P->>P: Sweep moving ball and bat at history time
+    P->>P: Check height, bounce, hitter and current flight identity
+    P->>P: Strike from impact rim; catch up accepted curve
+    P-->>A: match:pong t / ack / h / curve
+    A->>A: Confirm or reject; blend for 60 ms
+```
+
+Existing cubic/duration/aim/drift, table-bounce/scoring/serve formulas and geometry
+remain. Only authoritative h triggers client feedback. Releasing clears live
+spin after capturing impact strength; redundant release boundaries and the
+existing 120 ms idle rule survive packet loss. Rate limit is a 64/s token bucket
+with 96 capacity. See API-CONTRACT §12 and PONG-CONTACT-PROFILES.md. Matching
+Android carries executable simulation, Kotlin golden traces and the exact
+physical-device checklist. Backend must ship first; neither PR deploys itself.
+
+
+## Release verification of game options (2026-10-24)
+
+Production was still on PR #121 while Android used the newer clock/points and
+reaction contract. The service is configured for backend/main with automatic
+deployment, so release verification must compare its ACTIVE source to reviewed
+main. Rebuilding an old deployment is insufficient. No protocol extension is
+needed to restore the already implemented game features.
+
+```mermaid
+sequenceDiagram
+    participant A as Android options / game UI
+    participant S as Current MatchSocket / MatchManager
+    participant R as Railway release gate
+    A->>S: match:invite clock or points
+    S-->>A: snapshot clock/points, authoritative countdown/score
+    A->>S: match:react text
+    S-->>A: match:reaction to both members
+    Note over S: Real socket tests cover all turn games and Pong targets past 7
+    R->>R: Compare ACTIVE backend source with reviewed merged main
+    R->>R: Check health, then build signed Android 19 / 2.0.12
+```

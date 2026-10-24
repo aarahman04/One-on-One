@@ -29,7 +29,7 @@ test('ping pong: fast forward strokes meet the painted rim for either seat', () 
     p.paddle(seat, .5, p.y - forward * .7)
     p.step(FIRST_SERVE_MS)
     p.paddle(seat, .5, p.y + forward * .2)
-    near(Math.hypot(p.x - p.paddles[seat - 1], p.y - p.paddleY[seat - 1]), contactRadius(p.z))
+    near(p.x, .5); near(p.y, seat === 1 ? COURT_H - .24 : .24)
     const start = [p.x, p.y, p.z]
     p.step(8)
     assert.equal(p.hits, 1)
@@ -44,8 +44,9 @@ test('ping pong: rally contacts remain outside the visible outline', () => {
   for (let i = 0; i < 2000 && p.hits < 8; i++) {
     p.step(8)
     if (p.hits > previous) {
-      const receiver = p.vy > 0 ? 0 : 1
-      near(Math.hypot(p.x - p.paddles[receiver], p.y - p.paddleY[receiver]), contactRadius(p.z), .0001)
+      const a = p.frame().a!, receiver = a[10] < .9 ? 0 : 1
+      // The sub-step may already have advanced the new curve beyond its impact.
+      near(Math.hypot(a[0] - p.paddles[receiver], a[1] - p.paddleY[receiver]), contactRadius(a[2]), .002)
       previous = p.hits
     }
   }
@@ -57,12 +58,13 @@ test('ping pong: pulling the red racket back then forward cannot skip a rally co
   p.paddle(1, .5, 2.4, true); p.step(FIRST_SERVE_MS)
   run(p, () => p.bounces > 0 && p.y >= 1.5)
   assert.equal(p.hits, 1)
+  const before = [p.x, p.y]
   p.paddle(1, p.x, 1.3)
-  near(p.paddleY[0] - p.y, contactRadius(p.z))
+  near(p.x, before[0]); near(p.y, before[1])
   p.step(8)
   assert.equal(p.hits, 2)
   assert.ok(p.frame().a![10] < .9)
-  assert.ok(p.paddleY[0] - p.y >= contactRadius(p.z) - .001)
+  near(p.paddleY[0], 1.3)
 })
 
 test('ping pong: the recovered cubic has real height and eased progress', () => {
@@ -85,7 +87,7 @@ test('ping pong: a 2D serve waits for contact and launches from the moving bat r
     assert.equal(p.hits, 1)
     assert.equal(p.frame().serve, 0)
     assert.equal(p.frame().a?.length, 14)
-    near(Math.hypot(p.x - p.paddles[seat - 1], p.y - p.paddleY[seat - 1]), contactRadius(p.z))
+    near(p.x, x); near(p.y, y)
     near(p.z, z)
     p.step(100)
     assert.ok(p.z > z && (p.y - y) * (seat === 1 ? -1 : 1) > 0)
@@ -205,13 +207,14 @@ test('ping pong: a landed ball escaping past the opponent wins for the last hitt
   assert.deepEqual(p.score, [0, 1])
 })
 
-test('ping pong: returning with the back of the racket is rejected for both seats', () => {
+test('ping pong: the back of either head launches forward once, including a resting bat', () => {
   for (const seat of [1, 2] as const) {
     const p = new PongSim(() => seat === 1 ? 0 : .5)
     const forward = seat === 1 ? -1 : 1
     p.paddle(seat, p.x, p.y + forward * .1, true)
     p.step(FIRST_SERVE_MS); p.step(500)
-    assert.equal(p.hits, 0)
+    assert.equal(p.hits, 1)
+    assert.ok((p.frame().a![10] - .9) * forward > 0)
     p.paddle(seat, p.x, p.y - forward * .19, true); p.step(8)
     assert.equal(p.hits, 1)
   }
@@ -248,7 +251,7 @@ test('ping pong: backend fixture stays aligned with the Android demo and rendere
   p.step(64)
   const f = p.frame()
   // The same input/clock sequence is asserted by DemoPongTest.
-  assert.deepEqual(f.b.slice(0, 2), [.723, .3359])
+  assert.deepEqual(f.b.slice(0, 2), [.5318, .3168])
   near(f.z[0], .2378)
   near(f.drift, SPIN_DRIFT, .0001)
 })

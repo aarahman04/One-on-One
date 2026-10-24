@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { PongSim, FIRST_SERVE_MS, contactRadius } from '../src/games/pong.js'
 
-test('fast diagonal swipes follow through and launch the ball from the leading rim', () => {
+test('fast diagonal swipes follow through and launch from the impact-time rim', () => {
   for (const seat of [1, 2] as const) {
     const p = new PongSim(() => seat === 1 ? 0 : .5), forward = seat === 1 ? -1 : 1
     const bx = p.x, by = p.y
@@ -11,7 +11,7 @@ test('fast diagonal swipes follow through and launch the ball from the leading r
     p.paddle(seat, bx + .22, by + forward * .22)
     assert.ok(Math.abs(p.paddles[seat - 1] - (bx + .22)) < 1e-6)
     assert.ok(Math.abs(p.paddleY[seat - 1] - (by + forward * .22)) < 1e-6)
-    assert.ok(Math.abs(Math.hypot(p.x - p.paddles[seat - 1], p.y - p.paddleY[seat - 1]) - contactRadius(p.z)) < 1e-6)
+    assert.ok(Math.abs(p.x - bx) < 1e-6 && Math.abs(p.y - by) < 1e-6)
     const start = [p.x, p.y, p.z]
     p.step(8)
     assert.equal(p.hits, 1)
@@ -20,7 +20,7 @@ test('fast diagonal swipes follow through and launch the ball from the leading r
   }
 })
 
-test('light and hard follow-through stay outside the black outline after a confirmed hit', () => {
+test('light and hard follow-through cannot relocate or recapture the outgoing flight', () => {
   for (const gap of [16, 250]) for (const seat of [1, 2] as const) {
     const p = new PongSim(() => seat === 1 ? 0 : .5), forward = seat === 1 ? -1 : 1
     const startY = seat === 1 ? 2.2 : -.4, endY = seat === 1 ? 1.3 : .5
@@ -29,8 +29,11 @@ test('light and hard follow-through stay outside the black outline after a confi
     p.paddle(seat, .5, endY); p.step(8)
     assert.equal(p.hits, 1)
     for (let i = 0; i < 15; i++) {
-      p.paddle(seat, .5, endY); p.step(8)
-      assert.ok((p.y - p.paddleY[seat - 1]) * forward >= contactRadius(p.z) - 1e-5)
+      const before = p.frame().b
+      p.paddle(seat, .5, endY)
+      assert.deepEqual(p.frame().b, before)
+      p.step(8)
+      assert.ok(p.vy * forward > 0)
       assert.equal(p.hits, 1)
     }
   }
