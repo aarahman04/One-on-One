@@ -14,7 +14,8 @@ const source = async (path, replacements = {}) => {
   return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 }
 const matchUrl = await source('../src/services/transport/MatchTransport.ts')
-const pongUrl = await source('../src/features/games/pong.ts')
+const physicsUrl = await source('../src/features/games/pongPhysics.ts')
+const pongUrl = await source('../src/features/games/pong.ts', { './pongPhysics': physicsUrl })
 const { decodeMatch } = await import(matchUrl)
 const { PongClient } = await import(pongUrl)
 const { GameSession } = await import(
@@ -189,7 +190,7 @@ test('lost move ack retries the identical envelope once, confirmed moves render 
   assert.equal(s.predicted, null)
   s.dispose()
 })
-test('paddle sends the latest rotated x at no more than 30/s and stops after dispose', async (t) => {
+test('paddle coalesces the latest rotated position at 33 ms outside contact and stops after dispose', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const sent = [],
     s = new GameSession(

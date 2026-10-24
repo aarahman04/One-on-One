@@ -1,6 +1,7 @@
-// Real browser UI + real §12 Socket.IO handlers/rules; disposable authenticated fixture, no production writes.
+// Real browser UI + actual §12 match rules/simulation; disposable identity/HTTP/socket fixture, no production writes.
 // Run with node --import ../backend/node_modules/tsx/dist/loader.mjs test/web210.browser.mjs. PLAYWRIGHT_MODULE can point to an installed playwright/index.mjs.
 import assert from 'node:assert/strict'
+import { verifyGameParity } from './web212.browser.mjs'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { mkdir, readFile } from 'node:fs/promises'
@@ -14,7 +15,7 @@ const require = createRequire(new URL('../../backend/package.json', import.meta.
 const playwright = await import(
   process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright'
 )
-const screenshots = fileURLToPath(new URL('../../docs/ui-web-2.0.10/', import.meta.url))
+const screenshots = fileURLToPath(new URL('../build/web212/', import.meta.url))
 await mkdir(screenshots, { recursive: true })
 const ids = { connection: '11111111-1111-4111-8111-111111111111', letter: '22222222-2222-4222-8222-222222222222' }
 let uploadDelay = 0, failUpload = false
@@ -125,7 +126,7 @@ io.on('connection', (socket) => {
     const message = { ...p, id: crypto.randomUUID(), senderId: user, createdAt: new Date().toISOString(), reactions: [] }
     io.emit('message:new', message); ack({ ok: true, message })
   })
-  socket.on('match:paddle', (p) => manager.paddle(ids.connection, user, p.matchId, p.x, p.y, p.released))
+  socket.on('match:paddle', (p) => manager.paddle(ids.connection, user, p.matchId, p.x, p.y, p.released, p.touch, p.ct, p.v, p.n, socket.id, p.samples))
   for (const action of ['invite', 'accept', 'decline', 'leave', 'resign', 'move', 'draw', 'rematch', 'sync', 'away', 'react']) socket.on(`match:${action}`, (p = {}, ack) => {
     let result
     if (action === 'invite') result = manager.invite(ids.connection, user, partner, p.game, parseClock(p.clock), parsePoints(p.points))
@@ -187,9 +188,15 @@ try {
   for (const width of [1280, 360]) {
     const pages = {}
     for (const user of ['me', 'other']) {
-      const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', colorScheme: 'dark' })
+      const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', colorScheme: 'dark', hasTouch: width === 360 })
       contexts.push(context)
       await context.addInitScript(() => {
+        window.__whiteBalls = []
+        const fill = CanvasRenderingContext2D.prototype.fill
+        CanvasRenderingContext2D.prototype.fill = function (...args) {
+          if (this.canvas.closest('.game-board--pong') && this.fillStyle === '#ffffff') { window.__whiteBalls.push(this.globalAlpha); if (window.__whiteBalls.length > 1000) window.__whiteBalls.shift() }
+          return fill.apply(this, args)
+        }
         localStorage.setItem('notificationReminderAt', String(Date.now()))
         localStorage.setItem('letterFrom', 'Saved signature')
         localStorage.setItem('permissionRationale:microphone', '1')
@@ -284,6 +291,7 @@ try {
       assert.equal(await page.getByRole('button', { name: 'Rematch', exact: true }).count(), 0)
       await page.getByRole('button', { name: 'Done', exact: true }).click()
     }
+    await verifyGameParity({ page, other, manager, events, io, ids, width, command, wait, shot })
     await page.locator('.letter-card').click()
     const narrationBefore = requests.filter(([, path]) => path.endsWith('/narration')).length
     await page.getByRole('button', { name: 'Read letter aloud', exact: true }).click()
@@ -465,6 +473,7 @@ try {
     console.log(`PASS ${width}px: five real-rule games, 2D Pong input, clocks, reactions, draws/away, invite dismiss, local preview voice, dictation punctuation, emoji, normalized photos and manual brush`)
   }
 } catch (error) {
+  console.error('Page errors:', errors, 'Recent game events:', events.filter(([e]) => e.startsWith('match:')).slice(-12))
   for (const context of contexts) for (const page of context.pages()) { console.error((await page.locator('body').innerText()).slice(-1500)); await shot(page, 'failure').catch(() => {}) }
   throw error
 } finally {

@@ -930,3 +930,35 @@ sequenceDiagram
     R->>R: Compare ACTIVE backend source with reviewed merged main
     R->>R: Check health, then build signed Android 19 / 2.0.12
 ```
+
+## Web displayed-time Pong contact (2026-10-24, Android 2.0.12 parity)
+
+The browser now uses the same full-circle relative sweep, client-time stroke and
+launch math as Android/backend. Its frame ring and bounded offset map input to
+exactly the displayed server time. Prediction changes drawing only; h/j/s and
+outcomes remain authoritative. Confirmation/rejection blends for 60 ms; a lost
+pre-bounce frame cannot send the drawing back onto an older incoming flight.
+
+```mermaid
+sequenceDiagram
+    participant C as Canvas pointer/history + displayed time
+    participant G as GameSession / PongClient
+    participant T as Existing InternetTransport
+    participant S as Existing PongSim history
+    C->>G: Eased bat, raw target, monotonic sample time
+    G->>G: Full-head sweep at drawn v; predict shared outgoing curve
+    G->>T: ct/v/n + bounded recent sample tuples (16/33 ms)
+    T->>S: match:paddle (reliable final release)
+    S->>S: Existing measured RTT clamp, eligibility and rewind
+    S-->>G: match:pong t / ack / h / drift / curve
+    G->>C: Continue prediction through dropped frames; blend within 60 ms
+```
+
+The browser validates optional ack/drift, seeds sequence from ack on reconnect,
+clears pending sends on pause/disconnect/dispose and cancels pointer ownership on
+capture loss/blur/background/round reset. Canvas paints the same outer radii as
+the contact test, with an always-opaque white ball. Game options/comments reuse
+existing server-owned rules and transports. Turn clocks follow paused snapshots
+and continue while away when the server does. Sentence capitalization is the
+browser's native textarea hint, with no input rewriting. See
+WEB-ANDROID-PARITY-2.0.12.md and WEB-PONG-CONTACT-AFTER.json for measured checks.

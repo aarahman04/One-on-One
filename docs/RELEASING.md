@@ -1,5 +1,13 @@
 # Releasing One on One
 
+Web 2.0.12 parity (2026-10-24): deploy through the existing Vercel main pipeline
+after verified tests/required checks and merge. Backend #128 supplies the timed
+contact protocol; this change needs no backend deployment, migration, variables,
+Android build/version or Play action. Inspect Vercel's successful production
+deployment and its source SHA against merged main; an HTTP 200 alone does not
+identify live source. Evidence and remaining physical keyboard/two-account play
+checks: `WEB-ANDROID-PARITY-2.0.12.md`.
+
 Native Kotlin Android 2.0.12 / code 19 (2026-10-24): this release uses
 `aarahman04/One-on-One-Android`, not this repo's older Capacitor workflow.
 Production inspection found the live Railway backend was still PR #121 /
