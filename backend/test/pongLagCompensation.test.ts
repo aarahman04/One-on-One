@@ -153,9 +153,11 @@ test('a lost release is finalized by the existing 120 ms idle rule', () => {
   p.paddle(2, .2, -.4, false, undefined, { ct: 1000, v: 3000, n: 1 })
   p.paddle(2, .8, .3, false, undefined, { ct: 1016, v: 3000, n: 2 })
   assert.equal(p.hits, 1)
-  assert.notEqual(p.frame().spin, 0)
+  const spin = p.frame().spin
+  assert.notEqual(spin, 0)
   p.step(121)
-  assert.equal(p.frame().spin, 0)
+  assert.equal((p as unknown as { strokes: { side: number }[] }).strokes[1].side, 0)
+  assert.equal(p.frame().spin, spin, 'the contact curve is not live input')
   assert.equal(p.hits, 1)
 })
 

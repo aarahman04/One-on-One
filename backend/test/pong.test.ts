@@ -125,27 +125,28 @@ test('ping pong: stroke direction aims to either side, including the native uncl
   assert.ok(soft.frame().a![9] > .7 && soft.frame().a![9] < .8)
 })
 
-test('ping pong: the last hitter controls live endpoint drift; release stops it immediately', () => {
+test('ping pong: the contact stroke fixes a constant curve; release and later movement cannot steer it', () => {
   const p = stroke(.3, .03)
   near(p.frame().spin, 1)
   const start = p.frame().a![9]
   p.step(64)
   near(p.frame().a![9] - start, SPIN_DRIFT * .064, .0002)
-  const end = p.frame().a![9]
   p.paddle(2, .5, .24, true); p.step(64)
-  near(p.frame().spin, 0); near(p.frame().drift, 0)
-  near(p.frame().a![9], end, .0001)
-  p.paddle(2, .55, .24); p.step(16); p.paddle(2, .6, .24); p.step(16)
-  assert.ok(p.frame().a![9] > end, 'later movement can steer the reference flight')
+  near(p.frame().spin, 1); near(p.frame().drift, SPIN_DRIFT, .0001)
+  near(p.frame().a![9] - start, SPIN_DRIFT * .128, .0004)
+  p.paddle(2, .3, .24); p.step(16); p.paddle(2, .1, .24); p.step(16)
+  near(p.frame().spin, 1)
+  near(p.frame().a![9] - start, SPIN_DRIFT * .16, .0004)
 })
 
-test('ping pong: a stationary held touch and lost-input timeout clear the live stroke', () => {
+test('ping pong: a stationary held touch and lost-input timeout clear the live stroke, not the contact curve', () => {
+  const live = (p: PongSim) => (p as unknown as { strokes: { side: number }[] }).strokes[1].side
   const stationary = stroke(.3, .03)
   stationary.paddle(2, .5, .24)
-  near(stationary.frame().spin, 0)
+  near(live(stationary), 0); near(stationary.frame().spin, 1)
   const lost = stroke(.3, .03)
   lost.step(121)
-  near(lost.frame().spin, 0)
+  near(live(lost), 0); near(lost.frame().spin, 1)
   assert.ok(lost.frame().a!.every(Number.isFinite))
 })
 
@@ -156,9 +157,10 @@ test('ping pong: raw touch controls the stroke while the racket eases toward it'
   assert.equal(p.hits, 1)
   near(p.frame().spin, 1)
   const duration = p.frame().a![13]
-  // Same held finger, racket still catching up: the finger's stroke has stopped.
+  // Same held finger, racket still catching up: the finger's stroke has stopped; the shot keeps its contact curve.
   p.paddle(2, .425, .2325, false, [.5, .24])
-  near(p.frame().spin, 0)
+  near((p as unknown as { strokes: { side: number }[] }).strokes[1].side, 0)
+  near(p.frame().spin, 1)
   near(duration, 1.287, .0001)
 })
 

@@ -1,5 +1,5 @@
 import type { Outcome, Seat } from './rules.js'
-import { sweepContact, rimPosition, contactRadius, emptyStroke, StrokeWindow, flightDuration, bounceScale, PEAK_SPEED, type Stroke } from './pongPhysics.js'
+import { sweepContact, rimPosition, contactRadius, emptyStroke, StrokeWindow, flightDuration, bounce, type Stroke } from './pongPhysics.js'
 export { contactRadius } from './pongPhysics.js'
 
 // Ping Pong: server-owned strokes and cubic flights over an open table.
@@ -85,6 +85,7 @@ export class PongSim {
   private contactStrokes: [Stroke | null, Stroke | null] = [null, null]
   private flight: Flight | null = null
   private lastHit: Seat | null = null
+  private shotSide = 0
   private landed = false
   private server: Seat
   private previous: [BatSample | null, BatSample | null] = [null, null]
@@ -109,8 +110,8 @@ export class PongSim {
     this.remember()
   }
 
-  // Steering curves the flight only until it lands; the bounce is fixed so the receiver can read it.
-  private get spin(): number { return this.lastHit && !this.landed ? this.strokes[this.lastHit - 1].side : 0 }
+  // Curve is fixed by the stroke captured at contact and ends at the landing; later bat movement never steers.
+  private get spin(): number { return this.lastHit && !this.landed ? this.shotSide : 0 }
 
   paddle(seat: Seat, x: number, y?: number, released = false, touch?: [number, number], timing?: PaddleTiming, now = this.clock): boolean {
     if (this.outcome || !Number.isFinite(x) || y !== undefined && !Number.isFinite(y)) return false
@@ -315,6 +316,7 @@ export class PongSim {
     const target: Point = [0.5 + stroke.direction * AIM_GAIN * (0.7 + 0.3 * stroke.forward),
       COURT_H / 2 + forward(seat) * (5 + 7 * stroke.forward) / 12.16, FLOOR_H]
     this.curve(target, flightDuration(stroke.power))
+    this.shotSide = stroke.side
     this.lastHit = seat
     this.landed = false
     this.hits++; this.flightId++
@@ -341,8 +343,9 @@ export class PongSim {
         this.bounces++
         // Pre-bounce steering may not send the bounce more sideways than toward the receiver (45 degrees).
         const vx = clamp(this.vx, -Math.abs(this.vy), Math.abs(this.vy))
-        const scale = bounceScale(Math.hypot(vx, this.vy, this.vz))
-        this.curve([x + vx * scale, y + this.vy * scale, BALL_R + FLOOR_H], Math.max(.1, PEAK_SPEED * scale))
+        const [p0, , p2] = flight.points // p2 is the undrifted aim: the shot's own pace
+        const [scale, duration] = bounce(vx, this.vy, this.vz, Math.hypot(p2[0] - p0[0], p2[1] - p0[1]) / flight.duration)
+        this.curve([x + vx * scale, y + this.vy * scale, BALL_R + FLOOR_H], duration)
       }
     }
     const seat = this.lastHit ? other(this.lastHit) : null

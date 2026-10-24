@@ -33,11 +33,17 @@ export class StrokeWindow {
 
 // Owner fairness tuning: a full-power stroke crosses in ~1 s instead of .7 s; neutral/soft in 1.35 s.
 export const flightDuration = (power: number) => 1.35 - .35 * power
-// Peak of the eased cubic's normalized ground speed (t = .276). Timing the bounce by its distance
-// (PEAK_SPEED * reach / speed) keeps it at or below the incoming ground speed; the 2 s cap (client
-// validation) shortens the reach instead of speeding up a slow drop shot.
+// Peak of the eased cubic's normalized ground speed (t = .276).
 export const PEAK_SPEED = 1.7063
-export const bounceScale = (speed: number) => Math.min(30 / 12.16 / Math.max(speed, 1e-6), 2 / PEAK_SPEED)
+/** Bounce reach multiplier and duration: the bounce keeps the shot's average ground pace (distance / duration),
+ *  so it peaks at the shot's own peak pace; the 2 s cap (client validation) shortens the reach instead. */
+// The table takes a little pace off so a hard deep corner ball still leaves a 250 ms+ return window.
+export const BOUNCE_PACE = .9
+export function bounce(vx: number, vy: number, vz: number, pace: number): [number, number] {
+  const ground = Math.hypot(vx, vy), scale = 30 / 12.16 / (Math.hypot(ground, vz) || 1)
+  const duration = ground * scale / Math.max(pace * BOUNCE_PACE, 1e-6)
+  return duration > 2 ? [scale * 2 / duration, 2] : [scale, Math.max(.1, duration)]
+}
 
 export function launch(x: number, y: number, z: number, stroke: Stroke, forward = -1): number[] {
   const tx = .5 + stroke.direction * (8 / 12.16) * (.7 + .3 * stroke.forward)
