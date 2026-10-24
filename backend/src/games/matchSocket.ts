@@ -9,7 +9,7 @@ import { MATCH_GAMES, MatchManager, parseClock, parsePoints, type MatchGame, typ
 
 // Socket.IO surface of the authoritative matches (API-CONTRACT §12).
 // Every event except match:paddle re-reads the caller's live connection from
-// the DB. match:paddle (up to 30/s) is checked against the in-memory match,
+// the DB. match:paddle (60/s with release burst allowance) is checked against the in-memory match,
 // which only exists for a DB-verified live connection and is ended by the
 // leave/terminate paths and by the 5 s liveness re-check below.
 
@@ -108,11 +108,11 @@ export function endMatchesForConnection(connectionId: string): void {
   manager?.endConnection(connectionId)
 }
 
-function payload(msg: unknown): Record<string, unknown> | null {
+function payload(msg: unknown, limit = MAX_PAYLOAD_BYTES): Record<string, unknown> | null {
   if (msg === undefined || msg === null) return {}
   if (typeof msg !== 'object' || Array.isArray(msg)) return null
   try {
-    if (Buffer.byteLength(JSON.stringify(msg) ?? '') > MAX_PAYLOAD_BYTES) return null
+    if (Buffer.byteLength(JSON.stringify(msg) ?? '') > limit) return null
   } catch {
     return null
   }
@@ -122,7 +122,7 @@ function payload(msg: unknown): Record<string, unknown> | null {
 export function registerMatchHandlers(
   io: Server,
   socket: Socket,
-  deps: MatchDeps & { withinRateLimit: () => boolean; withinPaddleLimit: () => boolean },
+  deps: MatchDeps & { withinRateLimit: () => boolean; withinPaddleLimit: () => boolean; measuredRtt?: () => number | undefined },
 ): void {
   const userId = (): string => socket.data.userId as string
 
@@ -153,13 +153,16 @@ export function registerMatchHandlers(
   }
 
   // Paddle position, fire-and-forget. Checked against the in-memory match only.
+  let lastPaddleCt = -1
   socket.on('match:paddle', (msg: unknown) => {
     if (!manager || !deps.withinPaddleLimit()) return
-    const p = payload(msg)
+    const p = payload(msg, 8192)
     if (!p || typeof p.matchId !== 'string') return
+    if (p.ct !== undefined && (typeof p.ct !== 'number' || !Number.isSafeInteger(p.ct) || p.ct <= lastPaddleCt)) return
     const joined = [...socket.rooms].find((r) => r.startsWith('conn:'))
     if (!joined) return
-    manager.paddle(joined.slice('conn:'.length), userId(), p.matchId, p.x, p.y, p.released, p.touch)
+    const accepted = manager.paddle(joined.slice('conn:'.length), userId(), p.matchId, p.x, p.y, p.released, p.touch, p.ct, p.v, p.n, socket.id, p.samples, deps.measuredRtt?.())
+    if (accepted && typeof p.ct === 'number') lastPaddleCt = p.ct
   })
 
   socket.on('disconnect', () => {

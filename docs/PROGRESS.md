@@ -3031,3 +3031,46 @@ Added authenticated, live-member-only draft narration POST using the same splitt
 Removed the backend's recipient-socket requirement for match:invite. Offline recipients can receive the existing high-priority native invite push and recover/accept the pending match on reconnect. Android and web allow inviting with the sender online; outside/Escape/X dismissal preserves the incoming invite and chat banner. Explicit decline, authorization, busy checks and the 30-second TTL remain. Ping Pong stays score-based per owner instruction.
 
 Validation: backend npm test passed 126/126 and npx tsc --noEmit passed. Added real-socket offline invite/reconnect acceptance, native invite FCM shape, and per-game clock tests for increments/sync/away/draw/expiry/late moves/rematches/no-limit rules. Web npm test passed 48/48, strict lint and production build passed. The full web210 browser fixture passed at 1280px and 360px, including all five games and incoming invite dismissal while typing. No deployment or live FCM delivery performed. Browser screenshots were copied into the Android checkout's ignored app/build/reports/quality-review/web directory; tracked store/review captures were restored.
+
+
+## 2026-10-24 — Paired Android Pong contact lag compensation
+
+Started after fetching both origins and fast-forwarding backend main to bf35268.
+The Android prompt `docs/prompts/codex-pong-contact-fix.md` authorizes this backend
+change; Android implementation preceded backend work. PongSim now judges optional
+ct/v/n bat input against the ball history the player saw, using the shared
+relative sweep and impact-time rim, then catches the unchanged return curve up
+to now. History is bounded to 800 ms / 160 entries, with per-seat server-measured RTT +100 ms rewind (250–500 ms). The owner
+approved that larger cap after the 150 ms one-way profile exceeded 250 ms.
+
+A validated redundant window (≤32 prior inputs) restores lost/coalesced stroke
+and release samples. This owner-approved addition resolved measured target
+mismatch under packet loss; the entire window is validated before mutation.
+Frames include monotonic simulation t and per-seat ack. Socket ct, sequence n,
+flight identity/eligibility, membership, byte cap and rate checks remain in force.
+Token bucket: 64/s, capacity 96. Legacy untimed and x-only serving continue; full
+head/rim definition is shared. Existing geometry, flight/duration/aim/drift,
+bounce/scoring/serve formulas, dependencies, migrations and secrets are unchanged.
+Browser code remains on its legacy input path.
+
+Validation: backend `npm test` **144/144**, `npm run build` PASS. Includes real
+Socket.IO validation/authorization/ack checks, out-and-back packet recovery,
+release loss/idle, reconnect clocks, duplicate/reorder rejection, rewind bounds,
+historical ineligibility, no scored-point rollback and unchanged legacy rallies.
+Existing passing assertions changed only for full-head/impact-time contact,
+as explained in Android evidence. Matching Android assembleDebug/lintDebug/
+testDebugUnitTest PASS, **292 tests**, zero failures/errors/skips, lint no
+errors/warnings. **72 network profiles ×240 attempts = 17,280 total per revision**,
+**34,560 combined**: every candidate
+acceptance assertion passes, zero measured misses/ghosts, max correction .01920,
+profile p99 ≤.01737, target mismatch <.00000005 widths. Android executes 28 shared
+display traces and identical contact/stroke vectors. Complete per-profile
+BEFORE/AFTER table: [PONG-CONTACT-PROFILES.md](PONG-CONTACT-PROFILES.md); methodology
+and exact Xiaomi checklist are in the Android companion's
+`docs/games/PONG-CONTACT-EVIDENCE.md`.
+
+No physical-device test, merge, deployment, workflow dispatch or release performed.
+Owner deploys this backend first through the existing Railway pipeline, then the
+paired Android change. Remaining checks: Xiaomi still bat ×20, slow sweep ×20,
+fast diagonal ×20, left/right/front/back ×10 each, Wi-Fi/mobile, 60/120 Hz. On any
+miss note the time and send `adb logcat -s PongContact` output from the debug app.

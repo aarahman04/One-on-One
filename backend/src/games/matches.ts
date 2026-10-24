@@ -128,7 +128,7 @@ export class MatchManager {
 
   constructor(host: MatchHost) {
     this.host = host
-    this.now = host.now ?? Date.now
+    this.now = host.now ?? (() => Math.floor(performance.timeOrigin + performance.now()))
     this.random = host.random ?? Math.random
   }
 
@@ -238,7 +238,7 @@ export class MatchManager {
     m.drawOffer = 0
     m.rematch.clear()
     if (m.game === 'pong') {
-      m.pong = new PongSim(this.random, m.points)
+      m.pong = new PongSim(this.random, m.points, this.now())
       this.startLoop(m)
     } else {
       m.rules = createRules(m.game as TurnGameKind)
@@ -365,13 +365,32 @@ export class MatchManager {
     return ok(this.emit(next))
   }
 
-  paddle(connectionId: string, userId: string, matchId: unknown, x: unknown, y: unknown = undefined, released: unknown = false, touch: unknown = undefined): boolean {
+  paddle(connectionId: string, userId: string, matchId: unknown, x: unknown, y: unknown = undefined, released: unknown = false, touch: unknown = undefined,
+    ct: unknown = undefined, v: unknown = undefined, n: unknown = undefined, source?: string, samples: unknown = undefined, measuredRtt?: number): boolean {
     const m = this.find(connectionId, userId, matchId)
     if (!m || m.status !== 'playing' || m.away.size > 0 || !m.pong || typeof x !== 'number' || !Number.isFinite(x) || typeof released !== 'boolean') return false
     if (y !== undefined && (typeof y !== 'number' || !Number.isFinite(y))) return false
     if (touch !== undefined && (!Array.isArray(touch) || touch.length !== 2 || !touch.every(v => typeof v === 'number' && Number.isFinite(v)))) return false
-    m.pong.paddle(this.seat(m, userId) as Seat, x, y as number | undefined, released, touch as [number, number] | undefined)
-    return true
+    if ((ct !== undefined || v !== undefined || n !== undefined) &&
+        (typeof ct !== 'number' || !Number.isSafeInteger(ct) || ct < 0 || typeof v !== 'number' || !Number.isFinite(v) ||
+        typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1)) return false
+    if (samples !== undefined) {
+      if (ct === undefined || typeof y !== 'number' || !Array.isArray(samples) || samples.length > 32) return false
+      let previousN = 0, previousCt = -1, previousV = -Infinity
+      for (const row of samples) {
+        if (!Array.isArray(row) || row.length !== 8 || !row.every(a => typeof a === 'number' && Number.isFinite(a)) ||
+            !Number.isSafeInteger(row[0]) || row[0] <= previousN || row[0] >= (n as number) ||
+            !Number.isSafeInteger(row[1]) || row[1] <= previousCt || row[1] >= (ct as number) ||
+            row[2] < previousV || row[2] > (v as number) || row[7] !== 0 && row[7] !== 1) return false
+        previousN = row[0]; previousCt = row[1]; previousV = row[2]
+      }
+      return m.pong.paddleBatch(this.seat(m, userId) as Seat, [
+        ...samples.map(row => ({ n: row[0], ct: row[1], v: row[2], x: row[3], y: row[4], touch: [row[5], row[6]] as [number, number], released: row[7] === 1, source, rtt: measuredRtt })),
+        { ct: ct as number, v: v as number, n: n as number, x, y, touch: (touch as [number, number] | undefined) ?? [x, y], released, source, rtt: measuredRtt },
+      ], this.now())
+    }
+    return m.pong.paddle(this.seat(m, userId) as Seat, x, y as number | undefined, released, touch as [number, number] | undefined,
+      ct === undefined ? undefined : { ct: ct as number, v: v as number, n: n as number, source, rtt: measuredRtt }, this.now())
   }
 
   // A member's app is (re)connected: returns the current state for recovery.
@@ -472,25 +491,25 @@ export class MatchManager {
   private startLoop(m: Match): void {
     let last = this.now()
     let tick = 0
-    m.loop = setInterval(() => this.tick(m, () => {
+    m.loop = setInterval(() => {
       const now = this.now()
       const dt = Math.min(50, Math.max(0, now - last))
       last = now
-      return dt
-    }, tick++), PONG_TICK_MS)
+      this.tick(m, () => dt, tick++, now)
+    }, PONG_TICK_MS)
     m.loop.unref?.()
   }
 
   // One simulation step; exposed for tests (which drive time themselves).
-  tick(m: Match, elapsed: () => number, n: number): void {
+  tick(m: Match, elapsed: () => number, n: number, at?: number): void {
     const pong = m.pong
     if (!pong || m.status !== 'playing') return
     const dt = elapsed()
-    if (m.away.size === 0) pong.step(dt)
+    if (m.away.size === 0) pong.step(dt, at)
     if (pong.outcome) {
-      this.host.emitFrame(m.connectionId, { id: m.id, t: this.now(), ...pong.frame() })
+      this.host.emitFrame(m.connectionId, { id: m.id, ...pong.frame() })
       this.finish(m, pong.outcome)
-    } else if (n % FRAME_EVERY === 0) this.host.emitFrame(m.connectionId, { id: m.id, t: this.now(), ...pong.frame() })
+    } else if (n % FRAME_EVERY === 0) this.host.emitFrame(m.connectionId, { id: m.id, ...pong.frame() })
   }
 
   // Test hook: advance a running table tennis match by `ms` without timers.

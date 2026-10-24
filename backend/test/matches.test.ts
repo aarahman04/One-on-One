@@ -173,6 +173,40 @@ test('ping pong between two clients: one server simulation, identical frames, pa
   await waitFor(() => b.last()?.status === 'over')
 })
 
+test('timed paddle windows are validated atomically and acked on the server clock over real sockets', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A), b = await socket(B), outsider = await socket(C)
+  const id = (await a.emit('match:invite', { game: 'pong' })).match.id
+  await b.emit('match:accept', { matchId: id })
+  await waitFor(() => a.frames.length > 0)
+  const seat = a.last().players[0] === A ? 0 : 1
+  const y = seat === 0 ? 2.4 : -.6, v = a.frames.at(-1).t
+  const packet = { matchId: id, x: .4, y, ct: 1032, v, n: 3,
+    samples: [[1, 1000, v, .2, y, .2, y, 0], [2, 1016, v, .3, y, .3, y, 1]] }
+  const malformed = [
+    { ...packet, samples: Array(33).fill(packet.samples[0]) },
+    { ...packet, samples: [[...packet.samples[0]], [2, 1016, v, .3, y, .3, y, 2]] },
+    { ...packet, samples: [packet.samples[1], packet.samples[0]] },
+    { ...packet, samples: [[1, 1000, v + 1, .2, y, .2, y, 0]] },
+    { ...packet, ct: undefined },
+    { ...packet, samples: [[1, -1, v, .2, y, .2, y, 0]] },
+  ]
+  for (const bad of malformed) a.client.emit('match:paddle', bad)
+  outsider.client.emit('match:paddle', packet)
+  await delay(80)
+  assert.equal(a.frames.at(-1).ack[seat], 0, 'malformed windows and outsiders do not mutate a match')
+  a.client.emit('match:paddle', packet)
+  await waitFor(() => a.frames.at(-1).ack[seat] === 3)
+  assert.equal(a.frames.at(-1).p[seat], .4)
+  a.client.emit('match:paddle', { ...packet, x: .9, ct: 1031, n: 4, samples: [] })
+  a.client.emit('match:paddle', { ...packet, x: .9, ct: 1040, n: 2, samples: [] })
+  await delay(80)
+  assert.equal(a.frames.at(-1).ack[seat], 3)
+  assert.equal(a.frames.at(-1).p[seat], .4)
+  assert.ok(a.frames.every((f, i) => !i || f.t >= a.frames[i - 1].t))
+})
+
 test('ping pong over real sockets: two-dimensional rackets rally, missing returns loses, rematch resets', async (t) => {
   seed()
   const { socket } = await server(t)
