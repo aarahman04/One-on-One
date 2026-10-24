@@ -907,3 +907,26 @@ existing 120 ms idle rule survive packet loss. Rate limit is a 64/s token bucket
 with 96 capacity. See API-CONTRACT §12 and PONG-CONTACT-PROFILES.md. Matching
 Android carries executable simulation, Kotlin golden traces and the exact
 physical-device checklist. Backend must ship first; neither PR deploys itself.
+
+
+## Release verification of game options (2026-10-24)
+
+Production was still on PR #121 while Android used the newer clock/points and
+reaction contract. The service is configured for backend/main with automatic
+deployment, so release verification must compare its ACTIVE source to reviewed
+main. Rebuilding an old deployment is insufficient. No protocol extension is
+needed to restore the already implemented game features.
+
+```mermaid
+sequenceDiagram
+    participant A as Android options / game UI
+    participant S as Current MatchSocket / MatchManager
+    participant R as Railway release gate
+    A->>S: match:invite clock or points
+    S-->>A: snapshot clock/points, authoritative countdown/score
+    A->>S: match:react text
+    S-->>A: match:reaction to both members
+    Note over S: Real socket tests cover all turn games and Pong targets past 7
+    R->>R: Compare ACTIVE backend source with reviewed merged main
+    R->>R: Check health, then build signed Android 19 / 2.0.12
+```

@@ -3076,3 +3076,29 @@ fast diagonal ×20, left/right/front/back ×10 each, Wi-Fi/mobile, 60/120 Hz. On
 miss note the time and send `adb logcat -s PongContact` output from the debug app.
 
 Paired review: [Android #52](https://github.com/aarahman04/One-on-One-Android/pull/52) and [backend #128](https://github.com/aarahman04/One-on-One/pull/128). Both open; owner merges/deploys.
+
+
+## 2026-10-24 — Production game parity verification for Android 2.0.12
+
+Production Railway inspection found deployment c0e900a6-d6fc-4e6a-81b3-230b0c4bbf66
+ACTIVE on PR #121 / commit 3d0c148 (2026-10-21). That source predates clock/points
+and match:react. It explains absent timers/comments and the seven-point default
+with newer Android apps. Current source supports the fields; no speculative
+rules or UI changes were needed. Railway is connected to this repo, root backend,
+branch main, auto deploy enabled, one replica. The final release must verify the
+new active source, not infer deployment from merge or a generic /health result.
+
+Added real Socket.IO checks for clocks and increments/comments on Chess,
+Tic-Tac-Toe, Connect 4 and Reversi; a no-move 10-second server timeout; and Pong
+11/21/custom-13 targets, comments and rematch retention. Real Pong simulations
+continue beyond seven and end at exactly each chosen target. Backend npm test
+**148/148**, npm run build PASS; Android build/lint and **293 JVM tests** cover
+option transport/decoding/display anchoring as well as the prior game suites.
+No authenticated production game or physical-device run is claimed.
+
+The owner authorized backend-first merge of #128, Android #52, and a signed
+android-build workflow from merged Android main for **19 / 2.0.12**. Backend
+source must be confirmed ACTIVE before handing off the client release. See
+RELEASING.md and the Android RELEASE-CHECKLIST.md for deployment recovery and
+phone tests. Android's owner-approved ball remains fully white; no change to
+contact/flight/score formulas is part of that presentation follow-up.

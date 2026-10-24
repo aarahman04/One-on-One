@@ -1,5 +1,26 @@
 # Releasing One on One
 
+Native Kotlin Android 2.0.12 / code 19 (2026-10-24): this release uses
+`aarahman04/One-on-One-Android`, not this repo's older Capacitor workflow.
+Production inspection found the live Railway backend was still PR #121 /
+`3d0c148` from 2026-10-21. That revision has no game clock/target options or
+match:react, explaining the missing timers/comments and fixed seven-point games.
+The newer source and Android transport already support those features.
+
+Before releasing: merge backend #128; inspect the One-on-One service in Railway
+project One on One, production, root backend, branch main. Verify its ACTIVE
+source contains the merged backend commit and check `/health`. Auto deploy was
+enabled, but merge alone had not established a new live revision. If no new
+GitHub-triggered deployment appears, choose **Deploy Latest Commit** for this
+service through Railway's existing pipeline; **Redeploy** on the old #121 card
+only rebuilds the old source. Do not change speech, variables, database or signing.
+Then merge Android #52 and dispatch its android-build from main with
+versionCode=19 / versionName=2.0.12. Download the new android-release artifacts;
+no Play upload is part of this task. Two signed production accounts must still
+check all four turn-game timers/comments, 11/21/custom Pong targets past seven,
+rematch retention and the always-white ball.
+
+
 Games + speech round (2026-10-20, Android 2.0.8 / versionCode 15): backend #115 adds the `game_invite` native push and server-authored `game` chat rows; it needs **migration 040** (`040_message_type_game.sql`, widens `messages_type_chk`) applied in Supabase before or with the backend deploy — without it games still work but their history rows fail to save (logged). Speech now runs as the `speech` service inside the backend's Railway project (see SPEECH-SERVICE.md). The web client renders `game` rows as plain text (`content`) until it implements the card (`docs/prompts/codex-web-2.0.8.md`).
 
 Web 2.0.7 parity is a web-only deploy through Vercel after merge. The accompanying backend fix only exposes existing narration part headers through CORS; deploy it through the existing Railway pipeline before checking cross-origin natural narration. No migration, settings change, Android build/version change or Play action is needed.

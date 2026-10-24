@@ -332,3 +332,76 @@ test('in-game reactions reach both players, are bounded and throttled, and need 
   await delay(50)
   assert.equal(seen.carol.length, 0)
 })
+
+
+test('all turn games keep chosen clocks, increments and comments through real Socket.IO', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A), b = await socket(B)
+  const comments: any[] = []
+  b.client.on('match:reaction', (value: unknown) => comments.push(value))
+  for (const game of ['chess', 'tictactoe', 'connect4', 'reversi']) {
+    const invited = await a.emit('match:invite', { game, clock: { base: 60000, inc: 2000 } })
+    assert.deepEqual(invited.match.clock, { base: 60000, inc: 2000, left: [60000, 60000] }, game)
+    const id = invited.match.id
+    await waitFor(() => b.last()?.id === id)
+    assert.deepEqual(b.last().clock, invited.match.clock)
+    await b.emit('match:accept', { matchId: id })
+    await delay(150)
+    const synced = (await a.emit('match:sync')).match
+    assert.ok(synced.clock.left[0] < 60000 && synced.clock.left[0] > 57000, game)
+    assert.equal(synced.clock.left[1], 60000)
+    const mover = synced.players[0] === A ? a : b
+    const move = game === 'chess' ? { uci: 'e2e4' } : game === 'connect4' ? { col: 3 } :
+      { cell: game === 'reversi' ? synced.board.legal[0] : 4 }
+    const moved = await mover.emit('match:move', { matchId: id, seq: 0, move })
+    assert.equal(moved.ok, true, game)
+    assert.ok(moved.match.clock.left[0] > 60000, 'mover receives the 2 s increment')
+    await waitFor(() => b.last()?.seq === 1)
+    assert.equal(b.last().turn, synced.players[1])
+    await delay(710)
+    assert.equal((await a.emit('match:react', { matchId: id, text: `Checked ${game}` })).ok, true)
+    await waitFor(() => comments.some(c => c.matchId === id && c.text === `Checked ${game}`))
+    await a.emit('match:resign', { matchId: id })
+  }
+})
+
+test('a real server clock expires without either client making another move', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A), b = await socket(B)
+  const invited = await a.emit('match:invite', { game: 'tictactoe', clock: { base: 10000, inc: 0 } })
+  const id = invited.match.id
+  await b.emit('match:accept', { matchId: id })
+  await waitFor(() => a.last()?.status === 'over' && b.last()?.status === 'over', 13000)
+  assert.deepEqual(a.last().outcome, { winner: invited.match.players[1], reason: 'timeout' })
+  assert.equal(a.last().clock.left[0], 0)
+  assert.deepEqual(a.last(), b.last())
+})
+
+test('Pong 11, 21 and custom targets survive the real socket contract and allow comments', async (t) => {
+  seed()
+  const { socket } = await server(t)
+  const a = await socket(A), b = await socket(B)
+  const comments: any[] = []
+  b.client.on('match:reaction', (value: unknown) => comments.push(value))
+  for (const points of [11, 21, 13]) {
+    const invited = await a.emit('match:invite', { game: 'pong', points })
+    assert.equal(invited.match.points, points)
+    const id = invited.match.id
+    const accepted = await b.emit('match:accept', { matchId: id })
+    assert.equal(accepted.match.points, points)
+    assert.equal(accepted.match.board.target, points)
+    assert.equal(accepted.match.clock, null, 'Pong is score-based')
+    assert.equal((await a.emit('match:sync')).match.points, points)
+    await delay(710)
+    assert.equal((await a.emit('match:react', { matchId: id, text: `First to ${points}` })).ok, true)
+    await waitFor(() => comments.some(c => c.matchId === id && c.text === `First to ${points}`))
+    await a.emit('match:resign', { matchId: id })
+    await a.emit('match:rematch', { matchId: id })
+    const rematch = await b.emit('match:rematch', { matchId: id })
+    assert.equal(rematch.match.points, points)
+    assert.equal(rematch.match.board.target, points)
+    await a.emit('match:resign', { matchId: rematch.match.id })
+  }
+})
