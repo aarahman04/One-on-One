@@ -25,12 +25,12 @@ const reachable = (bx: number, by: number, r: number, budget: number) => {
   return false
 }
 
-export function shot(sx: number, sy: number, hx: number, hy: number, steer: number, steerAfterBounce: boolean) {
+export function shot(sx: number, sy: number, hx: number, hy: number, steer: number, steerAfterBounce: boolean, hz = .1) {
   const window = new StrokeWindow()
   window.sample(1000, 0, 0, 1); const stroke = window.sample(1050, sx * .05, sy * .05, 1)
   const p = new PongSim(() => .75)
   const s = p as unknown as Sim
-  s.countdownMs = 0; s.x = hx; s.y = hy; s.z = .1
+  s.countdownMs = 0; s.x = hx; s.y = hy; s.z = hz
   s.paddles[0] = 100 // receiver never contacts; reachability is measured analytically
   s.contactStrokes[1] = { ...stroke }; s.strike(2)
   let t = 0, bounceAt = -1, vIn = 0, maxPre = 0, maxHalf = 0, maxPost = 0, window_ = 0, firstReach = -1, landX = 0, landY = 0
@@ -52,7 +52,7 @@ export function shot(sx: number, sy: number, hx: number, hy: number, steer: numb
   }
   return { landed: bounceAt >= 0, bounceAt, vIn, maxPre, maxHalf, maxPost, window: window_, firstReach, landX, landY, stroke }
 }
-const emptyLike = (): Stroke => ({ side: 0, forward: 0, direction: 0, power: 0 })
+const emptyLike = (): Stroke => ({ side: 0, forward: 0, direction: 0, power: 0, vx: 0, vy: 0 })
 
 export function sweep() {
   const results = []
@@ -101,4 +101,37 @@ test('ping pong fairness: bat movement after contact never steers the ball', () 
   const still = rally(false)
   assert.ok(still.some(f => f[6] !== 0), 'the contact stroke carries its own curve')
   assert.deepEqual(rally(true), still)
+})
+
+// Realistic swipes: total finger speed 2..14 widths/s at angle theta from straight forward, both sides,
+// three contact x positions and three contact heights.
+export function landingTable() {
+  const rows: { theta: number; speed: number; sideways: number; landed: boolean; offset: number }[] = []
+  for (let theta = 0; theta <= 90; theta += 5) for (let speed = 2; speed <= 14; speed++)
+    for (const sign of [-1, 1]) for (const hx of [.1, .5, .9]) for (const hz of [.05, .2, .35]) {
+      const rad = theta * Math.PI / 180, sx = sign * speed * Math.sin(rad), sy = speed * Math.cos(rad)
+      const r = shot(sx, sy, hx, .24, 0, false, hz)
+      rows.push({ theta, speed, sideways: Math.abs(sx), landed: r.landed, offset: r.landed ? Math.abs(r.landX - .5) : NaN })
+    }
+  return rows
+}
+
+test('ping pong fairness: hard swipes land on their side; only near-sideways overhits go off', () => {
+  const rows = landingTable()
+  const bucket = (t: number) => t <= 30 ? '0-30' : t <= 60 ? '31-60' : t <= 75 ? '61-75' : '76-90'
+  const speed = (v: number) => v <= 6 ? '<=6' : v <= 9 ? '6-9' : '>9'
+  const table: Record<string, string> = {}
+  for (const b of ['0-30', '31-60', '61-75', '76-90']) for (const v of ['<=6', '6-9', '>9']) {
+    const group = rows.filter(r => bucket(r.theta) === b && speed(r.sideways) === v)
+    if (group.length) table[`${b} sideways ${v}`] = `${group.filter(r => r.landed).length}/${group.length} land`
+  }
+  console.log(JSON.stringify(table))
+  for (const r of rows) {
+    const name = JSON.stringify(r)
+    if (r.theta <= 60) assert.ok(r.landed && r.offset <= .46, `lands inside the table: ${name}`)
+    else if (r.sideways <= 8) assert.ok(r.landed && r.offset <= .47, `fast but not overhit: ${name}`)
+    if (r.theta >= 78 && r.sideways >= 9.5) assert.ok(!r.landed, `near-sideways overhit goes off: ${name}`)
+  }
+  const visible = rows.filter(r => r.theta === 45 && r.speed === 14)
+  assert.ok(visible.every(r => r.landed && r.offset > .3), 'a hard diagonal still goes well toward its side')
 })

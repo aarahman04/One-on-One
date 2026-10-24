@@ -59,7 +59,7 @@ test('Kotlin and TypeScript share identical contact, stroke and launch golden ve
     const stroke = window.stroke
     ;[stroke.side, stroke.forward, stroke.direction, stroke.power].forEach((x, i) => near(x, c.expected[i]))
     const a = launch(.5, 1.6, .033, stroke)
-    a.slice(9, 12).forEach((x, i) => near(x, c.target[i])); near(a[13], c.duration)
+    a.slice(9, 12).forEach((x, i) => near(x, c.target[i])); near(a[13], c.duration); near(a[14], c.drift)
   }
 })
 

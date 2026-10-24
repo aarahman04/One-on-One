@@ -117,36 +117,36 @@ test('ping pong: swipe strength spans 1 to 1.35 seconds without per-hit accelera
   near(neutral.frame().a![13], 1.35)
 })
 
-test('ping pong: stroke direction aims to either side, including the native unclamped soft remap', () => {
+test('ping pong: stroke direction aims to either side symmetrically (landing rates: pongFairness)', () => {
   const right = stroke(.3, .03), left = stroke(-.3, .03)
   assert.ok(right.frame().a![9] > .9 && left.frame().a![9] < .1)
   near(right.frame().a![9] + left.frame().a![9], 1, .0001)
-  const soft = stroke(.3, -.3)
-  assert.ok(soft.frame().a![9] > .7 && soft.frame().a![9] < .8)
+  near(right.frame().drift + left.frame().drift, 0, .0001)
 })
 
 test('ping pong: the contact stroke fixes a constant curve; release and later movement cannot steer it', () => {
   const p = stroke(.3, .03)
-  near(p.frame().spin, 1)
-  const start = p.frame().a![9]
+  const { spin, drift } = p.frame(), start = p.frame().a![9]
+  assert.ok(drift > 0); near(spin, drift / SPIN_DRIFT, .0002)
   p.step(64)
-  near(p.frame().a![9] - start, SPIN_DRIFT * .064, .0002)
+  near(p.frame().a![9] - start, drift * .064, .0002)
   p.paddle(2, .5, .24, true); p.step(64)
-  near(p.frame().spin, 1); near(p.frame().drift, SPIN_DRIFT, .0001)
-  near(p.frame().a![9] - start, SPIN_DRIFT * .128, .0004)
+  near(p.frame().spin, spin); near(p.frame().drift, drift)
+  near(p.frame().a![9] - start, drift * .128, .0004)
   p.paddle(2, .3, .24); p.step(16); p.paddle(2, .1, .24); p.step(16)
-  near(p.frame().spin, 1)
-  near(p.frame().a![9] - start, SPIN_DRIFT * .16, .0004)
+  near(p.frame().spin, spin)
+  near(p.frame().a![9] - start, drift * .16, .0004)
 })
 
 test('ping pong: a stationary held touch and lost-input timeout clear the live stroke, not the contact curve', () => {
   const live = (p: PongSim) => (p as unknown as { strokes: { side: number }[] }).strokes[1].side
   const stationary = stroke(.3, .03)
   stationary.paddle(2, .5, .24)
-  near(live(stationary), 0); near(stationary.frame().spin, 1)
+  const spin = stroke(.3, .03).frame().spin
+  near(live(stationary), 0); near(stationary.frame().spin, spin)
   const lost = stroke(.3, .03)
   lost.step(121)
-  near(live(lost), 0); near(lost.frame().spin, 1)
+  near(live(lost), 0); near(lost.frame().spin, spin)
   assert.ok(lost.frame().a!.every(Number.isFinite))
 })
 
@@ -155,12 +155,13 @@ test('ping pong: raw touch controls the stroke while the racket eases toward it'
   p.paddle(2, .2, .21, false, [.2, .21]); p.step(16)
   p.paddle(2, .35, .225, false, [.5, .24]); p.step(8)
   assert.equal(p.hits, 1)
-  near(p.frame().spin, 1)
+  const spin = p.frame().spin
+  assert.ok(spin > 0)
   const duration = p.frame().a![13]
   // Same held finger, racket still catching up: the finger's stroke has stopped; the shot keeps its contact curve.
   p.paddle(2, .425, .2325, false, [.5, .24])
   near((p as unknown as { strokes: { side: number }[] }).strokes[1].side, 0)
-  near(p.frame().spin, 1)
+  near(p.frame().spin, spin)
   near(duration, 1.287, .0001)
 })
 
@@ -174,7 +175,7 @@ test('ping pong: 30 and 60 Hz input preserve equal swipe strength', () => {
     return p.frame()
   }
   const thirty = at(1000 / 30), sixty = at(1000 / 60)
-  near(thirty.spin, sixty.spin); near(thirty.drift, sixty.drift)
+  // Drift also corrects for the (different) contact x so both land at the same lateral point.
   near(thirty.a![9], sixty.a![9]); near(thirty.a![10], sixty.a![10]); near(thirty.a![13], sixty.a![13])
 })
 
@@ -253,7 +254,7 @@ test('ping pong: backend fixture stays aligned with the Android demo and rendere
   p.step(64)
   const f = p.frame()
   // The same input/clock sequence is asserted by DemoPongTest.
-  assert.deepEqual(f.b.slice(0, 2), [.5256, .3019])
+  assert.deepEqual(f.b.slice(0, 2), [.5208, .3019])
   near(f.z[0], .2265)
-  near(f.drift, SPIN_DRIFT, .0001)
+  near(f.drift, .8627, .0001)
 })

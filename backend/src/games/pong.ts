@@ -1,5 +1,5 @@
 import type { Outcome, Seat } from './rules.js'
-import { sweepContact, rimPosition, contactRadius, emptyStroke, StrokeWindow, flightDuration, bounce, type Stroke } from './pongPhysics.js'
+import { sweepContact, rimPosition, contactRadius, emptyStroke, StrokeWindow, launch, bounce, type Stroke } from './pongPhysics.js'
 export { contactRadius } from './pongPhysics.js'
 
 // Ping Pong: server-owned strokes and cubic flights over an open table.
@@ -16,7 +16,6 @@ export const ARC_H = 6 / 12.16
 export const FLOOR_H = -ARC_H
 // Reference: endpoint moves .3 world units per 20 ms tick; expressed in table widths/second.
 export const SPIN_DRIFT = 0.3 / 12.16 / 0.02
-export const AIM_GAIN = 8 / 12.16
 // Convert network velocity into the reference's per-frame world delta at 60 Hz.
 export const MAX_COMP_MS = 500 // Hard limit; each seat gets clamp(server-measured RTT + 100, 250, 500).
 const HISTORY_MS = 800
@@ -85,7 +84,7 @@ export class PongSim {
   private contactStrokes: [Stroke | null, Stroke | null] = [null, null]
   private flight: Flight | null = null
   private lastHit: Seat | null = null
-  private shotSide = 0
+  private shotDrift = 0
   private landed = false
   private server: Seat
   private previous: [BatSample | null, BatSample | null] = [null, null]
@@ -111,7 +110,7 @@ export class PongSim {
   }
 
   // Curve is fixed by the stroke captured at contact and ends at the landing; later bat movement never steers.
-  private get spin(): number { return this.lastHit && !this.landed ? this.shotSide : 0 }
+  private get drift(): number { return this.lastHit && !this.landed ? this.shotDrift : 0 }
 
   paddle(seat: Seat, x: number, y?: number, released = false, touch?: [number, number], timing?: PaddleTiming, now = this.clock): boolean {
     if (this.outcome || !Number.isFinite(x) || y !== undefined && !Number.isFinite(y)) return false
@@ -313,10 +312,9 @@ export class PongSim {
   private strike(seat: Seat): void {
     const stroke = this.contactStrokes[seat - 1] ?? this.strokes[seat - 1]
     this.contactStrokes[seat - 1] = null
-    const target: Point = [0.5 + stroke.direction * AIM_GAIN * (0.7 + 0.3 * stroke.forward),
-      COURT_H / 2 + forward(seat) * (5 + 7 * stroke.forward) / 12.16, FLOOR_H]
-    this.curve(target, flightDuration(stroke.power))
-    this.shotSide = stroke.side
+    const a = launch(this.x, this.y, this.z, stroke, forward(seat))
+    this.flight = { points: [0, 3, 6, 9].map(i => a.slice(i, i + 3)) as Flight['points'], elapsed: 0, duration: a[13] }
+    this.shotDrift = a[14]
     this.lastHit = seat
     this.landed = false
     this.hits++; this.flightId++
@@ -326,7 +324,7 @@ export class PongSim {
     const flight = this.flight!
     const [oldX, oldY, oldZ] = [this.x, this.y, this.z]
     const wasLanded = this.landed
-    flight.points[3][0] += this.spin * SPIN_DRIFT * dt
+    flight.points[3][0] += this.drift * dt
     flight.elapsed += dt
     const position = flightPosition(flight.points, flight.elapsed / flight.duration)
     this.x = position[0]; this.y = position[1]; this.z = position[2]
@@ -394,8 +392,8 @@ export class PongSim {
       c: Math.ceil(this.countdownMs), h: this.hits, w: 0,
       z: [r4(this.z), r4(this.vz)], r: this.paddleY.map(r4) as [number, number],
       a: this.flight ? [...this.flight.points.flat(), this.flight.elapsed, this.flight.duration].map(r4) : null,
-      spin: r4(this.spin),
-      drift: r4(this.spin * SPIN_DRIFT),
+      spin: r4(this.drift / SPIN_DRIFT),
+      drift: r4(this.drift),
       serve: this.flight || this.outcome ? 0 : this.server, j: this.bounces, l: this.landed,
     }
   }
