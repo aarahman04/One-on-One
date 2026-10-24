@@ -31,10 +31,18 @@ export class StrokeWindow {
   }
 }
 
+// Owner fairness tuning: a full-power stroke crosses in ~1 s instead of .7 s; neutral/soft in 1.35 s.
+export const flightDuration = (power: number) => 1.35 - .35 * power
+// Peak of the eased cubic's normalized ground speed (t = .276). Timing the bounce by its distance
+// (PEAK_SPEED * reach / speed) keeps it at or below the incoming ground speed; the 2 s cap (client
+// validation) shortens the reach instead of speeding up a slow drop shot.
+export const PEAK_SPEED = 1.7063
+export const bounceScale = (speed: number) => Math.min(30 / 12.16 / Math.max(speed, 1e-6), 2 / PEAK_SPEED)
+
 export function launch(x: number, y: number, z: number, stroke: Stroke, forward = -1): number[] {
   const tx = .5 + stroke.direction * (8 / 12.16) * (.7 + .3 * stroke.forward)
   const ty = .9 + forward * (5 + 7 * stroke.forward) / 12.16, h = 6 / 12.16
-  return [x, y, z, x + (tx - x) * .2, y + (ty - y) * .2, h, tx, ty, h, tx, ty, -h, 0, 1.15 - .45 * stroke.power]
+  return [x, y, z, x + (tx - x) * .2, y + (ty - y) * .2, h, tx, ty, h, tx, ty, -h, 0, flightDuration(stroke.power)]
 }
 export const rimPosition = (contact: Contact, bat: Vec2, radius: number): [number, number] =>
   [bat[0] + contact.nx * radius, bat[1] + contact.ny * radius]

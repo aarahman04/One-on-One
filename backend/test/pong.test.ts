@@ -105,16 +105,16 @@ test('ping pong: a table landing separates racket returns; neutral baselines can
   assert.deepEqual(p.score, [0, 0])
 })
 
-test('ping pong: swipe strength spans .7 to 1.15 seconds without per-hit acceleration', () => {
+test('ping pong: swipe strength spans 1 to 1.35 seconds without per-hit acceleration', () => {
   const hard = stroke(0, .3).frame().a!
-  near(hard[13], .7, .0001)
+  near(hard[13], 1, .0001)
   near(hard[10], 1.8868, .0001)
   const soft = stroke(0, -.3).frame().a!
-  near(soft[13], 1.15)
+  near(soft[13], 1.35)
   near(soft[10], 1.0234, .0001)
   const neutral = new PongSim(() => .5)
   neutral.step(FIRST_SERVE_MS)
-  near(neutral.frame().a![13], 1.15)
+  near(neutral.frame().a![13], 1.35)
 })
 
 test('ping pong: stroke direction aims to either side, including the native unclamped soft remap', () => {
@@ -159,7 +159,7 @@ test('ping pong: raw touch controls the stroke while the racket eases toward it'
   // Same held finger, racket still catching up: the finger's stroke has stopped.
   p.paddle(2, .425, .2325, false, [.5, .24])
   near(p.frame().spin, 0)
-  near(duration, 1.069, .0001)
+  near(duration, 1.287, .0001)
 })
 
 test('ping pong: 30 and 60 Hz input preserve equal swipe strength', () => {
@@ -251,7 +251,7 @@ test('ping pong: backend fixture stays aligned with the Android demo and rendere
   p.step(64)
   const f = p.frame()
   // The same input/clock sequence is asserted by DemoPongTest.
-  assert.deepEqual(f.b.slice(0, 2), [.5318, .3168])
-  near(f.z[0], .2378)
+  assert.deepEqual(f.b.slice(0, 2), [.5256, .3019])
+  near(f.z[0], .2265)
   near(f.drift, SPIN_DRIFT, .0001)
 })

@@ -16,7 +16,7 @@ test('fast diagonal swipes follow through and launch from the impact-time rim', 
     p.step(8)
     assert.equal(p.hits, 1)
     assert.deepEqual([p.x, p.y, p.z], start)
-    assert.equal(p.frame().a![13], 1.1414)
+    assert.equal(p.frame().a![13], 1.3434)
   }
 })
 
