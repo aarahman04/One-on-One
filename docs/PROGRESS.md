@@ -3063,7 +3063,7 @@ testDebugUnitTest PASS, **292 tests**, zero failures/errors/skips, lint no
 errors/warnings. **72 network profiles ×240 attempts = 17,280 total per revision**,
 **34,560 combined**: every candidate
 acceptance assertion passes, zero measured misses/ghosts, max correction .01920,
-profile p99 ≤.01737, target mismatch <.00000005 widths. Android executes 28 shared
+profile p99 ≤.01737, target mismatch <.0000003 widths. Android executes 28 shared
 display traces and identical contact/stroke vectors. Complete per-profile
 BEFORE/AFTER table: [PONG-CONTACT-PROFILES.md](PONG-CONTACT-PROFILES.md); methodology
 and exact Xiaomi checklist are in the Android companion's
@@ -3074,3 +3074,5 @@ Owner deploys this backend first through the existing Railway pipeline, then the
 paired Android change. Remaining checks: Xiaomi still bat ×20, slow sweep ×20,
 fast diagonal ×20, left/right/front/back ×10 each, Wi-Fi/mobile, 60/120 Hz. On any
 miss note the time and send `adb logcat -s PongContact` output from the debug app.
+
+Paired review: [Android #52](https://github.com/aarahman04/One-on-One-Android/pull/52) and [backend #128](https://github.com/aarahman04/One-on-One/pull/128). Both open; owner merges/deploys.
