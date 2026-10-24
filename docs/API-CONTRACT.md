@@ -522,6 +522,13 @@ and the Android companion's `docs/games/PONG-CONTACT-EVIDENCE.md` for methodolog
 commands and Xiaomi checklist. Deploy backend first, then Android; existing web
 continues on the untimed path. No browser UI change or migration is needed.
 
+Web 2.0.12 (2026-10-24) now consumes the timed contact path above, including
+optional ack/drift, displayed-time prediction, bounded sample recovery and
+16/33 ms adaptive input. Final releases use reliable Socket.IO emission after
+the held flush; ordinary motion remains volatile. No wire/server rule changed.
+The main ball stays white and fully opaque. Web measurements and compatibility
+checks: [WEB-ANDROID-PARITY-2.0.12.md](WEB-ANDROID-PARITY-2.0.12.md).
+
 ### Lifecycle
 
 - Invites expire after 30 s (`expired`). A finished match stays 120 s for a rematch, then is dropped.

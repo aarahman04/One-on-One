@@ -28,3 +28,8 @@ No authenticated deployed account pair, physical device, real speech synthesis
 quality, real call connectivity or 30-second production socket-loss grace was tested.
 Browser audio/media permissions and timing vary. See the parity document's manual
 two-browser checklist before treating these fixture checks as production evidence.
+
+The same browser entry point now includes the Web 2.0.12 contact/game regression
+checks in `test/web212.browser.mjs` and writes new captures to ignored
+`client/build/web212/`. The files here retain their historical 2.0.10 provenance.
+See `../WEB-ANDROID-PARITY-2.0.12.md` for current results and remaining checks.

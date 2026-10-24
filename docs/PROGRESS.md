@@ -3102,3 +3102,28 @@ source must be confirmed ACTIVE before handing off the client release. See
 RELEASING.md and the Android RELEASE-CHECKLIST.md for deployment recovery and
 phone tests. Android's owner-approved ball remains fully white; no change to
 contact/flight/score formulas is part of that presentation follow-up.
+
+## 2026-10-24 — Web 2.0.12 contact and game parity
+
+Ported the verified Android #52 displayed-time Pong path on top of backend #128:
+shared full-head relative sweep/stroke/launch vectors, 50 ms interpolation,
+bounded smoothed offset, immediate predicted flight and 60 ms confirmation or
+rejection blending, including lost pre-bounce frames and retry after rejection.
+Transport carries optional touch/ct/v/n and bounded recent tuples, seeds n from
+ack, adapts 16/33 ms input and flushes release reliably. Pointer history/capture,
+blur/background/reset and accessible range controls are retained. Canvas geometry
+matches the server and the main ball stays fully white/opaque. No tuning change.
+
+Audited existing clocks/comments/targets. Fixed the Pong result's hardcoded seven
+and paused-clock rendering. Native sentence capitalization is a textarea attribute
+only. No backend, Android, dependency, lockfile or infrastructure change.
+
+Verification: client 59/59 tests, lint/typecheck/build; unchanged backend 148/148
+and build. Actual web PongClient against PongSim: 72 profiles / 17,280 attempts,
+zero misses/ghosts, worst correction p99 .017361 / max .019191 widths; 28 shared
+Kotlin traces run in both seats. Two Chromium identities at 1280/360 px cover
+presets/custom increments, no-move timeout, both-way comments across five games,
+11/21/13 past seven, reconnect/background and rematch. Separate real-canvas probe
+covers coalesced history, lost capture/blur and authoritative-only hit feedback.
+Physical keyboard/device latency and authenticated production play remain manual.
+Full bounds, reproduction and checklist: WEB-ANDROID-PARITY-2.0.12.md.

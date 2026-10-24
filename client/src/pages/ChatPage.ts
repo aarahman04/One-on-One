@@ -2544,7 +2544,7 @@ export const ChatPage: Page = (root, go) => {
     const games = mountGames(chatEl, otherName, myUserId, (event, packet) => {
       if (!transport) return Promise.reject(new Error('not connected'))
       return transport.sendMatch(event, packet)
-    }, (id, x, y, released) => transport?.sendPaddle(id, x, y, released), showNotice)
+    }, (...input) => transport?.sendPaddle(...input), showNotice)
     games.setPhoto(peerPhoto)
     setGamePhoto = games.setPhoto
     overlays.add(games.dispose)
@@ -3687,7 +3687,7 @@ function renderChat(root: HTMLElement, displayName: string): void {
       <form class="chat__input-bar" id="composer">
         <div class="chat__input-pill">
         <button type="button" class="chat__icon-btn" id="sticker-btn" title="Stickers and GIFs" aria-label="Stickers and GIFs">${STICKER_ICON}</button>
-        <textarea id="message-input" aria-label="Message" placeholder="Message" maxlength="4000" autocomplete="off" enterkeyhint="send" rows="1"></textarea>
+        <textarea id="message-input" aria-label="Message" placeholder="Message" maxlength="4000" autocomplete="off" autocapitalize="sentences" enterkeyhint="send" rows="1"></textarea>
         <div class="chat__recording-bar" id="recording-bar" aria-hidden="true" inert>
           <span class="chat__recording-dot"></span>
           <span class="chat__recording-time" id="recording-time">0:00</span>

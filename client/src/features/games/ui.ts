@@ -11,6 +11,7 @@ import {
   type PongFrame,
   type ReversiBoard,
   type MatchReaction,
+  type MatchTransport,
 } from '../../services/transport/MatchTransport'
 import { mountChess, playerBar } from './chess'
 import { mountPongCanvas } from './pongCanvas'
@@ -71,7 +72,7 @@ export function mountGames(
   nickname: string,
   me: string,
   call: (event: MatchAction, payload?: Record<string, unknown>) => Promise<MatchAck>,
-  paddle: (id: string, x: number, y?: number, released?: boolean) => void,
+  paddle: MatchTransport['sendPaddle'],
   notice: (text: string) => void,
 ) {
   const banner = document.createElement('div'),
@@ -113,7 +114,7 @@ export function mountGames(
     const m = session.match
     if (!m?.clock) return
     clocks.forEach(({ node, seat }) => {
-      const running = m.status === 'playing' && m.turn === m.players[seat]
+      const running = m.status === 'playing' && !m.paused && m.turn === m.players[seat]
       const ms = Math.max(0, m.clock!.left[seat] - (running ? performance.now() - session.receivedAt : 0))
       node.textContent = clockFace(ms); node.classList.toggle('running', running); node.classList.toggle('low', running && ms < 10_000)
       node.setAttribute('aria-label', `${m.players[seat] === me ? 'Your' : nickname + "’s"} clock ${clockFace(ms)}`)
@@ -454,7 +455,7 @@ export function mountGames(
           session.pong,
           nickname,
           () => !session.connected || !!session.match?.paused || document.hidden || session.stage !== 'playing',
-          (x, y, released) => session.paddle(x, y, released),
+          (x, y, released, now, touch) => session.paddle(x, y, released, now, touch),
         )
       } else stopBoard = () => {}
       if (opening) header.querySelector('button')?.focus()
@@ -528,7 +529,7 @@ export function mountGames(
         const score = (m.board as { score: number[] }).score,
           scoreboard = above.querySelector('.pong-score')
         if (scoreboard)
-          scoreboard.textContent = `You ${score[session.player - 1]} · ${nickname} ${score[2 - session.player]} · First to 7`
+          scoreboard.textContent = `You ${score[session.player - 1]} · ${nickname} ${score[2 - session.player]} · First to ${m.points || 7}`
         stopBoard()
         stopBoard = () => {}
         grid.querySelector('.pong-countdown')?.remove()

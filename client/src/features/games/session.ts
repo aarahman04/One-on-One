@@ -7,6 +7,9 @@ import {
   type MatchAction,
   type MatchSnapshot,
   type GridBoard,
+  type MatchTransport,
+  type PaddleTiming,
+  type PaddleSample,
 } from '../../services/transport/MatchTransport'
 import { PongClient } from './pong'
 
@@ -24,17 +27,20 @@ export class GameSession {
   private disposed = false
   private revision = 0
   private retired = new Set<string>()
-  private pendingPaddle: [number, number, boolean] | null = null
+  private pendingPaddle: { x: number; y: number; released: boolean; touch?: [number, number]; timing?: PaddleTiming } | null = null
+  private recentPaddles: PaddleSample[] = []
+  private paddleInterval = 33
+  private lastPaddleCt = 0
   private paddleTimer: ReturnType<typeof setTimeout> | undefined
   readonly me: string
   private call: (event: MatchAction, payload?: Record<string, unknown>) => Promise<MatchAck>
-  private sendPaddle: (id: string, x: number, y?: number, released?: boolean) => void
+  private sendPaddle: MatchTransport['sendPaddle']
   private changed: () => void
   private notice: (text: string) => void
   constructor(
     me: string,
     call: (event: MatchAction, payload?: Record<string, unknown>) => Promise<MatchAck>,
-    sendPaddle: (id: string, x: number, y?: number, released?: boolean) => void,
+    sendPaddle: MatchTransport['sendPaddle'],
     changed: () => void,
     notice: (text: string) => void,
   ) {
@@ -70,6 +76,7 @@ export class GameSession {
       this.clearPaddle()
     }
     this.match = next
+    if (next.status !== 'playing' || next.paused) this.clearPaddle()
     this.receivedAt = performance.now()
     this.revision++
     if (current?.id !== next.id || next.seq !== current.seq || next.status !== 'playing') { this.predicted = null; this.predictedGrid = null }
@@ -181,12 +188,32 @@ export class GameSession {
       }
     }
   }
-  paddle(x: number, y = this.pong?.myY ?? 1.88, released = false) {
+  paddle(x: number, y = this.pong?.myY ?? 1.88, released = false, now = performance.now(), touch?: [number, number]) {
     const m = this.match
     if (!this.connected || this.disposed || m?.status !== 'playing' || m.paused || !this.pong) return
-    const position = this.pong.paddle(x, y, released)
-    this.pendingPaddle = [...position, released]
-    if (this.paddleTimer) return
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(now) || touch?.some((n) => !Number.isFinite(n))) return
+    const [sx, sy] = this.pong.paddle(x, y, released, now, touch, this.lastPaddleCt)
+    this.lastPaddleCt = this.pong.sampleCt
+    const timing = this.pong.displayTimeMs > 0 ? { ct: this.pong.sampleCt, v: this.pong.displayTimeMs, n: this.pong.sampleN } : undefined
+    const serverTouch: [number, number] | undefined = touch && (this.player === 1 ? touch : [1 - touch[0], 1.8 - touch[1]])
+    const current: NonNullable<GameSession['pendingPaddle']> = { x: sx, y: sy, released, touch: serverTouch, timing }
+    if (timing) {
+      this.recentPaddles.push([timing.n, timing.ct, timing.v, sx, sy, serverTouch?.[0] ?? sx, serverTouch?.[1] ?? sy, released ? 1 : 0])
+      if (this.recentPaddles.length > 32) this.recentPaddles.shift()
+    }
+    const emit = (input: typeof current) => this.sendPaddle(m.id, input.x, input.y, input.released, input.touch, input.timing,
+      input.timing ? this.recentPaddles.filter((s) => s[0] < input.timing!.n) : undefined)
+    if (released) {
+      if (this.pendingPaddle) emit(this.pendingPaddle)
+      this.pendingPaddle = null
+      emit(current)
+      return
+    }
+    this.pendingPaddle = current
+    if (this.paddleTimer) {
+      if (!this.pong.contactPossible || this.paddleInterval === 16) return
+      clearTimeout(this.paddleTimer)
+    }
     const flush = () => {
       this.paddleTimer = undefined
       if (
@@ -199,9 +226,10 @@ export class GameSession {
         this.clearPaddle()
         return
       }
-      this.sendPaddle(m.id, ...this.pendingPaddle)
+      emit(this.pendingPaddle)
       this.pendingPaddle = null
-      this.paddleTimer = setTimeout(flush, 34)
+      this.paddleInterval = this.pong?.contactPossible ? 16 : 33
+      this.paddleTimer = setTimeout(flush, this.paddleInterval)
     }
     flush()
   }
@@ -209,6 +237,7 @@ export class GameSession {
     clearTimeout(this.paddleTimer)
     this.paddleTimer = undefined
     this.pendingPaddle = null
+    this.recentPaddles = []
   }
   private async request(event: MatchAction, payload: Record<string, unknown>, report = true): Promise<MatchAck | null> {
     if (this.disposed) return null
