@@ -105,13 +105,14 @@ test('ping pong: a table landing separates racket returns; neutral baselines can
   assert.deepEqual(p.score, [0, 0])
 })
 
-test('ping pong: swipe strength spans 1 to 1.35 seconds without per-hit acceleration', () => {
+test('ping pong: swipe strength spans 1 to 1.35 seconds (backspin floats to 1.55) without per-hit acceleration', () => {
   const hard = stroke(0, .3).frame().a!
   near(hard[13], 1, .0001)
   near(hard[10], 1.8868, .0001)
+  // A hard pull-back is full backspin (x1.15 duration) and its depth floor is -.45 (2026-10-25 spin round).
   const soft = stroke(0, -.3).frame().a!
-  near(soft[13], 1.35)
-  near(soft[10], 1.0234, .0001)
+  near(soft[13], 1.35 * 1.15)
+  near(soft[10], 1.0521, .0001)
   const neutral = new PongSim(() => .5)
   neutral.step(FIRST_SERVE_MS)
   near(neutral.frame().a![13], 1.35)
@@ -119,7 +120,7 @@ test('ping pong: swipe strength spans 1 to 1.35 seconds without per-hit accelera
 
 test('ping pong: stroke direction aims to either side symmetrically (landing rates: pongFairness)', () => {
   const right = stroke(.3, .03), left = stroke(-.3, .03)
-  assert.ok(right.frame().a![9] > .9 && left.frame().a![9] < .1)
+  assert.ok(right.frame().a![9] > .65 && left.frame().a![9] < .35)
   near(right.frame().a![9] + left.frame().a![9], 1, .0001)
   near(right.frame().drift + left.frame().drift, 0, .0001)
 })
@@ -189,16 +190,16 @@ test('ping pong: a table bounce follows incoming 3D direction without a random h
   near(curve[11], BALL_R - 6 / 12.16, .0001)
 })
 
-test('ping pong: side misses continue off the open table and score', () => {
-  const p = stroke(.3, .03)
-  p.paddle(1, RACKET_MIN, 2.5, true)
-  run(p, () => p.x > 1.02)
-  const outside = p.x
-  assert.ok(p.vx > 0)
-  p.step(16)
-  assert.ok(p.x > outside && p.vx > 0)
-  run(p, () => p.score[0] + p.score[1] === 1)
-  assert.deepEqual(p.score, [1, 0], 'missing the table loses the point')
+test('ping pong: a hard sideways swipe lands in the table; only the receiver missing loses the point', () => {
+  for (const dx of [.3, -.3]) {
+    const p = stroke(dx, .03)
+    p.paddle(1, dx > 0 ? RACKET_MIN : RACKET_MAX, 2.5, true)
+    run(p, () => p.bounces === 1 || p.score[0] + p.score[1] === 1)
+    assert.equal(p.bounces, 1)
+    assert.ok(dx > 0 ? p.x > .85 && p.x <= .92 : p.x < .15 && p.x >= .08, `lands near its side line: ${p.x}`)
+    run(p, () => p.score[0] + p.score[1] === 1)
+    assert.deepEqual(p.score, [0, 1], 'the receiver who misses loses the point')
+  }
 })
 
 test('ping pong: a landed ball escaping past the opponent wins for the last hitter', () => {
@@ -254,7 +255,8 @@ test('ping pong: backend fixture stays aligned with the Android demo and rendere
   p.step(64)
   const f = p.frame()
   // The same input/clock sequence is asserted by DemoPongTest.
-  assert.deepEqual(f.b.slice(0, 2), [.5208, .3019])
+  assert.deepEqual(f.b.slice(0, 2), [.51, .3019])
   near(f.z[0], .2265)
-  near(f.drift, .8627, .0001)
+  near(f.drift, .5971, .0001)
+  assert.deepEqual(f.sp, [1, 0])
 })

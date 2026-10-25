@@ -1,29 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { BALL_R, COURT_H, PongSim, RACKET_FAR, RACKET_MAX, RACKET_MIN, RACKET_NEAR, contactRadius } from '../src/games/pong.js'
+import { BALL_R, COURT_H, PongSim, contactRadius } from '../src/games/pong.js'
 import { StrokeWindow, type Stroke } from '../src/games/pongPhysics.js'
+import { BAT_SPEED, DT, REACTION_S, reachable } from './pongReach.js'
 
-// Deterministic sweep: seat 2 hits toward seat 1, who starts at the neutral baseline (.5, COURT_H + .08).
-// The receiver's bat may move at BAT_SPEED (a fast finger through racketFollow) after REACTION_S.
+// Deterministic sweep: seat 2 hits toward seat 1 (receiver model: pongReach.ts).
 // Before the 2026-10-24 tuning (2430 shots, 1950 on table): hit-to-bounce 456..744 ms, receiver-half
 // speed 5.33 w/s, post-bounce 5.29 w/s (5.28x incoming), 158 landings under 250 ms reachable, 14 never.
-const BAT_SPEED = 6, REACTION_S = .2, DT = 8
 type Sim = { x: number; y: number; z: number; clock: number; countdownMs: number; landed: boolean; hits: number
   score: [number, number]; paddles: [number, number]; strokes: [Stroke, Stroke]; contactStrokes: [Stroke | null, Stroke | null]
   moved: [number, number]; flight: unknown; strike(seat: 1 | 2): void }
-
-const start: [number, number] = [.5, COURT_H + .08]
-const reachable = (bx: number, by: number, r: number, budget: number) => {
-  if (budget < 0) return false
-  // Candidate bat centres inside the legal region and within the contact radius of the ball.
-  for (let k = 0; k <= 48; k++) {
-    const angle = k * Math.PI / 8, d = k === 0 ? 0 : r * (1 + ((k - 1) >> 4)) / 3
-    const qx = bx + Math.cos(angle) * d, qy = by + Math.sin(angle) * d
-    if (qx < RACKET_MIN || qx > RACKET_MAX || qy < RACKET_NEAR || qy > RACKET_FAR) continue
-    if (Math.hypot(qx - start[0], qy - start[1]) <= budget) return true
-  }
-  return false
-}
 
 export function shot(sx: number, sy: number, hx: number, hy: number, steer: number, steerAfterBounce: boolean, hz = .1) {
   const window = new StrokeWindow()
@@ -80,8 +66,9 @@ test('ping pong fairness: every on-table shot is slower and leaves a reachable r
   const { summary } = sweep()
   console.log(JSON.stringify(summary))
   assert.ok(summary.onTable > 500)
-  assert.ok(summary.fastestBounceMs >= 600, 'hard hits reach the table noticeably later than the old .46 s')
-  assert.ok(summary.maxPostOverShotPeak <= 1.02, 'the bounce never outruns the shot peak pace')
+  // Topspin's lower arc (2026-10-25) lands the hardest drive at ~.59 s, still well after the old .46 s.
+  assert.ok(summary.fastestBounceMs >= 580, 'hard hits reach the table noticeably later than the old .46 s')
+  assert.ok(summary.maxPostOverShotPeak <= 1.02, 'the bounce never outruns the shot peak pace (topspin q=1.1 included)')
   assert.ok(summary.minWindowMs >= 250, 'every legal landing leaves at least 250 ms of reachable contact')
 })
 
@@ -92,7 +79,8 @@ test('ping pong fairness: bat movement after contact never steers the ball', () 
     p.paddle(2, .4, -.2); p.step(16); p.paddle(2, .5, .24); p.step(8)
     assert.equal(p.hits, 1)
     const path: number[][] = []
-    for (let i = 0, x = .5; i < 200 && p.score[0] + p.score[1] === 0; i++) {
+    // Stop at the receiver's return: the hitter's later bat may legitimately play that next ball.
+    for (let i = 0, x = .5; i < 200 && p.score[0] + p.score[1] === 0 && p.hits === 1; i++) {
       if (move) { x += i % 60 < 30 ? .03 : -.03; p.paddle(2, x, .24) }
       p.step(16); path.push([...p.frame().b, ...p.frame().z, p.frame().spin, p.frame().drift])
     }
@@ -116,7 +104,7 @@ export function landingTable() {
   return rows
 }
 
-test('ping pong fairness: hard swipes land on their side; only near-sideways overhits go off', () => {
+test('ping pong fairness: every swipe lands in the table and hard swipes still go toward their side', () => {
   const rows = landingTable()
   const bucket = (t: number) => t <= 30 ? '0-30' : t <= 60 ? '31-60' : t <= 75 ? '61-75' : '76-90'
   const speed = (v: number) => v <= 6 ? '<=6' : v <= 9 ? '6-9' : '>9'
@@ -128,9 +116,8 @@ test('ping pong fairness: hard swipes land on their side; only near-sideways ove
   console.log(JSON.stringify(table))
   for (const r of rows) {
     const name = JSON.stringify(r)
-    if (r.theta <= 60) assert.ok(r.landed && r.offset <= .46, `lands inside the table: ${name}`)
-    else if (r.sideways <= 8) assert.ok(r.landed && r.offset <= .47, `fast but not overhit: ${name}`)
-    if (r.theta >= 78 && r.sideways >= 9.5) assert.ok(!r.landed, `near-sideways overhit goes off: ${name}`)
+    // OVERHIT was removed on 2026-10-25: the landing is always within LATERAL_MAX (.42) of the centre line.
+    assert.ok(r.landed && r.offset <= .421, `lands inside the table: ${name}`)
   }
   const visible = rows.filter(r => r.theta === 45 && r.speed === 14)
   assert.ok(visible.every(r => r.landed && r.offset > .3), 'a hard diagonal still goes well toward its side')
