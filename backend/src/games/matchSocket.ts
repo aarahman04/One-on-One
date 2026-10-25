@@ -161,7 +161,7 @@ export function registerMatchHandlers(
     if (p.ct !== undefined && (typeof p.ct !== 'number' || !Number.isSafeInteger(p.ct) || p.ct <= lastPaddleCt)) return
     const joined = [...socket.rooms].find((r) => r.startsWith('conn:'))
     if (!joined) return
-    const accepted = manager.paddle(joined.slice('conn:'.length), userId(), p.matchId, p.x, p.y, p.released, p.touch, p.ct, p.v, p.n, socket.id, p.samples, deps.measuredRtt?.())
+    const accepted = manager.paddle(joined.slice('conn:'.length), userId(), p.matchId, p.x, p.y, p.released, p.touch, p.ct, p.v, p.n, socket.id, p.samples, deps.measuredRtt?.(), p.w)
     if (accepted && typeof p.ct === 'number') lastPaddleCt = p.ct
   })
 

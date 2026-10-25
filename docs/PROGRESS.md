@@ -3127,3 +3127,19 @@ presets/custom increments, no-move timeout, both-way comments across five games,
 covers coalesced history, lost capture/blur and authoritative-only hit feedback.
 Physical keyboard/device latency and authenticated production play remain manual.
 Full bounds, reproduction and checklist: WEB-ANDROID-PARITY-2.0.12.md.
+
+## 2026-10-25 — Ping Pong coherent display timeline (backend part)
+
+Owner report: the ball changed direction while the opponent's racket was elsewhere, snapped, and the opponent
+could not be seen hitting it. Root cause (traced end to end with the Android client): frames stamped the
+opponent racket at server arrival while the server lag-compensates their hit to the ball time they saw, and
+the post-hit frame reached viewers after their 50 ms buffer had drawn the old flight past the impact.
+
+Backend change is additive: frame `pv` (when each reported racket was sent, on its sender's display axis) and
+optional paddle `w` (that display axis; cosmetic, never judged). Physics, judging, compensation caps and all
+existing fields are unchanged. The Android branch `claude/ecstatic-pascal-txv258` draws ball and racket
+on one timeline with them. Contract: API-CONTRACT.md "Ping Pong coherent display timeline".
+
+Verification: backend 159/159 tests and `tsc --noEmit`; new unit checks for `pv`, `w` validation and that `w`
+never changes the judged time. Two-player replay against the real PongSim at 50/100/200/300 ms RTT is in the
+Android repo (`scripts/pong-sync-trace.ts`, `PongSyncReplayTest`).

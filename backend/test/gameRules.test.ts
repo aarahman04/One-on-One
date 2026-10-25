@@ -298,6 +298,10 @@ test('matches: pong runs only on the server, pauses for an absent player and end
   assert.equal(m.paddle(C, A, id, 0.3, Number.POSITIVE_INFINITY), false)
   assert.equal(m.paddle(C, A, id, 0.3, '1.8'), false)
   assert.equal(m.paddle(C, A, 'other', 0.3), false)
+  // Optional display time w needs timed input and a finite number.
+  assert.equal(m.paddle(C, A, id, 0.3, 1.8, false, undefined, undefined, undefined, undefined, 's', undefined, undefined, 5), false)
+  for (const w of ['5', Number.NaN, null]) assert.equal(m.paddle(C, A, id, 0.3, 1.8, false, undefined, 1, 0, 1, 's', undefined, undefined, w), false)
+  assert.equal(m.paddle(C, A, id, 0.3, 1.8, false, undefined, 1, 0, 1, 's', undefined, undefined, 0), true)
   m.advancePong(C, 3500)
   assert.ok(frames.length > 100)
   const before = frames.length
