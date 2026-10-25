@@ -366,7 +366,8 @@ export class MatchManager {
   }
 
   paddle(connectionId: string, userId: string, matchId: unknown, x: unknown, y: unknown = undefined, released: unknown = false, touch: unknown = undefined,
-    ct: unknown = undefined, v: unknown = undefined, n: unknown = undefined, source?: string, samples: unknown = undefined, measuredRtt?: number): boolean {
+    ct: unknown = undefined, v: unknown = undefined, n: unknown = undefined, source?: string, samples: unknown = undefined, measuredRtt?: number,
+    w: unknown = undefined): boolean {
     const m = this.find(connectionId, userId, matchId)
     if (!m || m.status !== 'playing' || m.away.size > 0 || !m.pong || typeof x !== 'number' || !Number.isFinite(x) || typeof released !== 'boolean') return false
     if (y !== undefined && (typeof y !== 'number' || !Number.isFinite(y))) return false
@@ -374,6 +375,7 @@ export class MatchManager {
     if ((ct !== undefined || v !== undefined || n !== undefined) &&
         (typeof ct !== 'number' || !Number.isSafeInteger(ct) || ct < 0 || typeof v !== 'number' || !Number.isFinite(v) ||
         typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1)) return false
+    if (w !== undefined && (ct === undefined || typeof w !== 'number' || !Number.isFinite(w))) return false
     if (samples !== undefined) {
       if (ct === undefined || typeof y !== 'number' || !Array.isArray(samples) || samples.length > 32) return false
       let previousN = 0, previousCt = -1, previousV = -Infinity
@@ -386,11 +388,11 @@ export class MatchManager {
       }
       return m.pong.paddleBatch(this.seat(m, userId) as Seat, [
         ...samples.map(row => ({ n: row[0], ct: row[1], v: row[2], x: row[3], y: row[4], touch: [row[5], row[6]] as [number, number], released: row[7] === 1, source, rtt: measuredRtt })),
-        { ct: ct as number, v: v as number, n: n as number, x, y, touch: (touch as [number, number] | undefined) ?? [x, y], released, source, rtt: measuredRtt },
+        { ct: ct as number, v: v as number, n: n as number, x, y, touch: (touch as [number, number] | undefined) ?? [x, y], released, source, rtt: measuredRtt, w: w as number | undefined },
       ], this.now())
     }
     return m.pong.paddle(this.seat(m, userId) as Seat, x, y as number | undefined, released, touch as [number, number] | undefined,
-      ct === undefined ? undefined : { ct: ct as number, v: v as number, n: n as number, source, rtt: measuredRtt }, this.now())
+      ct === undefined ? undefined : { ct: ct as number, v: v as number, n: n as number, source, rtt: measuredRtt, w: w as number | undefined }, this.now())
   }
 
   // A member's app is (re)connected: returns the current state for recovery.

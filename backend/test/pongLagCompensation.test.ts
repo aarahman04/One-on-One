@@ -42,6 +42,21 @@ test('a delayed bat segment is judged against the displayed ball, then fast-forw
   assert.equal(p.frame().ack[0], 3, 'a missing sequence does not discard the covering segment')
 })
 
+test('frame pv stamps each racket with the drawn-ball time it was sent at', () => {
+  const p = new PongSim(() => .75, 7, 5000)
+  assert.deepEqual(p.frame().pv, [5000, 5000], 'untimed rackets are current')
+  p.paddle(1, .4, 2.2, false, undefined, { ct: 10, v: 4900.04, n: 1 }, 5000)
+  p.step(16, 5016)
+  const f = p.frame()
+  assert.deepEqual(f.pv, [4900, 5016], 'timed seat keeps its sample time; untimed seat follows the clock')
+  assert.deepEqual([f.p[0], f.r[0]], [.4, 2.2], 'pv describes the reported racket')
+  p.paddle(1, .5, 2.2, false, undefined, { ct: 11, v: 4000, n: 2 }, 5020)
+  assert.equal(p.frame().pv[0], 4900, 'never earlier than the previous sample, like contact judging')
+  p.paddle(1, .5, 2.2, false, undefined, { ct: 12, v: 4950, n: 3, w: 4990 }, 5030)
+  assert.equal(p.frame().pv[0], 4990, 'a steady display time w is preferred for drawing')
+  assert.equal((p as unknown as { previous: { v: number }[] }).previous[0].v, 4950, 'w never changes the judged time')
+})
+
 test('Kotlin and TypeScript share identical contact, stroke and launch golden vectors', () => {
   const golden = JSON.parse(readFileSync(new URL('./fixtures/pong-contact-golden.json', import.meta.url), 'utf8'))
   const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-8, `${a} != ${b}`)

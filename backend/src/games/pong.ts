@@ -30,7 +30,8 @@ const r4 = (v: number) => Math.round(v * 10_000) / 10_000
 const other = (seat: Seat): Seat => seat === 1 ? 2 : 1
 const forward = (seat: Seat) => seat === 1 ? -1 : 1
 const serveY = (seat: Seat) => seat === 1 ? COURT_H - 0.24 : 0.24
-export type PaddleTiming = { ct: number; v: number; n: number; source?: string; rtt?: number }
+// w: optional steady display time of the sender (cosmetic: frame `pv` only, never judged).
+export type PaddleTiming = { ct: number; v: number; n: number; source?: string; rtt?: number; w?: number }
 export type PaddleSample = PaddleTiming & { x: number; y: number; released: boolean; touch: [number, number] }
 type BatSample = PaddleTiming & { x: number; y: number; released: boolean }
 type BallSample = { t: number; x: number; y: number; z: number; landed: boolean; lastHit: Seat | null;
@@ -58,6 +59,7 @@ export interface PongFrame {
   spin: number
   drift: number
   sp: [number, number]
+  pv: [number, number]
   serve: number
   j: number
   l: boolean
@@ -156,6 +158,7 @@ export class PongSim {
     this.moved[i] = released ? -1 : arrival
     if (timing) {
       const packet: BatSample = { ...timing, v: Math.max(previous?.v ?? -Infinity, clamp(timing.v, arrival - this.compensation[i], arrival)),
+        w: timing.w === undefined ? undefined : Math.max(previous?.w ?? -Infinity, clamp(timing.w, arrival - this.compensation[i], arrival)),
         x: nextX, y: nextY, released }
       this.previous[i] = packet; this.ack[i] = timing.n
       this.viewLag[i] = arrival - packet.v; this.autoV[i] = packet.v
@@ -399,6 +402,9 @@ export class PongSim {
       a: this.flight ? [...this.flight.points.flat(), this.flight.elapsed, this.flight.duration].map(r4) : null,
       spin: r4(this.drift / SPIN_DRIFT),
       drift: r4(this.drift), sp: this.ballSpin.map(r4) as [number, number],
+      // Server time each seat's current racket (p/r) was sent at, on the sender's steady display axis, so viewers
+      // can draw it on the same timeline as the ball it hits.
+      pv: this.previous.map(packet => Math.round((packet?.w ?? packet?.v ?? this.clock) * 10) / 10) as [number, number],
       serve: this.flight || this.outcome ? 0 : this.server, j: this.bounces, l: this.landed,
     }
   }

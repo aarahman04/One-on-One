@@ -481,6 +481,27 @@ Supersedes the 2026-10-24 sideways overhit and the fixed .4 bend share above; ev
 - **Frame:** additive `sp:[S,T]` (4 dp) is the ball's current spin; `spin`/`drift` keep their meaning. Clients treat `sp` as optional (size 2, finite, clamp to [-1,1]). The web client is unchanged and ignores it; Android mirrors this math exactly (1e-9 against the golden fixture).
 - **Proven by the fuzz** (swipe angle 0..345 step 15, speed {0,.5,2,4,6,8,10,14,20} widths/s, contact x {-.2,.1,.5,.9,1.2}, contact depth over the hitter's whole legal region: {.7,.5,.3,.05} behind the end line and {.2,.5} in front of it, z {-.03,.05,.2,.45}, `inS,inT` in {-1,0,1}; the full 233,280-shot grid passed; CI runs 96,960 = full grid at .3/.05 behind plus a corner subsample at the other depths): all values finite, durations in [.1,2], first crossing inside the table on the receiver's half, and at least 250 ms of reachable return window for the existing receiver model (.2 s reaction, 6 widths/s bat, legal racket region). Points are lost only by missing the ball.
 
+### Ping Pong coherent display timeline (2026-10-25, additive `pv` and paddle `w`)
+
+Viewers previously drew the opponent's racket stamped by its **server arrival** time, while that opponent's
+lag-compensated hit is placed at the **ball time they saw** (`v`), up to their RTT + ~80 ms earlier. On the other
+phone the ball therefore turned before the racket arrived, and the post-hit frame arrived after the old flight had
+already been drawn past the impact (a visible snap). Two optional fields let clients draw both on one timeline:
+
+- **Paddle:** optional `w` (finite number, requires `ct`/`v`/`n`) is the sender's steady display time: the server
+  time of its 50 ms interpolation axis, while `v` remains the time of the ball it actually drew. `w` is clamped like
+  `v` (`[now-cap, now]`, never decreasing per seat) and is **never** used for judging. Invalid `w` rejects the packet
+  like other invalid timing. Rows inside `samples` are unchanged (8 numbers).
+- **Frame:** additive `pv:[seat1,seat2]` (0.1 ms) is the time the reported racket (`p`/`r`) was sent at: that
+  seat's latest accepted `w`, else its `v`, else the server clock for untimed input.
+- Clients that understand `pv` draw the opponent racket by interpolating `pv`-stamped samples at
+  `newest - F`, where `F = clamp(max recent (t - pv) + 48, 50, 500)` ms, extrapolating at most 50 ms /
+  .08 widths past the newest sample. The ball is drawn `D` behind the newest frame time: 50 ms while it comes to
+  this player and `F` while it goes to the opponent, changing at most 75% faster / 50% slower than real time and
+  finishing by the table landing where possible. Score, serve, countdown, bounce and impact events follow the
+  drawn frame instead of packet arrival. Such clients send `v` = their drawn-ball time and `w` = their display time.
+- Old clients ignore `pv` and keep the prior display; old servers ignore `w`. The web client is unchanged.
+
 `touch` and `drift` are additive (2026-10-22); older field types and x-only automatic serving remain. Matching Android and backend changes are needed for faithful touch/flight behavior. No web-client code is changed in this round.
 
 ### Timed Pong contact (2026-10-24, additive)
