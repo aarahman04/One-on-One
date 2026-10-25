@@ -38,11 +38,12 @@ export const flightDuration = (power: number) => 1.35 - .35 * power
 /** Bounce reach multiplier and duration: the bounce keeps BOUNCE_PACE of the shot's average ground pace
  *  (distance / duration); the 2 s cap (client validation) shortens the reach instead. The table takes a
  *  little pace off so a hard deep corner ball still leaves a 250 ms+ return window. Spin scales the reach
- *  by m and the pace by q (topspin skids long and quick, backspin checks up short and slow). */
-export const BOUNCE_PACE = .9
+ *  by m and the pace by q (topspin skids long and quick, backspin checks up short and slow). The shot pace
+ *  counts at most BOUNCE_PACE_MAX, reached only from contacts deeper than ~.3 behind the end line. */
+export const BOUNCE_PACE = .9, BOUNCE_PACE_MAX = 2.2
 export function bounce(vx: number, vy: number, vz: number, pace: number, m = 1, q = 1): [number, number] {
   const ground = Math.hypot(vx, vy), scale = m * 30 / 12.16 / (Math.hypot(ground, vz) || 1)
-  const duration = ground * scale / Math.max(pace * BOUNCE_PACE * q, 1e-6)
+  const duration = ground * scale / Math.max(Math.min(pace, BOUNCE_PACE_MAX) * BOUNCE_PACE * q, 1e-6)
   return duration > 2 ? [scale * 2 / duration, 2] : [scale, Math.max(.1, duration)]
 }
 
@@ -79,9 +80,9 @@ export function launch(x: number, y: number, z: number, stroke: Stroke, forward 
   const side = lateral(stroke, inS), tx = .5 + (.85 - .35 * Math.abs(S)) * side
   // Backspin floats longer; topspin's speed-up comes from its lower arc only (spec -.1*T+ tuned to 0 by the fuzz).
   const duration = flightDuration(stroke.power) * (1 + .15 * back)
-  // Passive blocks: incoming topspin runs long, incoming backspin drops short. Floor -.45 (spec -.5, tuned
-  // by the spin fuzz) so a full pull-back from .3 behind the end line still lands past the net.
-  const f = clamp(stroke.forward + passive(stroke) * (.2 * Math.max(inT, 0) - .35 * Math.max(-inT, 0)), -.45, 1)
+  // Passive blocks: incoming topspin runs long, incoming backspin drops short. Floor -.35 (spec -.5, tuned
+  // by the spin fuzz) so a full pull-back from the deepest legal contact (.7 behind) still lands past the net.
+  const f = clamp(stroke.forward + passive(stroke) * (.2 * Math.max(inT, 0) - .35 * Math.max(-inT, 0)), -.35, 1)
   const ty = .9 + forward * (5 + 7 * f) / 12.16, h = 6 / 12.16, k = 1 - .3 * top + .1 * back
   const [c0, c1, c2, c3, t] = landingWeights(z, k), x1 = x + (tx - x) * .2
   const drift = (.5 + side - (c0 * x + c1 * x1 + (c2 + c3) * tx)) / (c3 * t * duration)

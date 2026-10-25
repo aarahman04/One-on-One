@@ -11,11 +11,12 @@ export function strokeAt(angle: number, speed: number): Stroke {
     power: clamp(vy / 10, 0, 1), vx, vy }
 }
 
-/** Shared Kotlin/TypeScript vectors: 60 launches and 24 bounces from a fixed deterministic grid. */
+/** Shared Kotlin/TypeScript vectors: 60 launches (deep, standard and front contacts) and 24 bounces
+ *  (paces above BOUNCE_PACE_MAX included) from a fixed deterministic grid. */
 export function spinGolden() {
   const speeds = [0, .5, 2, 4, 6, 8, 10, 14, 20], xs = [-.2, .1, .5, .9, 1.2], zs = [-.03, .05, .2, .45], spins = [-1, 0, 1]
   const launches = Array.from({ length: 60 }, (_, i) => {
-    const forwardSign = i % 2 ? -1 : 1, depth = i % 4 < 2 ? .05 : .3
+    const forwardSign = i % 2 ? -1 : 1, depth = [.05, .7, .3, -.5, .5, -.2][(i >> 1) % 6] // + behind the end, - in front
     const x = xs[i % 5], y = forwardSign > 0 ? -depth : 1.8 + depth, z = zs[(i >> 1) % 4]
     const stroke = strokeAt((i * 7 % 24) * 15, speeds[i % 9]), inS = spins[i % 3], inT = spins[Math.floor(i / 3) % 3]
     const expected = launch(x, y, z, stroke, forwardSign, inS, inT)

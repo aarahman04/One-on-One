@@ -109,10 +109,10 @@ test('ping pong: swipe strength spans 1 to 1.35 seconds (backspin floats to 1.55
   const hard = stroke(0, .3).frame().a!
   near(hard[13], 1, .0001)
   near(hard[10], 1.8868, .0001)
-  // A hard pull-back is full backspin (x1.15 duration) and its depth floor is -.45 (2026-10-25 spin round).
+  // A hard pull-back is full backspin (x1.15 duration) and its depth floor is -.35 (2026-10-25 spin round).
   const soft = stroke(0, -.3).frame().a!
   near(soft[13], 1.35 * 1.15)
-  near(soft[10], 1.0521, .0001)
+  near(soft[10], 1.1097, .0001)
   const neutral = new PongSim(() => .5)
   neutral.step(FIRST_SERVE_MS)
   near(neutral.frame().a![13], 1.35)

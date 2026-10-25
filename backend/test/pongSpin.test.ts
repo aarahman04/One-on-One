@@ -34,13 +34,19 @@ function spinShot(stroke: Stroke, hx: number, hy: number, hz: number, inS = 0, i
   return { p, shotFlight, bounceFlight, finite, landX, landY, window, spinAfter }
 }
 
-export function spinFuzz() {
+// Contact y covers the hitter's whole legal depth (-.7 deepest .. .5 frontmost reachable). The plan's two depths
+// run the full grid; the others a corner subsample for runtime. spinFuzz(true) (full grid everywhere, 233,280
+// shots, ~80 s) also passed on 2026-10-25.
+const FULL_DEPTHS = [-.3, -.05]
+export function spinFuzz(all = false) {
   const failures: string[] = []
   let shots = 0, minWindow = Infinity, worst = '' // windows stop counting at 256 ms
   for (let angle = 0; angle < 360; angle += 15) for (const speed of [0, .5, 2, 4, 6, 8, 10, 14, 20]) {
     const stroke = strokeAt(angle, speed)
-    for (const hx of [-.2, .1, .5, .9, 1.2]) for (const hy of [-.05, -.3]) for (const hz of [-.03, .05, .2, .45])
+    for (const hx of [-.2, .1, .5, .9, 1.2]) for (const hy of [-.7, -.5, -.3, -.05, .2, .5]) for (const hz of [-.03, .05, .2, .45])
       for (const inS of [-1, 0, 1]) for (const inT of [-1, 0, 1]) {
+        if (!all && !FULL_DEPTHS.includes(hy) && !([0, 4, 10, 20].includes(speed) && (hz === -.03 || hz === .45) &&
+          (inS === 0) === (inT === 0))) continue
         const r = spinShot(stroke, hx, hy, hz, inS, inT), name = JSON.stringify({ angle, speed, hx, hy, hz, inS, inT })
         shots++
         if (!r.finite) failures.push(`finite: ${name}`)
@@ -58,7 +64,7 @@ export function spinFuzz() {
 test('ping pong spin fuzz: every stroke, contact and incoming spin lands on the far half and stays returnable', () => {
   const { failures, ...summary } = spinFuzz()
   console.log(JSON.stringify({ ...summary, failures: failures.length }))
-  assert.equal(summary.shots, 24 * 9 * 5 * 2 * 4 * 9)
+  assert.equal(summary.shots, 24 * 9 * 5 * 2 * 4 * 9 + 24 * 4 * 5 * 4 * 2 * 5)
   assert.deepEqual(failures.slice(0, 20), [])
 })
 
