@@ -4,7 +4,7 @@ import type { IncomingMessage, LinkPreview, MessageType, PinState, PresenceUpdat
 import { authedFetch } from '../apiClient'
 import type { CallTransport } from './CallTransport'
 import { InternetCallTransport } from './InternetCallTransport'
-import { decodeMatch, type MatchAck, type MatchAction, type MatchSnapshot, type PongFrame, type MatchReaction } from './MatchTransport'
+import { decodeMatch, type MatchAck, type MatchAction, type MatchSnapshot, type PongFrame, type MatchReaction, type PaddleTiming, type PaddleSample } from './MatchTransport'
 
 const API_URL = import.meta.env.VITE_API_URL
 const CONNECT_TIMEOUT_MS = 15000
@@ -247,9 +247,11 @@ export class InternetTransport implements Transport {
     })
   }
 
-  sendPaddle(matchId: string, x: number, y?: number, released?: boolean): void {
+  sendPaddle(matchId: string, x: number, y?: number, released?: boolean, touch?: [number, number], timing?: PaddleTiming, samples?: PaddleSample[]): void {
+    // A release immediately follows the held flush; volatile would drop it while that write is in flight.
     if (this.socket?.connected && Number.isFinite(x) && (y === undefined || Number.isFinite(y)))
-      this.socket.volatile.emit('match:paddle', { matchId, x, ...(y === undefined ? {} : { y }), ...(released ? { released: true } : {}) })
+      (released ? this.socket : this.socket.volatile).emit('match:paddle', { matchId, x, ...(y === undefined ? {} : { y }), ...(released ? { released: true } : {}),
+        ...(touch ? { touch } : {}), ...timing, ...(samples ? { samples } : {}) })
   }
 
   onMatchReaction(callback: (reaction: MatchReaction) => void): () => void {

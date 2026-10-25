@@ -75,7 +75,11 @@ export interface PongFrame {
   serve?: number
   j?: number
   l?: boolean
+  drift?: number
+  ack?: [number, number]
 }
+export interface PaddleTiming { ct: number; v: number; n: number }
+export type PaddleSample = [n: number, ct: number, v: number, x: number, y: number, touchX: number, touchY: number, released: 0 | 1]
 export interface MatchAck {
   ok: boolean
   error?: string
@@ -83,7 +87,7 @@ export interface MatchAck {
 }
 export interface MatchTransport {
   sendMatch(event: MatchAction, payload?: Record<string, unknown>): Promise<MatchAck>
-  sendPaddle(matchId: string, x: number, y?: number, released?: boolean): void
+  sendPaddle(matchId: string, x: number, y?: number, released?: boolean, touch?: [number, number], timing?: PaddleTiming, samples?: PaddleSample[]): void
   onMatch(callback: (match: MatchSnapshot) => void): () => void
   onPong(callback: (frame: PongFrame) => void): () => void
   onMatchReaction(callback: (reaction: MatchReaction) => void): () => void
