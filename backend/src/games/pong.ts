@@ -1,5 +1,5 @@
 import type { Outcome, Seat } from './rules.js'
-import { sweepContact, rimPosition, contactRadius, emptyStroke, StrokeWindow, type Stroke } from './pongPhysics.js'
+import { sweepContact, rimPosition, contactRadius, emptyStroke, StrokeWindow, launch, bounce, type Stroke } from './pongPhysics.js'
 export { contactRadius } from './pongPhysics.js'
 
 // Ping Pong: server-owned strokes and cubic flights over an open table.
@@ -16,7 +16,6 @@ export const ARC_H = 6 / 12.16
 export const FLOOR_H = -ARC_H
 // Reference: endpoint moves .3 world units per 20 ms tick; expressed in table widths/second.
 export const SPIN_DRIFT = 0.3 / 12.16 / 0.02
-export const AIM_GAIN = 8 / 12.16
 // Convert network velocity into the reference's per-frame world delta at 60 Hz.
 export const MAX_COMP_MS = 500 // Hard limit; each seat gets clamp(server-measured RTT + 100, 250, 500).
 const HISTORY_MS = 800
@@ -58,6 +57,7 @@ export interface PongFrame {
   a: number[] | null
   spin: number
   drift: number
+  sp: [number, number]
   serve: number
   j: number
   l: boolean
@@ -85,6 +85,8 @@ export class PongSim {
   private contactStrokes: [Stroke | null, Stroke | null] = [null, null]
   private flight: Flight | null = null
   private lastHit: Seat | null = null
+  private shotDrift = 0
+  private ballSpin: [number, number] = [0, 0] // [sidespin, top(+)/back(-)spin] the ball carries now
   private landed = false
   private server: Seat
   private previous: [BatSample | null, BatSample | null] = [null, null]
@@ -109,7 +111,8 @@ export class PongSim {
     this.remember()
   }
 
-  private get spin(): number { return this.lastHit ? this.strokes[this.lastHit - 1].side : 0 }
+  // Curve is fixed by the stroke captured at contact and ends at the landing; later bat movement never steers.
+  private get drift(): number { return this.lastHit && !this.landed ? this.shotDrift : 0 }
 
   paddle(seat: Seat, x: number, y?: number, released = false, touch?: [number, number], timing?: PaddleTiming, now = this.clock): boolean {
     if (this.outcome || !Number.isFinite(x) || y !== undefined && !Number.isFinite(y)) return false
@@ -300,10 +303,10 @@ export class PongSim {
     this.clock = now; this.remember()
   }
 
-  private curve(target: Point, duration: number): void {
-    const start: Point = [this.x, this.y, this.z]
+  private curve(target: Point, duration: number, k = 1): void {
+    const start: Point = [this.x, this.y, this.z], h = ARC_H * k
     this.flight = {
-      points: [start, [start[0] + (target[0] - start[0]) * 0.2, start[1] + (target[1] - start[1]) * 0.2, ARC_H], [target[0], target[1], ARC_H], target],
+      points: [start, [start[0] + (target[0] - start[0]) * 0.2, start[1] + (target[1] - start[1]) * 0.2, h], [target[0], target[1], h], target],
       elapsed: 0, duration,
     }
   }
@@ -311,9 +314,9 @@ export class PongSim {
   private strike(seat: Seat): void {
     const stroke = this.contactStrokes[seat - 1] ?? this.strokes[seat - 1]
     this.contactStrokes[seat - 1] = null
-    const target: Point = [0.5 + stroke.direction * AIM_GAIN * (0.7 + 0.3 * stroke.forward),
-      COURT_H / 2 + forward(seat) * (5 + 7 * stroke.forward) / 12.16, FLOOR_H]
-    this.curve(target, 1.15 - 0.45 * stroke.power)
+    const a = launch(this.x, this.y, this.z, stroke, forward(seat), ...this.ballSpin)
+    this.flight = { points: [0, 3, 6, 9].map(i => a.slice(i, i + 3)) as Flight['points'], elapsed: 0, duration: a[13] }
+    this.shotDrift = a[14]; this.ballSpin = [a[15], a[16]]
     this.lastHit = seat
     this.landed = false
     this.hits++; this.flightId++
@@ -323,7 +326,7 @@ export class PongSim {
     const flight = this.flight!
     const [oldX, oldY, oldZ] = [this.x, this.y, this.z]
     const wasLanded = this.landed
-    flight.points[3][0] += this.spin * SPIN_DRIFT * dt
+    flight.points[3][0] += this.drift * dt
     flight.elapsed += dt
     const position = flightPosition(flight.points, flight.elapsed / flight.duration)
     this.x = position[0]; this.y = position[1]; this.z = position[2]
@@ -338,9 +341,14 @@ export class PongSim {
         this.x = x; this.y = y; this.z = BALL_R
         this.landed = true
         this.bounces++
-        const length = Math.hypot(this.vx, this.vy, this.vz) || 1
-        const reach = 30 / 12.16
-        this.curve([x + this.vx / length * reach, y + this.vy / length * reach, BALL_R + FLOOR_H], flight.duration)
+        // Sidespin kicks sideways; the bounce is still never more sideways than toward the receiver (45 degrees).
+        const [S, T] = this.ballSpin, top = Math.max(T, 0), back = Math.max(-T, 0)
+        const vx = clamp(this.vx + .25 * S * Math.abs(this.vy), -Math.abs(this.vy), Math.abs(this.vy))
+        const [p0, , p2] = flight.points // p2 is the undrifted aim: the shot's own pace
+        const [scale, duration] = bounce(vx, this.vy, this.vz, Math.hypot(p2[0] - p0[0], p2[1] - p0[1]) / flight.duration,
+          1 + .35 * top - .45 * back, 1 + .1 * top - .35 * back) // topspin pace .1 (spec .25) keeps a 250 ms return window
+        this.curve([x + vx * scale, y + this.vy * scale, BALL_R + FLOOR_H], duration, 1 - .35 * top)
+        this.ballSpin = [S * .6, T * .5]
       }
     }
     const seat = this.lastHit ? other(this.lastHit) : null
@@ -364,7 +372,7 @@ export class PongSim {
   private resetBall(): void {
     this.flight = null; this.lastHit = null; this.landed = false
     this.x = 0.5; this.y = serveY(this.server); this.z = 2 / 12.16
-    this.vx = 0; this.vy = 0; this.vz = 0
+    this.vx = 0; this.vy = 0; this.vz = 0; this.ballSpin = [0, 0]
     this.strokes = [emptyStroke(), emptyStroke()]
     this.contactStrokes = [null, null]
     this.moved = [-1, -1]
@@ -389,8 +397,8 @@ export class PongSim {
       c: Math.ceil(this.countdownMs), h: this.hits, w: 0,
       z: [r4(this.z), r4(this.vz)], r: this.paddleY.map(r4) as [number, number],
       a: this.flight ? [...this.flight.points.flat(), this.flight.elapsed, this.flight.duration].map(r4) : null,
-      spin: r4(this.spin),
-      drift: r4(this.spin * SPIN_DRIFT),
+      spin: r4(this.drift / SPIN_DRIFT),
+      drift: r4(this.drift), sp: this.ballSpin.map(r4) as [number, number],
       serve: this.flight || this.outcome ? 0 : this.server, j: this.bounces, l: this.landed,
     }
   }

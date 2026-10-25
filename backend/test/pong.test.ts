@@ -105,47 +105,49 @@ test('ping pong: a table landing separates racket returns; neutral baselines can
   assert.deepEqual(p.score, [0, 0])
 })
 
-test('ping pong: swipe strength spans .7 to 1.15 seconds without per-hit acceleration', () => {
+test('ping pong: swipe strength spans 1 to 1.35 seconds (backspin floats to 1.55) without per-hit acceleration', () => {
   const hard = stroke(0, .3).frame().a!
-  near(hard[13], .7, .0001)
+  near(hard[13], 1, .0001)
   near(hard[10], 1.8868, .0001)
+  // A hard pull-back is full backspin (x1.15 duration) and its depth floor is -.35 (2026-10-25 spin round).
   const soft = stroke(0, -.3).frame().a!
-  near(soft[13], 1.15)
-  near(soft[10], 1.0234, .0001)
+  near(soft[13], 1.35 * 1.15)
+  near(soft[10], 1.1097, .0001)
   const neutral = new PongSim(() => .5)
   neutral.step(FIRST_SERVE_MS)
-  near(neutral.frame().a![13], 1.15)
+  near(neutral.frame().a![13], 1.35)
 })
 
-test('ping pong: stroke direction aims to either side, including the native unclamped soft remap', () => {
+test('ping pong: stroke direction aims to either side symmetrically (landing rates: pongFairness)', () => {
   const right = stroke(.3, .03), left = stroke(-.3, .03)
-  assert.ok(right.frame().a![9] > .9 && left.frame().a![9] < .1)
+  assert.ok(right.frame().a![9] > .65 && left.frame().a![9] < .35)
   near(right.frame().a![9] + left.frame().a![9], 1, .0001)
-  const soft = stroke(.3, -.3)
-  assert.ok(soft.frame().a![9] > .7 && soft.frame().a![9] < .8)
+  near(right.frame().drift + left.frame().drift, 0, .0001)
 })
 
-test('ping pong: the last hitter controls live endpoint drift; release stops it immediately', () => {
+test('ping pong: the contact stroke fixes a constant curve; release and later movement cannot steer it', () => {
   const p = stroke(.3, .03)
-  near(p.frame().spin, 1)
-  const start = p.frame().a![9]
+  const { spin, drift } = p.frame(), start = p.frame().a![9]
+  assert.ok(drift > 0); near(spin, drift / SPIN_DRIFT, .0002)
   p.step(64)
-  near(p.frame().a![9] - start, SPIN_DRIFT * .064, .0002)
-  const end = p.frame().a![9]
+  near(p.frame().a![9] - start, drift * .064, .0002)
   p.paddle(2, .5, .24, true); p.step(64)
-  near(p.frame().spin, 0); near(p.frame().drift, 0)
-  near(p.frame().a![9], end, .0001)
-  p.paddle(2, .55, .24); p.step(16); p.paddle(2, .6, .24); p.step(16)
-  assert.ok(p.frame().a![9] > end, 'later movement can steer the reference flight')
+  near(p.frame().spin, spin); near(p.frame().drift, drift)
+  near(p.frame().a![9] - start, drift * .128, .0004)
+  p.paddle(2, .3, .24); p.step(16); p.paddle(2, .1, .24); p.step(16)
+  near(p.frame().spin, spin)
+  near(p.frame().a![9] - start, drift * .16, .0004)
 })
 
-test('ping pong: a stationary held touch and lost-input timeout clear the live stroke', () => {
+test('ping pong: a stationary held touch and lost-input timeout clear the live stroke, not the contact curve', () => {
+  const live = (p: PongSim) => (p as unknown as { strokes: { side: number }[] }).strokes[1].side
   const stationary = stroke(.3, .03)
   stationary.paddle(2, .5, .24)
-  near(stationary.frame().spin, 0)
+  const spin = stroke(.3, .03).frame().spin
+  near(live(stationary), 0); near(stationary.frame().spin, spin)
   const lost = stroke(.3, .03)
   lost.step(121)
-  near(lost.frame().spin, 0)
+  near(live(lost), 0); near(lost.frame().spin, spin)
   assert.ok(lost.frame().a!.every(Number.isFinite))
 })
 
@@ -154,12 +156,14 @@ test('ping pong: raw touch controls the stroke while the racket eases toward it'
   p.paddle(2, .2, .21, false, [.2, .21]); p.step(16)
   p.paddle(2, .35, .225, false, [.5, .24]); p.step(8)
   assert.equal(p.hits, 1)
-  near(p.frame().spin, 1)
+  const spin = p.frame().spin
+  assert.ok(spin > 0)
   const duration = p.frame().a![13]
-  // Same held finger, racket still catching up: the finger's stroke has stopped.
+  // Same held finger, racket still catching up: the finger's stroke has stopped; the shot keeps its contact curve.
   p.paddle(2, .425, .2325, false, [.5, .24])
-  near(p.frame().spin, 0)
-  near(duration, 1.069, .0001)
+  near((p as unknown as { strokes: { side: number }[] }).strokes[1].side, 0)
+  near(p.frame().spin, spin)
+  near(duration, 1.287, .0001)
 })
 
 test('ping pong: 30 and 60 Hz input preserve equal swipe strength', () => {
@@ -172,7 +176,7 @@ test('ping pong: 30 and 60 Hz input preserve equal swipe strength', () => {
     return p.frame()
   }
   const thirty = at(1000 / 30), sixty = at(1000 / 60)
-  near(thirty.spin, sixty.spin); near(thirty.drift, sixty.drift)
+  // Drift also corrects for the (different) contact x so both land at the same lateral point.
   near(thirty.a![9], sixty.a![9]); near(thirty.a![10], sixty.a![10]); near(thirty.a![13], sixty.a![13])
 })
 
@@ -186,16 +190,16 @@ test('ping pong: a table bounce follows incoming 3D direction without a random h
   near(curve[11], BALL_R - 6 / 12.16, .0001)
 })
 
-test('ping pong: side misses continue off the open table and score', () => {
-  const p = stroke(.3, .03)
-  p.paddle(1, RACKET_MIN, 2.5, true)
-  run(p, () => p.x > 1.02)
-  const outside = p.x
-  assert.ok(p.vx > 0)
-  p.step(16)
-  assert.ok(p.x > outside && p.vx > 0)
-  run(p, () => p.score[0] + p.score[1] === 1)
-  assert.deepEqual(p.score, [1, 0], 'missing the table loses the point')
+test('ping pong: a hard sideways swipe lands in the table; only the receiver missing loses the point', () => {
+  for (const dx of [.3, -.3]) {
+    const p = stroke(dx, .03)
+    p.paddle(1, dx > 0 ? RACKET_MIN : RACKET_MAX, 2.5, true)
+    run(p, () => p.bounces === 1 || p.score[0] + p.score[1] === 1)
+    assert.equal(p.bounces, 1)
+    assert.ok(dx > 0 ? p.x > .85 && p.x <= .92 : p.x < .15 && p.x >= .08, `lands near its side line: ${p.x}`)
+    run(p, () => p.score[0] + p.score[1] === 1)
+    assert.deepEqual(p.score, [0, 1], 'the receiver who misses loses the point')
+  }
 })
 
 test('ping pong: a landed ball escaping past the opponent wins for the last hitter', () => {
@@ -251,7 +255,8 @@ test('ping pong: backend fixture stays aligned with the Android demo and rendere
   p.step(64)
   const f = p.frame()
   // The same input/clock sequence is asserted by DemoPongTest.
-  assert.deepEqual(f.b.slice(0, 2), [.5318, .3168])
-  near(f.z[0], .2378)
-  near(f.drift, SPIN_DRIFT, .0001)
+  assert.deepEqual(f.b.slice(0, 2), [.51, .3019])
+  near(f.z[0], .2265)
+  near(f.drift, .5971, .0001)
+  assert.deepEqual(f.sp, [1, 0])
 })
